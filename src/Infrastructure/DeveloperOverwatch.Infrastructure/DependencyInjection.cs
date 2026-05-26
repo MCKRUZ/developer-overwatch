@@ -25,6 +25,14 @@ public static class DependencyInjection
         services.Configure<Services.GitHubConfig>(configuration.GetSection("GitHub"));
         services.AddHttpClient<IGitHostingService, Services.GitHubService>();
 
+        services.AddScoped<IGovernanceViolationRepository, GovernanceViolationRepository>();
+
+        services.Configure<Governance.GovernanceConfig>(configuration.GetSection("Governance"));
+        services.AddSingleton<Governance.PolicyLoader>();
+        services.AddSingleton<Governance.PatternRuleEvaluator>();
+        services.AddSingleton<Governance.DriftDetector>();
+        services.AddScoped<IGovernanceEngine, Governance.GovernanceEngine>();
+
         return services;
     }
 }
