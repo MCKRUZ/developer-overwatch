@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>DeveloperOverwatch.API</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Application\DeveloperOverwatch.Application\DeveloperOverwatch.Application.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\DeveloperOverwatch.Infrastructure\DeveloperOverwatch.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

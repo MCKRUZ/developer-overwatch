@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Folder Name="/src/Domain/">
+      <Project Path="src/Domain/DeveloperOverwatch.Domain/DeveloperOverwatch.Domain.csproj" />
+    </Folder>
+    <Folder Name="/src/Application/">
+      <Project Path="src/Application/DeveloperOverwatch.Application/DeveloperOverwatch.Application.csproj" />
+    </Folder>
+    <Folder Name="/src/Infrastructure/">
+      <Project Path="src/Infrastructure/DeveloperOverwatch.Infrastructure/DeveloperOverwatch.Infrastructure.csproj" />
+    </Folder>
+    <Folder Name="/src/API/">
+      <Project Path="src/API/DeveloperOverwatch.API/DeveloperOverwatch.API.csproj" />
+    </Folder>
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DeveloperOverwatch.Domain.Tests/DeveloperOverwatch.Domain.Tests.csproj" />
+    <Project Path="tests/DeveloperOverwatch.Application.Tests/DeveloperOverwatch.Application.Tests.csproj" />
+    <Project Path="tests/DeveloperOverwatch.API.Tests/DeveloperOverwatch.API.Tests.csproj" />
+  </Folder>
+</Solution>

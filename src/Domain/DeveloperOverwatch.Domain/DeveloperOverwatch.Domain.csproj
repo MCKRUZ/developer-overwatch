@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>DeveloperOverwatch.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>
