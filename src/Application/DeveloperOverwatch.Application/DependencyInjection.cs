@@ -17,6 +17,7 @@ public static class DependencyInjection
 
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
+        services.AddTransient<IPipelineBehavior<Commands.IngestSessionEnd.IngestSessionEndCommand, Domain.Common.Result<string>>, GovernanceBehavior>();
 
         services.AddScoped<Services.SessionCommitCorrelator>();
 
