@@ -10,7 +10,7 @@ var connectionString = builder.Configuration.GetValue<string>("Database:Connecti
     ?? "Data Source=overwatch.db";
 
 builder.Services.AddApplicationDependencies();
-builder.Services.AddInfrastructureDependencies(connectionString);
+builder.Services.AddInfrastructureDependencies(connectionString, builder.Configuration);
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
