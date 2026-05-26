@@ -12,7 +12,9 @@ public class GovernanceViolation
     public string? ContextJson { get; set; }
     public bool Resolved { get; set; }
     public string? ResolvedBy { get; set; }
+    public string? ResolutionReason { get; set; }
     public DateTime? ResolvedAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Session? Session { get; set; }
 }
