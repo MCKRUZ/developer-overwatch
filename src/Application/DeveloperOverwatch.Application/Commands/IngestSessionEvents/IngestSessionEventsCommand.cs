@@ -1,0 +1,46 @@
+namespace DeveloperOverwatch.Application.Commands.IngestSessionEvents;
+
+using DeveloperOverwatch.Domain.Common;
+using DeveloperOverwatch.Domain.Enums;
+using MediatR;
+
+public sealed record IngestSessionEventsCommand : IRequest<Result<int>>
+{
+    public required string SessionId { get; init; }
+    public IReadOnlyList<ConversationTurnDto> ConversationTurns { get; init; } = [];
+    public IReadOnlyList<ToolExecutionDto> ToolExecutions { get; init; } = [];
+    public IReadOnlyList<FileChangeDto> FileChanges { get; init; } = [];
+}
+
+public sealed record ConversationTurnDto
+{
+    public required string Id { get; init; }
+    public int TurnIndex { get; init; }
+    public required string Role { get; init; }
+    public string? Content { get; init; }
+    public int? TokenCount { get; init; }
+    public required DateTime Timestamp { get; init; }
+    public bool IsDecision { get; init; }
+}
+
+public sealed record ToolExecutionDto
+{
+    public required string Id { get; init; }
+    public string? TurnId { get; init; }
+    public required string ToolName { get; init; }
+    public string? InputParams { get; init; }
+    public string? OutputSummary { get; init; }
+    public int? DurationMs { get; init; }
+    public required DateTime Timestamp { get; init; }
+}
+
+public sealed record FileChangeDto
+{
+    public required string Id { get; init; }
+    public string? ToolExecutionId { get; init; }
+    public required string FilePath { get; init; }
+    public string? BeforeHash { get; init; }
+    public string? AfterHash { get; init; }
+    public string? DiffText { get; init; }
+    public ChangeType? ChangeType { get; init; }
+}
