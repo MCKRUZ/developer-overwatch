@@ -40,6 +40,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseCors();
+app.UseMiddleware<WebhookSignatureMiddleware>();
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.MapControllers();
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));

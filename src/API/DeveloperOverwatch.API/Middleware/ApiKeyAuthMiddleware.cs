@@ -21,6 +21,12 @@ public sealed class ApiKeyAuthMiddleware
             return;
         }
 
+        if (context.Request.Path.StartsWithSegments("/api/webhooks"))
+        {
+            await _next(context);
+            return;
+        }
+
         if (_validKeys.Count == 0)
         {
             await _next(context);
