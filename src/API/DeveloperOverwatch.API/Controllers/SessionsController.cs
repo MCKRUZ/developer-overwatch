@@ -1,0 +1,84 @@
+namespace DeveloperOverwatch.API.Controllers;
+
+using DeveloperOverwatch.Application.Commands.IngestSessionEnd;
+using DeveloperOverwatch.Application.Commands.IngestSessionEvents;
+using DeveloperOverwatch.Application.Commands.IngestSessionStart;
+using DeveloperOverwatch.Application.Queries.GetSession;
+using DeveloperOverwatch.Application.Queries.GetSessions;
+using MediatR;
+using Microsoft.AspNetCore.Mvc;
+
+[ApiController]
+[Route("api/sessions")]
+public sealed class SessionsController : ControllerBase
+{
+    private readonly IMediator _mediator;
+
+    public SessionsController(IMediator mediator) => _mediator = mediator;
+
+    [HttpPost("start")]
+    public async Task<IActionResult> StartSession(
+        [FromBody] IngestSessionStartCommand command,
+        CancellationToken ct)
+    {
+        var result = await _mediator.Send(command, ct);
+        return result.IsSuccess
+            ? Ok(new { sessionId = result.Value })
+            : result.ValidationErrors.Count > 0
+                ? BadRequest(new { errors = result.ValidationErrors })
+                : Conflict(new { error = result.Error });
+    }
+
+    [HttpPost("{sessionId}/events")]
+    public async Task<IActionResult> IngestEvents(
+        string sessionId,
+        [FromBody] IngestSessionEventsCommand command,
+        CancellationToken ct)
+    {
+        if (command.SessionId != sessionId)
+            return BadRequest(new { error = "Session ID mismatch" });
+
+        var result = await _mediator.Send(command, ct);
+        return result.IsSuccess
+            ? Ok(new { eventsIngested = result.Value })
+            : result.ValidationErrors.Count > 0
+                ? BadRequest(new { errors = result.ValidationErrors })
+                : NotFound(new { error = result.Error });
+    }
+
+    [HttpPost("{sessionId}/end")]
+    public async Task<IActionResult> EndSession(
+        string sessionId,
+        [FromBody] IngestSessionEndCommand command,
+        CancellationToken ct)
+    {
+        if (command.SessionId != sessionId)
+            return BadRequest(new { error = "Session ID mismatch" });
+
+        var result = await _mediator.Send(command, ct);
+        return result.IsSuccess
+            ? Ok(new { sessionId = result.Value })
+            : result.ValidationErrors.Count > 0
+                ? BadRequest(new { errors = result.ValidationErrors })
+                : NotFound(new { error = result.Error });
+    }
+
+    [HttpGet("{sessionId}")]
+    public async Task<IActionResult> GetSession(string sessionId, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetSessionQuery(sessionId), ct);
+        return result.IsSuccess
+            ? Ok(result.Value)
+            : NotFound(new { error = result.Error });
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetSessions(
+        [FromQuery] string? developer = null,
+        [FromQuery] string? repo = null,
+        CancellationToken ct = default)
+    {
+        var result = await _mediator.Send(new GetSessionsQuery(developer, repo), ct);
+        return Ok(result.Value);
+    }
+}
