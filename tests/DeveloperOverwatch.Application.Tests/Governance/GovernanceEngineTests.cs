@@ -14,7 +14,7 @@ public class GovernanceEngineTests
 {
     private readonly ISessionRepository _sessionRepo = Substitute.For<ISessionRepository>();
     private readonly IGovernanceViolationRepository _violationRepo = Substitute.For<IGovernanceViolationRepository>();
-    private readonly PatternRuleEvaluator _patternEvaluator = new();
+    private readonly PatternRuleEvaluator _patternEvaluator = new(NullLogger<PatternRuleEvaluator>.Instance);
     private readonly string _policiesDir;
 
     public GovernanceEngineTests()

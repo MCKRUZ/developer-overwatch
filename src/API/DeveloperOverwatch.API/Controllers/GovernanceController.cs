@@ -37,7 +37,14 @@ public class GovernanceController : ControllerBase
             ResolvedBy = request.ResolvedBy,
             ResolutionReason = request.ResolutionReason
         }, ct);
-        return result.IsSuccess ? Ok(new { violationId = result.Value }) : BadRequest(result.Error);
+
+        if (result.IsSuccess)
+            return Ok(new { violationId = result.Value });
+
+        if (result.Error?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true)
+            return NotFound(result.Error);
+
+        return BadRequest(result.Error);
     }
 
     public sealed record ResolveViolationRequest(string ResolvedBy, string ResolutionReason);

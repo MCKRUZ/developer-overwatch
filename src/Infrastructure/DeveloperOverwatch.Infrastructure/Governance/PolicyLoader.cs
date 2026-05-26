@@ -50,13 +50,47 @@ public sealed class PolicyLoader
 
                 foreach (var dto in doc.Policies)
                 {
+                    if (!Enum.TryParse<ViolationSeverity>(dto.Severity, ignoreCase: true, out var severity))
+                    {
+                        _logger.LogWarning("Invalid severity '{Severity}' in policy '{Id}' from {File}, skipping",
+                            dto.Severity, dto.Id, file);
+                        continue;
+                    }
+
+                    if (!Enum.TryParse<PolicyType>(dto.Type, ignoreCase: true, out var type))
+                    {
+                        _logger.LogWarning("Invalid type '{Type}' in policy '{Id}' from {File}, skipping",
+                            dto.Type, dto.Id, file);
+                        continue;
+                    }
+
+                    var scanTargets = new List<ScanTarget>();
+                    var skipPolicy = false;
+                    foreach (var s in dto.Scan)
+                    {
+                        if (Enum.TryParse<ScanTarget>(s, ignoreCase: true, out var scanTarget))
+                        {
+                            scanTargets.Add(scanTarget);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Invalid scan target '{Target}' in policy '{Id}' from {File}, skipping policy",
+                                s, dto.Id, file);
+                            skipPolicy = true;
+                            break;
+                        }
+                    }
+
+                    if (skipPolicy)
+                        continue;
+
                     policies.Add(new GovernancePolicy
                     {
                         Id = dto.Id,
                         Name = dto.Name,
-                        Severity = Enum.Parse<ViolationSeverity>(dto.Severity, ignoreCase: true),
-                        Type = Enum.Parse<PolicyType>(dto.Type, ignoreCase: true),
-                        Scan = dto.Scan.Select(s => Enum.Parse<ScanTarget>(s, ignoreCase: true)).ToList(),
+                        Severity = severity,
+                        Type = type,
+                        Scan = scanTargets,
                         Patterns = dto.Patterns ?? [],
                         ExcludePaths = dto.ExcludePaths ?? [],
                         Rule = dto.Rule

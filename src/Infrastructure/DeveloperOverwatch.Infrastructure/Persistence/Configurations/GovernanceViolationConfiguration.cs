@@ -4,7 +4,7 @@ using DeveloperOverwatch.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-public class GovernanceViolationConfiguration : IEntityTypeConfiguration<GovernanceViolation>
+public sealed class GovernanceViolationConfiguration : IEntityTypeConfiguration<GovernanceViolation>
 {
     public void Configure(EntityTypeBuilder<GovernanceViolation> builder)
     {

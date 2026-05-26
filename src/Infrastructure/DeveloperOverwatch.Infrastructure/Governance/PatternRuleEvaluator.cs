@@ -4,22 +4,32 @@ using System.Text.RegularExpressions;
 using DeveloperOverwatch.Domain.Entities;
 using DeveloperOverwatch.Domain.Enums;
 using DeveloperOverwatch.Domain.Models;
+using Microsoft.Extensions.Logging;
 
 public sealed class PatternRuleEvaluator
 {
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
+
+    private readonly ILogger<PatternRuleEvaluator> _logger;
+
+    public PatternRuleEvaluator(ILogger<PatternRuleEvaluator> logger) => _logger = logger;
+
     public IReadOnlyList<GovernanceViolation> Evaluate(GovernancePolicy policy, Session session)
     {
         var violations = new List<GovernanceViolation>();
-        var regexes = policy.Patterns
-            .Select(p => new Regex(p, RegexOptions.IgnoreCase | RegexOptions.Compiled))
-            .ToArray();
+        var regexes = CompilePatterns(policy.Patterns);
+
+        if (regexes.Length == 0 && policy.Patterns.Count > 0)
+            return violations;
+
+        var excludeRegexes = CompileExcludePatterns(policy.ExcludePaths);
 
         foreach (var target in policy.Scan)
         {
             switch (target)
             {
                 case ScanTarget.Diffs:
-                    EvaluateDiffs(policy, session, regexes, violations);
+                    EvaluateDiffs(policy, session, regexes, excludeRegexes, violations);
                     break;
                 case ScanTarget.Conversation:
                     EvaluateConversation(policy, session, regexes, violations);
@@ -30,14 +40,52 @@ public sealed class PatternRuleEvaluator
         return violations;
     }
 
+    private Regex[] CompilePatterns(IReadOnlyList<string> patterns)
+    {
+        var compiled = new List<Regex>(patterns.Count);
+        foreach (var pattern in patterns)
+        {
+            try
+            {
+                compiled.Add(new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout));
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogWarning(ex, "Invalid regex pattern '{Pattern}', skipping", pattern);
+            }
+        }
+        return compiled.ToArray();
+    }
+
+    private Regex[] CompileExcludePatterns(IReadOnlyList<string> excludePaths)
+    {
+        var compiled = new List<Regex>(excludePaths.Count);
+        foreach (var pattern in excludePaths)
+        {
+            try
+            {
+                var regexPattern = "^" + Regex.Escape(pattern)
+                    .Replace("\\*\\*", ".*")
+                    .Replace("\\*", "[^/\\\\]*") + "$";
+                compiled.Add(new Regex(regexPattern, RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout));
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogWarning(ex, "Invalid exclude pattern '{Pattern}', skipping", pattern);
+            }
+        }
+        return compiled.ToArray();
+    }
+
     private static void EvaluateDiffs(
-        GovernancePolicy policy, Session session, Regex[] regexes, List<GovernanceViolation> violations)
+        GovernancePolicy policy, Session session, Regex[] regexes,
+        Regex[] excludeRegexes, List<GovernanceViolation> violations)
     {
         foreach (var fileChange in session.FileChanges)
         {
             if (fileChange.DiffText is null)
                 continue;
-            if (IsExcluded(fileChange.FilePath, policy.ExcludePaths))
+            if (IsExcluded(fileChange.FilePath, excludeRegexes))
                 continue;
 
             foreach (var regex in regexes)
@@ -72,14 +120,11 @@ public sealed class PatternRuleEvaluator
         }
     }
 
-    private static bool IsExcluded(string filePath, IReadOnlyList<string> excludePaths)
+    private static bool IsExcluded(string filePath, Regex[] excludeRegexes)
     {
-        foreach (var pattern in excludePaths)
+        foreach (var regex in excludeRegexes)
         {
-            var regexPattern = "^" + Regex.Escape(pattern)
-                .Replace("\\*\\*", ".*")
-                .Replace("\\*", "[^/\\\\]*") + "$";
-            if (Regex.IsMatch(filePath, regexPattern, RegexOptions.IgnoreCase))
+            if (regex.IsMatch(filePath))
                 return true;
         }
         return false;

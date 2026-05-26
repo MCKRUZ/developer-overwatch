@@ -105,12 +105,12 @@ public class GovernanceControllerTests : IClassFixture<OverwatchWebApplicationFa
     }
 
     [Fact]
-    public async Task ResolveViolation_NotFound_ReturnsBadRequest()
+    public async Task ResolveViolation_NotFound_ReturnsNotFound()
     {
         var response = await _client.PostAsJsonAsync(
             "/api/governance/violations/nonexistent/resolve",
             new { ResolvedBy = "architect@test.com", ResolutionReason = "n/a" });
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }

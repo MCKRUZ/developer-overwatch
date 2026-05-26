@@ -5,11 +5,12 @@ using DeveloperOverwatch.Domain.Enums;
 using DeveloperOverwatch.Domain.Models;
 using DeveloperOverwatch.Infrastructure.Governance;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 public class PatternRuleEvaluatorTests
 {
-    private readonly PatternRuleEvaluator _evaluator = new();
+    private readonly PatternRuleEvaluator _evaluator = new(NullLogger<PatternRuleEvaluator>.Instance);
 
     [Fact]
     public void Evaluate_PatternInDiff_ReturnsViolation()
