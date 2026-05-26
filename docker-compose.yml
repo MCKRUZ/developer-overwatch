@@ -1,0 +1,25 @@
+services:
+  overwatch-api:
+    build:
+      context: .
+      dockerfile: src/API/DeveloperOverwatch.API/Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - Database__ConnectionString=Data Source=/data/overwatch.db
+    volumes:
+      - overwatch-data:/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+
+volumes:
+  overwatch-data:
