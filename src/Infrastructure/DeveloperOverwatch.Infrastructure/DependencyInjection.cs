@@ -16,6 +16,8 @@ public static class DependencyInjection
             options.UseSqlite(connectionString));
 
         services.AddScoped<ISessionRepository, SessionRepository>();
+        services.AddScoped<ICommitSessionLinkRepository, CommitSessionLinkRepository>();
+        services.AddScoped<IPullRequestReviewRepository, PullRequestReviewRepository>();
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<OverwatchDbContext>());
 
         return services;
