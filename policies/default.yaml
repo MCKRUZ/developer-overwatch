@@ -1,0 +1,52 @@
+policies:
+  - id: no-raw-sql
+    name: "No raw SQL outside repositories"
+    severity: error
+    type: pattern
+    scan: [diffs]
+    patterns:
+      - "SqlCommand|SqlConnection"
+      - "ExecuteSqlRaw|FromSqlRaw"
+    exclude_paths:
+      - "**/Repositories/**"
+      - "**/Migrations/**"
+
+  - id: no-hardcoded-secrets
+    name: "No hardcoded secrets"
+    severity: critical
+    type: pattern
+    scan: [diffs]
+    patterns:
+      - "password\\s*=\\s*[\"'][^\"']+[\"']"
+      - "api[_-]?key\\s*=\\s*[\"'][^\"']+[\"']"
+      - "connectionString.*=.*[\"']Server="
+
+  - id: no-console-log
+    name: "No console.log or Console.WriteLine in production code"
+    severity: warning
+    type: pattern
+    scan: [diffs]
+    patterns:
+      - "console\\.log\\("
+      - "Console\\.Write(Line)?\\("
+    exclude_paths:
+      - "**/Tests/**"
+      - "**/test/**"
+
+  - id: auth-middleware-required
+    name: "API endpoints must have auth"
+    severity: error
+    type: semantic
+    scan: [diffs]
+    rule: >
+      Any new controller action or minimal API endpoint
+      must have [Authorize] or RequireAuthorization()
+
+  - id: test-coverage-required
+    name: "New public methods need tests"
+    severity: info
+    type: semantic
+    scan: [session]
+    rule: >
+      If session created new public methods, check if
+      corresponding test files were also created or modified
