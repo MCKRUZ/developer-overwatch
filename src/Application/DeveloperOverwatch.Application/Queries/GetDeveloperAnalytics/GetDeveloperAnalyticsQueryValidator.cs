@@ -6,6 +6,6 @@ public sealed class GetDeveloperAnalyticsQueryValidator : AbstractValidator<GetD
 {
     public GetDeveloperAnalyticsQueryValidator()
     {
-        RuleFor(x => x.Email).NotEmpty();
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
     }
 }

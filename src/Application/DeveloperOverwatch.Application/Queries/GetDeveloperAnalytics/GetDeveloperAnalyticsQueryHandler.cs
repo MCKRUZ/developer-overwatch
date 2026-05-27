@@ -52,9 +52,10 @@ public sealed class GetDeveloperAnalyticsQueryHandler
             RecentRepos: sessions
                 .Select(s => s.RepoPath)
                 .Where(r => !string.IsNullOrEmpty(r))
+                .Select(r => r!)
                 .Distinct()
                 .ToList()
-                .AsReadOnly()!);
+                .AsReadOnly());
 
         return Result<DeveloperAnalytics>.Success(analytics);
     }
