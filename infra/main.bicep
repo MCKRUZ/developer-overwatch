@@ -12,6 +12,17 @@ param apiImageTag string = 'latest'
 @description('Docker image tag for the Dashboard container.')
 param dashboardImageTag string = 'latest'
 
+@description('SQL Server administrator login.')
+@secure()
+param sqlAdminLogin string = ''
+
+@description('SQL Server administrator password.')
+@secure()
+param sqlAdminPassword string = ''
+
+@description('Use Azure SQL instead of SQLite. When false, SQLite with Azure File share is used.')
+param useSqlServer bool = false
+
 var tags = {
   environment: environmentName
   project: 'developer-overwatch'
@@ -44,6 +55,17 @@ module keyVault 'modules/key-vault.bicep' = {
   }
 }
 
+module sqlDatabase 'modules/sql-database.bicep' = if (useSqlServer) {
+  name: 'sql-database'
+  params: {
+    environmentName: environmentName
+    location: location
+    tags: tags
+    adminLogin: sqlAdminLogin
+    adminPassword: sqlAdminPassword
+  }
+}
+
 module containerApps 'modules/container-apps.bicep' = {
   name: 'container-apps'
   params: {
@@ -57,6 +79,8 @@ module containerApps 'modules/container-apps.bicep' = {
     logAnalyticsId: monitoring.outputs.logAnalyticsId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultUri: keyVault.outputs.uri
+    databaseProvider: useSqlServer ? 'sqlserver' : 'sqlite'
+    sqlConnectionString: useSqlServer ? sqlDatabase.outputs.connectionString : ''
   }
 }
 

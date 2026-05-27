@@ -6,10 +6,12 @@ using DeveloperOverwatch.Application.Commands.ProcessPushWebhook;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 [ApiController]
 [Route("api/webhooks")]
 [AllowAnonymous]
+[EnableRateLimiting("webhook")]
 public sealed class WebhooksController : ControllerBase
 {
     private readonly IMediator _mediator;

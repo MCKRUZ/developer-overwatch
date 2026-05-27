@@ -1,9 +1,12 @@
+using System.Threading.RateLimiting;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Middleware;
 using DeveloperOverwatch.Application;
 using DeveloperOverwatch.Infrastructure;
 using DeveloperOverwatch.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -11,6 +14,22 @@ var builder = WebApplication.CreateBuilder(args);
 
 var connectionString = builder.Configuration.GetValue<string>("Database:ConnectionString")
     ?? "Data Source=overwatch.db";
+var dbProvider = builder.Configuration.GetValue("Database:Provider", "sqlite");
+
+var appInsightsCs = builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
+if (!string.IsNullOrEmpty(appInsightsCs))
+{
+    builder.Services.AddOpenTelemetry().UseAzureMonitor(options =>
+    {
+        options.ConnectionString = appInsightsCs;
+    });
+}
+
+var healthChecks = builder.Services.AddHealthChecks();
+if (string.Equals(dbProvider, "sqlserver", StringComparison.OrdinalIgnoreCase))
+    healthChecks.AddSqlServer(connectionString, name: "database", tags: ["ready"]);
+else
+    healthChecks.AddSqlite(connectionString, name: "database", tags: ["ready"]);
 
 builder.Services.AddApplicationDependencies();
 builder.Services.AddInfrastructureDependencies(connectionString, builder.Configuration);
@@ -35,6 +54,45 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials());
+});
+
+var rateLimitConfig = builder.Configuration.GetSection("RateLimiting");
+var defaultPermitLimit = rateLimitConfig.GetValue("Default:PermitLimit", 100);
+var defaultWindowSeconds = rateLimitConfig.GetValue("Default:WindowSeconds", 60);
+var webhookPermitLimit = rateLimitConfig.GetValue("Webhook:PermitLimit", 30);
+var webhookWindowSeconds = rateLimitConfig.GetValue("Webhook:WindowSeconds", 60);
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("webhook", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = webhookPermitLimit,
+                Window = TimeSpan.FromSeconds(webhookWindowSeconds),
+                QueueLimit = 0
+            }));
+
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        if (context.Request.Path.StartsWithSegments("/health"))
+            return RateLimitPartition.GetNoLimiter("health");
+
+        if (context.Request.Path.StartsWithSegments("/api/webhooks"))
+            return RateLimitPartition.GetNoLimiter("webhook-global-bypass");
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = defaultPermitLimit,
+                Window = TimeSpan.FromSeconds(defaultWindowSeconds),
+                QueueLimit = 0
+            });
+    });
 });
 
 var authority = builder.Configuration["Authentication:Authority"];
@@ -108,15 +166,21 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    if (string.Equals(dbProvider, "sqlserver", StringComparison.OrdinalIgnoreCase))
+        await db.Database.MigrateAsync();
+    else
+        await db.Database.EnsureCreatedAsync();
 }
 
+app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
 app.UseMiddleware<WebhookSignatureMiddleware>();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+app.MapHealthChecks("/health");
 
 if (!hasOidc)
 {

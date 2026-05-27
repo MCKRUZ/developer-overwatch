@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
-import type { Session } from "../types";
+import type { Session, GovernanceViolation } from "../types";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
 
@@ -13,6 +13,8 @@ export default function SessionDetailPage() {
   const [annotationContent, setAnnotationContent] = useState("");
   const [annotationEmail, setAnnotationEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [violationsExpanded, setViolationsExpanded] = useState(false);
+  const [fetchedViolations, setFetchedViolations] = useState<GovernanceViolation[]>([]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -21,6 +23,14 @@ export default function SessionDetailPage() {
       .then(setSession)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    api.governance
+      .violations(sessionId)
+      .then(setFetchedViolations)
+      .catch(() => {});
   }, [sessionId]);
 
   if (loading) return <div className="text-gray-500">Loading session...</div>;
@@ -48,9 +58,17 @@ export default function SessionDetailPage() {
   }
 
   const turns = [...session.conversationTurns].sort((a, b) => a.turnIndex - b.turnIndex);
-  const violations = session.governanceViolations;
+  const violations = fetchedViolations.length > 0 ? fetchedViolations : session.governanceViolations;
   const fileChanges = session.fileChanges;
   const annotations = session.architectAnnotations;
+
+  const violationCounts = {
+    total: violations.length,
+    critical: violations.filter((v) => v.severity === "Critical").length,
+    error: violations.filter((v) => v.severity === "Error").length,
+    warning: violations.filter((v) => v.severity === "Warning").length,
+    info: violations.filter((v) => v.severity === "Info").length,
+  };
 
   function formatTime(iso: string): string {
     return new Date(iso).toLocaleTimeString();
@@ -91,30 +109,72 @@ export default function SessionDetailPage() {
         </div>
       </div>
 
-      {violations.length > 0 && (
-        <div className="bg-white rounded-lg border p-4 mb-6">
-          <h3 className="font-semibold mb-3">Governance Violations ({violations.length})</h3>
-          <div className="space-y-2">
-            {violations.map((v) => (
-              <div
-                key={v.id}
-                className={`flex items-start gap-3 p-3 rounded ${v.resolved ? "bg-gray-50 opacity-60" : "bg-red-50"}`}
-              >
-                <SeverityBadge severity={v.severity} />
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{v.ruleId}</div>
-                  <div className="text-sm text-gray-600">{v.message}</div>
-                  {v.resolved && (
-                    <div className="text-xs text-gray-400 mt-1">
-                      Resolved by {v.resolvedBy}: {v.resolutionReason}
-                    </div>
-                  )}
-                </div>
+      <div className="bg-white rounded-lg border mb-6">
+        <button
+          type="button"
+          onClick={() => setViolationsExpanded(!violationsExpanded)}
+          className="w-full flex items-center justify-between p-4 text-left"
+        >
+          <div className="flex items-center gap-3">
+            <h3 className="font-semibold">Governance Violations ({violationCounts.total})</h3>
+            {violationCounts.total > 0 && (
+              <div className="flex gap-1.5">
+                {violationCounts.critical > 0 && (
+                  <span className="text-xs bg-red-600 text-white px-1.5 py-0.5 rounded">
+                    {violationCounts.critical} Critical
+                  </span>
+                )}
+                {violationCounts.error > 0 && (
+                  <span className="text-xs bg-red-100 text-red-800 px-1.5 py-0.5 rounded">
+                    {violationCounts.error} Error
+                  </span>
+                )}
+                {violationCounts.warning > 0 && (
+                  <span className="text-xs bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded">
+                    {violationCounts.warning} Warning
+                  </span>
+                )}
+                {violationCounts.info > 0 && (
+                  <span className="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
+                    {violationCounts.info} Info
+                  </span>
+                )}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      )}
+          <span className="text-gray-400 text-sm">{violationsExpanded ? "▼" : "▶"}</span>
+        </button>
+
+        {violationsExpanded && violations.length > 0 && (
+          <div className="border-t px-4 pb-4">
+            <div className="space-y-2 mt-3">
+              {violations.map((v) => (
+                <div
+                  key={v.id}
+                  className={`flex items-start gap-3 p-3 rounded ${v.resolved ? "bg-gray-50 opacity-60" : "bg-red-50"}`}
+                >
+                  <SeverityBadge severity={v.severity} />
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">{v.ruleId}</div>
+                    <div className="text-sm text-gray-600">{v.message}</div>
+                    {v.resolved && (
+                      <div className="text-xs text-gray-400 mt-1">
+                        Resolved by {v.resolvedBy}: {v.resolutionReason}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {violationsExpanded && violations.length === 0 && (
+          <div className="border-t px-4 py-3 text-sm text-gray-500">
+            No violations recorded for this session.
+          </div>
+        )}
+      </div>
 
       <div className="bg-white rounded-lg border p-4 mb-6">
         <h3 className="font-semibold mb-3">Conversation Timeline</h3>

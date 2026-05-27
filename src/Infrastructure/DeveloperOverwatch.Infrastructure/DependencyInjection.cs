@@ -14,8 +14,15 @@ public static class DependencyInjection
         string connectionString,
         IConfiguration configuration)
     {
+        var provider = configuration.GetValue("Database:Provider", "sqlite");
+
         services.AddDbContext<OverwatchDbContext>(options =>
-            options.UseSqlite(connectionString));
+        {
+            if (string.Equals(provider, "sqlserver", StringComparison.OrdinalIgnoreCase))
+                options.UseSqlServer(connectionString);
+            else
+                options.UseSqlite(connectionString);
+        });
 
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<ICommitSessionLinkRepository, CommitSessionLinkRepository>();

@@ -9,8 +9,30 @@ import type {
 
 const BASE = "/api";
 
+let tokenGetter: (() => string | null) | null = null;
+
+export function setTokenGetter(getter: () => string | null): void {
+  tokenGetter = getter;
+}
+
+export function clearTokenGetter(): void {
+  tokenGetter = null;
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const token = tokenGetter?.();
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const finalInit: RequestInit | undefined =
+    token || init ? { ...init, headers } : init;
+
+  const res = await fetch(url, finalInit);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);

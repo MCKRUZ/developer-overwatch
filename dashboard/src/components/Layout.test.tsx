@@ -20,6 +20,12 @@ describe("Layout", () => {
     expect(links[0]).toHaveAttribute("href", "/sessions");
   });
 
+  it("renders Governance link pointing to /governance", () => {
+    render(<Layout />);
+    const links = screen.getAllByRole("link", { name: "Governance" });
+    expect(links[0]).toHaveAttribute("href", "/governance");
+  });
+
   it("renders Analytics link pointing to /analytics", () => {
     render(<Layout />);
     const links = screen.getAllByRole("link", { name: "Analytics" });

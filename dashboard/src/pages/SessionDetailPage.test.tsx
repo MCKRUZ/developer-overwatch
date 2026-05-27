@@ -19,6 +19,9 @@ vi.mock("../api", () => ({
     annotations: {
       create: vi.fn(),
     },
+    governance: {
+      violations: vi.fn(),
+    },
   },
 }));
 
@@ -36,6 +39,7 @@ function renderWithRoute(sessionId: string) {
 describe("SessionDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApi.governance.violations.mockResolvedValue([]);
   });
 
   it("shows loading state initially", () => {
@@ -81,7 +85,8 @@ describe("SessionDetailPage", () => {
     });
   });
 
-  it("renders governance violations with severity badges", async () => {
+  it("renders governance violations with severity badges in collapsible section", async () => {
+    const user = userEvent.setup();
     mockApi.sessions.get.mockResolvedValue(
       buildSession({
         governanceViolations: [
@@ -94,6 +99,14 @@ describe("SessionDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Governance Violations (2)")).toBeInTheDocument();
     });
+
+    // Severity breakdown badges should be visible in the header
+    expect(screen.getByText(/1 Critical/)).toBeInTheDocument();
+    expect(screen.getByText(/1 Warning/)).toBeInTheDocument();
+
+    // Expand the section to see violation details
+    await user.click(screen.getByText("Governance Violations (2)"));
+
     expect(screen.getByText("no-console")).toBeInTheDocument();
     expect(screen.getByText("console.log found")).toBeInTheDocument();
     expect(screen.getByText("Warning")).toBeInTheDocument();
@@ -242,5 +255,19 @@ describe("SessionDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText("No conversation turns recorded.")).toBeInTheDocument();
     });
+  });
+
+  it("fetches violations from governance API", async () => {
+    mockApi.sessions.get.mockResolvedValue(buildSession({ governanceViolations: [] }));
+    mockApi.governance.violations.mockResolvedValue([
+      buildGovernanceViolation({ id: "v-fetched", ruleId: "fetched-rule", severity: "Error", message: "Fetched violation" }),
+    ]);
+
+    renderWithRoute("sess-001");
+
+    await waitFor(() => {
+      expect(mockApi.governance.violations).toHaveBeenCalledWith("sess-001");
+    });
+    expect(screen.getByText("Governance Violations (1)")).toBeInTheDocument();
   });
 });

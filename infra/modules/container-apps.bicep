@@ -28,6 +28,13 @@ param appInsightsConnectionString string
 @description('Key Vault URI for secret references.')
 param keyVaultUri string
 
+@description('Database provider: sqlite or sqlserver.')
+param databaseProvider string = 'sqlite'
+
+@description('SQL Server connection string (used when databaseProvider is sqlserver).')
+@secure()
+param sqlConnectionString string = ''
+
 var envName = 'overwatch-${environmentName}-env'
 var apiAppName = 'overwatch-${environmentName}-api'
 var dashboardAppName = 'overwatch-${environmentName}-dashboard'
@@ -132,8 +139,12 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             {
+              name: 'Database__Provider'
+              value: databaseProvider
+            }
+            {
               name: 'Database__ConnectionString'
-              value: 'Data Source=/data/overwatch.db'
+              value: databaseProvider == 'sqlserver' ? sqlConnectionString : 'Data Source=/data/overwatch.db'
             }
             {
               name: 'Authentication__Authority'
@@ -174,21 +185,21 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
               periodSeconds: 15
             }
           ]
-          volumeMounts: [
+          volumeMounts: databaseProvider == 'sqlite' ? [
             {
               volumeName: 'sqlitedata'
               mountPath: '/data'
             }
-          ]
+          ] : []
         }
       ]
-      volumes: [
+      volumes: databaseProvider == 'sqlite' ? [
         {
           name: 'sqlitedata'
           storageName: envStorage.name
           storageType: 'AzureFile'
         }
-      ]
+      ] : []
       scale: {
         minReplicas: 1
         maxReplicas: 3
