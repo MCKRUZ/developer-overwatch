@@ -54,8 +54,10 @@ public class GovernanceEngineTests
             new GovernanceConfig { PoliciesPath = emptyDir });
         var loader = new PolicyLoader(config, NullLogger<PolicyLoader>.Instance);
         var detector = new DriftDetector(config, NullLogger<DriftDetector>.Instance);
+        var semanticEvaluator = new SemanticRuleEvaluator(
+            Substitute.For<ILlmClient>(), NullLogger<SemanticRuleEvaluator>.Instance);
         var engine = new GovernanceEngine(
-            _sessionRepo, _violationRepo, loader, _patternEvaluator, detector,
+            _sessionRepo, _violationRepo, loader, _patternEvaluator, semanticEvaluator, detector,
             Substitute.For<IUnitOfWork>(), NullLogger<GovernanceEngine>.Instance);
 
         var violations = await engine.EvaluateAsync(session.Id);
@@ -106,8 +108,10 @@ public class GovernanceEngineTests
             new GovernanceConfig { PoliciesPath = _policiesDir, DriftWindowHours = 72, DriftThreshold = 3 });
         var loader = new PolicyLoader(config, NullLogger<PolicyLoader>.Instance);
         var detector = new DriftDetector(config, NullLogger<DriftDetector>.Instance);
+        var semanticEvaluator = new SemanticRuleEvaluator(
+            Substitute.For<ILlmClient>(), NullLogger<SemanticRuleEvaluator>.Instance);
         return new GovernanceEngine(
-            _sessionRepo, _violationRepo, loader, _patternEvaluator, detector,
+            _sessionRepo, _violationRepo, loader, _patternEvaluator, semanticEvaluator, detector,
             Substitute.For<IUnitOfWork>(), NullLogger<GovernanceEngine>.Instance);
     }
 

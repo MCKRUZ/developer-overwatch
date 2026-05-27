@@ -11,6 +11,7 @@ public sealed class GovernanceEngine : IGovernanceEngine
     private readonly IGovernanceViolationRepository _violationRepo;
     private readonly PolicyLoader _policyLoader;
     private readonly PatternRuleEvaluator _patternEvaluator;
+    private readonly SemanticRuleEvaluator _semanticEvaluator;
     private readonly DriftDetector _driftDetector;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<GovernanceEngine> _logger;
@@ -20,6 +21,7 @@ public sealed class GovernanceEngine : IGovernanceEngine
         IGovernanceViolationRepository violationRepo,
         PolicyLoader policyLoader,
         PatternRuleEvaluator patternEvaluator,
+        SemanticRuleEvaluator semanticEvaluator,
         DriftDetector driftDetector,
         IUnitOfWork unitOfWork,
         ILogger<GovernanceEngine> logger)
@@ -28,6 +30,7 @@ public sealed class GovernanceEngine : IGovernanceEngine
         _violationRepo = violationRepo;
         _policyLoader = policyLoader;
         _patternEvaluator = patternEvaluator;
+        _semanticEvaluator = semanticEvaluator;
         _driftDetector = driftDetector;
         _unitOfWork = unitOfWork;
         _logger = logger;
@@ -61,7 +64,8 @@ public sealed class GovernanceEngine : IGovernanceEngine
                     break;
 
                 case PolicyType.Semantic:
-                    _logger.LogDebug("Semantic rule '{RuleId}' skipped — LLM integration not configured", policy.Id);
+                    var semanticViolations = await _semanticEvaluator.EvaluateAsync(policy, session, ct);
+                    allViolations.AddRange(semanticViolations);
                     break;
             }
         }

@@ -32,6 +32,8 @@ public static class DependencyInjection
         services.AddSingleton<Governance.PolicyLoader>();
         services.AddSingleton<Governance.PatternRuleEvaluator>();
         services.AddSingleton<Governance.DriftDetector>();
+        services.AddHttpClient<Governance.ILlmClient, Governance.ClaudeLlmClient>();
+        services.AddScoped<Governance.SemanticRuleEvaluator>();
         services.AddScoped<IGovernanceEngine, Governance.GovernanceEngine>();
 
         return services;
