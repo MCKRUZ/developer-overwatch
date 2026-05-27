@@ -20,6 +20,7 @@ public static class DependencyInjection
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<ICommitSessionLinkRepository, CommitSessionLinkRepository>();
         services.AddScoped<IPullRequestReviewRepository, PullRequestReviewRepository>();
+        services.AddScoped<IArchitectAnnotationRepository, ArchitectAnnotationRepository>();
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<OverwatchDbContext>());
 
         services.Configure<Services.GitHubConfig>(configuration.GetSection("GitHub"));
