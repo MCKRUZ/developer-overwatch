@@ -23,6 +23,9 @@ public sealed class CommitSessionLinkRepository : ICommitSessionLinkRepository
             .Where(l => l.SessionId == sessionId)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<CommitSessionLink>> GetAllAsync(CancellationToken ct = default) =>
+        await _db.CommitSessionLinks.ToListAsync(ct);
+
     public async Task AddAsync(CommitSessionLink link, CancellationToken ct = default) =>
         await _db.CommitSessionLinks.AddAsync(link, ct);
 

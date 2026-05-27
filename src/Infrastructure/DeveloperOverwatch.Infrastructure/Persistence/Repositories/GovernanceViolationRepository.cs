@@ -37,6 +37,11 @@ public sealed class GovernanceViolationRepository : IGovernanceViolationReposito
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<GovernanceViolation>> GetAllAsync(CancellationToken ct = default) =>
+        await _db.GovernanceViolations
+            .OrderByDescending(v => v.CreatedAt)
+            .ToListAsync(ct);
+
     public async Task AddRangeAsync(IEnumerable<GovernanceViolation> violations, CancellationToken ct = default) =>
         await _db.GovernanceViolations.AddRangeAsync(violations, ct);
 
