@@ -34,8 +34,10 @@ export const api = {
 
   pullRequests: {
     list(repo?: string): Promise<PullRequestReview[]> {
-      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
-      return fetchJson(`${BASE}/prs${qs}`);
+      const params = new URLSearchParams();
+      if (repo) params.set("repo", repo);
+      const qs = params.toString();
+      return fetchJson(`${BASE}/prs${qs ? `?${qs}` : ""}`);
     },
     get(owner: string, repoName: string, prNumber: number): Promise<PullRequestDetail> {
       return fetchJson(`${BASE}/prs/${owner}/${repoName}/${prNumber}`);
