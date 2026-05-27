@@ -1,0 +1,139 @@
+# Deploy to Azure — Developer Overwatch
+# Builds Docker images, pushes to ACR, deploys infrastructure via Bicep,
+# and updates Azure Container Apps.
+#
+# Required secrets:
+#   AZURE_CREDENTIALS       — Service principal JSON for azure/login
+#                              ({"clientId":"...","clientSecret":"...","subscriptionId":"...","tenantId":"..."})
+#   AZURE_SUBSCRIPTION_ID   — Target Azure subscription
+#   AZURE_RESOURCE_GROUP    — Target resource group name
+#   ACR_LOGIN_SERVER         — ACR hostname (e.g. myregistry.azurecr.io)
+#
+# Required variables (optional, defaults shown):
+#   CONTAINER_APP_API       — Container App name for API  (default: overwatch-api)
+#   CONTAINER_APP_DASHBOARD — Container App name for Dashboard (default: overwatch-dashboard)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TARGET_ENV: ${{ github.event.inputs.environment || 'production' }}
+
+jobs:
+  build-images:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name "$ACR_SERVER"
+        env:
+          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+
+      - name: Build & push API image
+        env:
+          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -f src/API/DeveloperOverwatch.API/Dockerfile \
+            -t "$ACR_SERVER/overwatch-api:$IMAGE_TAG" \
+            -t "$ACR_SERVER/overwatch-api:latest" \
+            .
+          docker push "$ACR_SERVER/overwatch-api:$IMAGE_TAG"
+          docker push "$ACR_SERVER/overwatch-api:latest"
+
+      - name: Build & push Dashboard image
+        env:
+          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -f dashboard/Dockerfile \
+            -t "$ACR_SERVER/overwatch-dashboard:$IMAGE_TAG" \
+            -t "$ACR_SERVER/overwatch-dashboard:latest" \
+            dashboard/
+          docker push "$ACR_SERVER/overwatch-dashboard:$IMAGE_TAG"
+          docker push "$ACR_SERVER/overwatch-dashboard:latest"
+
+  deploy:
+    name: Deploy Infrastructure & Apps
+    runs-on: ubuntu-latest
+    needs: build-images
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set subscription
+        run: az account set --subscription "$AZURE_SUB"
+        env:
+          AZURE_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy infrastructure (Bicep)
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters "infra/parameters/$TARGET_ENV.bicepparam"
+
+      - name: Update API container app
+        env:
+          APP_NAME: ${{ vars.CONTAINER_APP_API || 'overwatch-api' }}
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          az containerapp update \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_SERVER/overwatch-api:$IMAGE_TAG"
+
+      - name: Update Dashboard container app
+        env:
+          APP_NAME: ${{ vars.CONTAINER_APP_DASHBOARD || 'overwatch-dashboard' }}
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          az containerapp update \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_SERVER/overwatch-dashboard:$IMAGE_TAG"

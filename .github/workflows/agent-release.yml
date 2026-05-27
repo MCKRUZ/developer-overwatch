@@ -1,0 +1,55 @@
+# Agent Tool Release — Developer Overwatch
+# Publishes the .NET global tool to NuGet.org when a tag matching 'agent-v*' is pushed.
+#
+# Usage:
+#   git tag agent-v1.0.0
+#   git push origin agent-v1.0.0
+#
+# Required secrets:
+#   NUGET_API_KEY — API key for NuGet.org with push permissions
+
+name: Agent Release
+
+on:
+  push:
+    tags:
+      - 'agent-v*'
+
+concurrency:
+  group: agent-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Pack & Publish Agent Tool
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#agent-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: |
+          dotnet pack src/Agent/DeveloperOverwatch.Agent/ \
+            -c Release \
+            -o ./artifacts \
+            -p:PackageVersion=${{ steps.version.outputs.version }}
+
+      - name: Push to NuGet.org
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

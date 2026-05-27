@@ -1,0 +1,61 @@
+# Continuous Integration — Developer Overwatch
+# Runs on every PR to main and every push to main.
+# Builds the solution, runs all tests, and (on main push) packs the Agent global tool.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test
+        run: dotnet test --no-build --verbosity normal --logger "trx;LogFileName=results.trx"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+          retention-days: 14
+
+      - name: Pack Agent global tool
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet pack src/Agent/DeveloperOverwatch.Agent/ -c Release -o ./artifacts
+
+      - name: Upload Agent NuGet package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-nupkg
+          path: ./artifacts/*.nupkg
+          retention-days: 30
