@@ -10,11 +10,16 @@ public sealed class GovernanceBehavior
     : IPipelineBehavior<IngestSessionEndCommand, Result<string>>
 {
     private readonly IGovernanceEngine _engine;
+    private readonly IOverwatchNotifier _notifier;
     private readonly ILogger<GovernanceBehavior> _logger;
 
-    public GovernanceBehavior(IGovernanceEngine engine, ILogger<GovernanceBehavior> logger)
+    public GovernanceBehavior(
+        IGovernanceEngine engine,
+        IOverwatchNotifier notifier,
+        ILogger<GovernanceBehavior> logger)
     {
         _engine = engine;
+        _notifier = notifier;
         _logger = logger;
     }
 
@@ -32,8 +37,13 @@ public sealed class GovernanceBehavior
         {
             var violations = await _engine.EvaluateAsync(request.SessionId, cancellationToken);
             if (violations.Count > 0)
+            {
                 _logger.LogInformation("Governance: {Count} violations for session {SessionId}",
                     violations.Count, request.SessionId);
+
+                foreach (var violation in violations)
+                    await _notifier.ViolationCreatedAsync(violation, cancellationToken);
+            }
         }
         catch (Exception ex)
         {

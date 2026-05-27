@@ -3,6 +3,9 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { GovernanceViolation, Session } from "../types";
 import SeverityBadge from "../components/SeverityBadge";
+import ExportButtons from "../components/ExportButtons";
+import { exportCsv } from "../utils/exportCsv";
+import { exportPdf } from "../utils/exportPdf";
 
 type SeverityFilter = "" | GovernanceViolation["severity"];
 type StatusFilter = "" | "resolved" | "unresolved";
@@ -76,7 +79,7 @@ export default function GovernancePage() {
     }
   }
 
-  if (loading) return <div className="text-gray-500">Loading violations...</div>;
+  if (loading) return <div className="text-gray-500 dark:text-gray-400">Loading violations...</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
 
   const filtered = violations.filter((v) => {
@@ -95,34 +98,56 @@ export default function GovernancePage() {
     unresolved: violations.filter((v) => !v.resolved).length,
   };
 
+  const exportHeaders = ["Rule ID", "Severity", "Message", "Session ID", "Developer", "Status", "Created At"];
+  const exportRows = filtered.map((v) => [
+    v.ruleId,
+    v.severity,
+    v.message,
+    v.sessionId,
+    v.developerEmail,
+    v.resolved ? "Resolved" : "Unresolved",
+    new Date(v.createdAt).toLocaleString(),
+  ]);
+
+  function handleExportCsv() {
+    exportCsv("governance-violations", exportHeaders, exportRows);
+  }
+
+  function handleExportPdf() {
+    exportPdf("governance-violations", "Developer Overwatch - Governance Violations", exportHeaders, exportRows);
+  }
+
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">Governance Violations</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-semibold">Governance Violations</h2>
+        <ExportButtons onExportCsv={handleExportCsv} onExportPdf={handleExportPdf} />
+      </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6 sm:grid-cols-6">
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold">{counts.total}</div>
-          <div className="text-sm text-gray-500">Total</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Total</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-red-600">{counts.critical}</div>
-          <div className="text-sm text-gray-500">Critical</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Critical</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-red-500">{counts.error}</div>
-          <div className="text-sm text-gray-500">Error</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Error</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-yellow-600">{counts.warning}</div>
-          <div className="text-sm text-gray-500">Warning</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Warning</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-blue-600">{counts.info}</div>
-          <div className="text-sm text-gray-500">Info</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Info</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-orange-600">{counts.unresolved}</div>
-          <div className="text-sm text-gray-500">Unresolved</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Unresolved</div>
         </div>
       </div>
 
@@ -130,7 +155,7 @@ export default function GovernancePage() {
         <select
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value as SeverityFilter)}
-          className="border rounded px-3 py-1.5 text-sm"
+          className="border dark:border-gray-600 rounded px-3 py-1.5 text-sm bg-white dark:bg-gray-800 dark:text-gray-100"
           aria-label="Filter by severity"
         >
           <option value="">All Severities</option>
@@ -142,7 +167,7 @@ export default function GovernancePage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          className="border rounded px-3 py-1.5 text-sm"
+          className="border dark:border-gray-600 rounded px-3 py-1.5 text-sm bg-white dark:bg-gray-800 dark:text-gray-100"
           aria-label="Filter by status"
         >
           <option value="">All Statuses</option>
@@ -152,11 +177,11 @@ export default function GovernancePage() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="text-gray-500 text-center py-8">No violations found.</div>
+        <div className="text-gray-500 dark:text-gray-400 text-center py-8">No violations found.</div>
       ) : (
         <div className="space-y-2">
           {filtered.map((v) => (
-            <div key={v.id} className="bg-white rounded-lg border">
+            <div key={v.id} className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700">
               <div
                 className={`flex items-start gap-3 p-4 cursor-pointer ${v.resolved ? "opacity-60" : ""}`}
                 onClick={() => setExpandedId(expandedId === v.id ? null : v.id)}
@@ -183,11 +208,11 @@ export default function GovernancePage() {
                       </span>
                     )}
                   </div>
-                  <div className="text-sm text-gray-600 mt-1">{v.message}</div>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                  <div className="text-sm text-gray-600 dark:text-gray-300 mt-1">{v.message}</div>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-gray-400 dark:text-gray-500">
                     <Link
                       to={`/sessions/${v.sessionId}`}
-                      className="text-blue-600 hover:underline"
+                      className="text-blue-600 dark:text-blue-400 hover:underline"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {v.sessionId.slice(0, 8)}...
@@ -196,14 +221,14 @@ export default function GovernancePage() {
                     <span>{v.developerEmail}</span>
                   </div>
                 </div>
-                <span className="text-gray-400 text-sm">{expandedId === v.id ? "▼" : "▶"}</span>
+                <span className="text-gray-400 dark:text-gray-500 text-sm">{expandedId === v.id ? "▼" : "▶"}</span>
               </div>
 
               {expandedId === v.id && (
-                <div className="border-t px-4 py-3 bg-gray-50">
+                <div className="border-t dark:border-gray-700 px-4 py-3 bg-gray-50 dark:bg-gray-700">
                   {v.contextJson && (
                     <div className="mb-3">
-                      <div className="text-xs font-medium text-gray-500 mb-1">Context</div>
+                      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Context</div>
                       <pre className="text-xs bg-gray-900 text-gray-100 p-3 rounded overflow-x-auto max-h-40 overflow-y-auto">
                         {(() => {
                           try {
@@ -218,16 +243,16 @@ export default function GovernancePage() {
 
                   {v.resolved && (
                     <div className="mb-3">
-                      <div className="text-xs font-medium text-gray-500 mb-1">Resolution</div>
+                      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Resolution</div>
                       <div className="text-sm">
-                        <span className="text-gray-500">Resolved by:</span> {v.resolvedBy}
+                        <span className="text-gray-500 dark:text-gray-400">Resolved by:</span> {v.resolvedBy}
                       </div>
                       <div className="text-sm">
-                        <span className="text-gray-500">Reason:</span> {v.resolutionReason}
+                        <span className="text-gray-500 dark:text-gray-400">Reason:</span> {v.resolutionReason}
                       </div>
                       {v.resolvedAt && (
                         <div className="text-sm">
-                          <span className="text-gray-500">At:</span>{" "}
+                          <span className="text-gray-500 dark:text-gray-400">At:</span>{" "}
                           {new Date(v.resolvedAt).toLocaleString()}
                         </div>
                       )}
@@ -253,7 +278,7 @@ export default function GovernancePage() {
                       className="flex gap-2 items-end"
                     >
                       <div>
-                        <label className="text-xs text-gray-500 block mb-1" htmlFor={`resolve-by-${v.id}`}>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1" htmlFor={`resolve-by-${v.id}`}>
                           Resolved By
                         </label>
                         <input
@@ -262,12 +287,12 @@ export default function GovernancePage() {
                           placeholder="your@email.com"
                           value={resolveBy}
                           onChange={(e) => setResolveBy(e.target.value)}
-                          className="border rounded px-3 py-1.5 text-sm w-48"
+                          className="border dark:border-gray-600 rounded px-3 py-1.5 text-sm w-48 bg-white dark:bg-gray-600 dark:text-gray-100"
                           required
                         />
                       </div>
                       <div className="flex-1">
-                        <label className="text-xs text-gray-500 block mb-1" htmlFor={`resolve-reason-${v.id}`}>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1" htmlFor={`resolve-reason-${v.id}`}>
                           Reason
                         </label>
                         <input
@@ -276,7 +301,7 @@ export default function GovernancePage() {
                           placeholder="Resolution reason..."
                           value={resolveReason}
                           onChange={(e) => setResolveReason(e.target.value)}
-                          className="border rounded px-3 py-1.5 text-sm w-full"
+                          className="border dark:border-gray-600 rounded px-3 py-1.5 text-sm w-full bg-white dark:bg-gray-600 dark:text-gray-100"
                           required
                         />
                       </div>
@@ -294,7 +319,7 @@ export default function GovernancePage() {
                           setResolveBy("");
                           setResolveReason("");
                         }}
-                        className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-300"
+                        className="bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 px-3 py-1.5 rounded text-sm hover:bg-gray-300 dark:hover:bg-gray-500"
                       >
                         Cancel
                       </button>

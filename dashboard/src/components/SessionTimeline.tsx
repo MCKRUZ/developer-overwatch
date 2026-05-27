@@ -56,11 +56,11 @@ function TurnContent({ turn }: { turn: ConversationTurn }) {
         <span title="Conversation turn">&#128172;</span>
         <span className="font-medium capitalize">{turn.role}</span>
         {turn.tokenCount != null && (
-          <span className="text-xs text-gray-400">{turn.tokenCount} tokens</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">{turn.tokenCount} tokens</span>
         )}
       </div>
       {content && (
-        <pre className="whitespace-pre-wrap text-gray-700 max-h-60 overflow-y-auto">
+        <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300 max-h-60 overflow-y-auto">
           {displayContent}
         </pre>
       )}
@@ -68,7 +68,7 @@ function TurnContent({ turn }: { turn: ConversationTurn }) {
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="text-xs text-blue-600 hover:underline mt-1"
+          className="text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1"
         >
           {expanded ? "Show less" : "Show more"}
         </button>
@@ -86,23 +86,23 @@ function ToolContent({ tool }: { tool: ToolExecution }) {
         <span title="Tool execution">&#128295;</span>
         <span className="font-medium">{tool.toolName}</span>
         {tool.durationMs != null && (
-          <span className="text-xs text-gray-400">{tool.durationMs}ms</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">{tool.durationMs}ms</span>
         )}
       </div>
       {expanded && (
         <div className="mt-2 space-y-2">
           {tool.inputParams && (
             <div>
-              <div className="text-xs font-medium text-gray-500">Input</div>
-              <pre className="text-xs bg-gray-100 p-2 rounded overflow-x-auto max-h-40 overflow-y-auto">
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Input</div>
+              <pre className="text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded overflow-x-auto max-h-40 overflow-y-auto dark:text-gray-200">
                 {tool.inputParams}
               </pre>
             </div>
           )}
           {tool.outputSummary && (
             <div>
-              <div className="text-xs font-medium text-gray-500">Output</div>
-              <pre className="text-xs bg-gray-100 p-2 rounded overflow-x-auto max-h-40 overflow-y-auto">
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Output</div>
+              <pre className="text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded overflow-x-auto max-h-40 overflow-y-auto dark:text-gray-200">
                 {tool.outputSummary}
               </pre>
             </div>
@@ -113,7 +113,7 @@ function ToolContent({ tool }: { tool: ToolExecution }) {
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="text-xs text-purple-600 hover:underline mt-1"
+          className="text-xs text-purple-600 dark:text-purple-400 hover:underline mt-1"
         >
           {expanded ? "Hide details" : "Show details"}
         </button>
@@ -148,7 +148,7 @@ function FileContent({ file }: { file: FileChange }) {
           <button
             type="button"
             onClick={() => setDiffExpanded(!diffExpanded)}
-            className="text-xs text-green-600 hover:underline mt-1"
+            className="text-xs text-green-600 dark:text-green-400 hover:underline mt-1"
           >
             {diffExpanded ? "Hide diff" : "Show diff"}
           </button>
@@ -168,18 +168,18 @@ export default function SessionTimeline({ session }: { session: Session }) {
 
   if (entries.length === 0) {
     return (
-      <div className="bg-white rounded-lg border p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
         <h3 className="font-semibold mb-3">Session Timeline</h3>
-        <p className="text-gray-500 text-sm">No events recorded for this session.</p>
+        <p className="text-gray-500 dark:text-gray-400 text-sm">No events recorded for this session.</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg border p-4">
+    <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
       <h3 className="font-semibold mb-4">Session Timeline</h3>
       {/* Timeline line */}
-      <div className="relative border-l-2 border-gray-200 ml-1.5">
+      <div className="relative border-l-2 border-gray-200 dark:border-gray-600 ml-1.5">
         {entries.map((entry, idx) => {
           const key =
             entry.turn?.id ?? entry.tool?.id ?? entry.file?.id ?? `evt-${idx}`;

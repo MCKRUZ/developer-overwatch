@@ -15,6 +15,9 @@ import {
 import { api } from "../api";
 import type { TeamAnalytics, Session } from "../types";
 import ChartCard from "../components/ChartCard";
+import ExportButtons from "../components/ExportButtons";
+import { exportCsv } from "../utils/exportCsv";
+import { exportPdf } from "../utils/exportPdf";
 
 const COLORS = {
   primary: "#2563eb",
@@ -106,7 +109,7 @@ function deriveViolationsBySeverity(sessions: Session[]): SeverityEntry[] {
 
 function EmptyChart({ message }: { message: string }) {
   return (
-    <div className="flex items-center justify-center h-[250px] text-gray-400 text-sm">
+    <div className="flex items-center justify-center h-[250px] text-gray-400 dark:text-gray-500 text-sm">
       {message}
     </div>
   );
@@ -124,6 +127,9 @@ function renderSeverityLabel(props: { name?: string; value?: number }) {
   return `${name} (${value})`;
 }
 
+const CHART_TICK = { fontSize: 12, fill: "var(--chart-text)" };
+const CHART_TICK_SM = { fontSize: 11, fill: "var(--chart-text)" };
+
 export default function AnalyticsPage() {
   const [analytics, setAnalytics] = useState<TeamAnalytics | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -140,9 +146,9 @@ export default function AnalyticsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="text-gray-500">Loading analytics...</div>;
+  if (loading) return <div className="text-gray-500 dark:text-gray-400">Loading analytics...</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
-  if (!analytics) return <div className="text-gray-500">No data available.</div>;
+  if (!analytics) return <div className="text-gray-500 dark:text-gray-400">No data available.</div>;
 
   const approvalRate =
     analytics.totalPullRequests > 0
@@ -153,41 +159,60 @@ export default function AnalyticsPage() {
   const toolUsage = deriveToolUsage(sessions);
   const violationsBySeverity = deriveViolationsBySeverity(sessions);
 
+  const exportHeaders = ["Developer", "Sessions", "Commits", "Violations"];
+  const exportRows = analytics.developers.map((dev) => [
+    dev.email,
+    String(dev.sessionCount),
+    String(dev.commitCount),
+    String(dev.violationCount),
+  ]);
+
+  function handleExportCsv() {
+    exportCsv("team-analytics", exportHeaders, exportRows);
+  }
+
+  function handleExportPdf() {
+    exportPdf("team-analytics", "Developer Overwatch - Team Analytics", exportHeaders, exportRows);
+  }
+
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">Team Analytics</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-semibold">Team Analytics</h2>
+        <ExportButtons onExportCsv={handleExportCsv} onExportPdf={handleExportPdf} />
+      </div>
 
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold">{analytics.sessionsThisWeek}</div>
-          <div className="text-sm text-gray-500">Sessions This Week</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Sessions This Week</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold">{approvalRate}%</div>
-          <div className="text-sm text-gray-500">PR Approval Rate</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">PR Approval Rate</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold">{analytics.pendingPullRequests}</div>
-          <div className="text-sm text-gray-500">Pending PRs</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Pending PRs</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-red-600">{analytics.violationsThisWeek}</div>
-          <div className="text-sm text-gray-500">Violations This Week</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Violations This Week</div>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-lg font-bold">{analytics.totalSessions}</div>
-          <div className="text-sm text-gray-500">Total Sessions</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Total Sessions</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-lg font-bold">{analytics.totalPullRequests}</div>
-          <div className="text-sm text-gray-500">Total Pull Requests</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Total Pull Requests</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-lg font-bold">{analytics.totalViolations}</div>
-          <div className="text-sm text-gray-500">Total Violations</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Total Violations</div>
         </div>
       </div>
 
@@ -198,9 +223,9 @@ export default function AnalyticsPage() {
           ) : (
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={sessionsByDay}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis allowDecimals={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                <XAxis dataKey="date" tick={CHART_TICK} />
+                <YAxis allowDecimals={false} tick={CHART_TICK} />
                 <Tooltip />
                 <Bar dataKey="count" name="Sessions" fill={COLORS.primary} />
               </BarChart>
@@ -242,9 +267,9 @@ export default function AnalyticsPage() {
           ) : (
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={analytics.developers}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="email" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                <XAxis dataKey="email" tick={CHART_TICK_SM} />
+                <YAxis allowDecimals={false} tick={CHART_TICK} />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="sessionCount" name="Sessions" fill={COLORS.primary} />
@@ -281,13 +306,13 @@ export default function AnalyticsPage() {
         </ChartCard>
       </div>
 
-      <div className="bg-white rounded-lg border overflow-hidden">
-        <h3 className="font-semibold px-4 py-3 border-b bg-gray-50">Developer Breakdown</h3>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden">
+        <h3 className="font-semibold px-4 py-3 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-700">Developer Breakdown</h3>
         {analytics.developers.length === 0 ? (
-          <div className="text-gray-500 text-sm text-center py-8">No developer data.</div>
+          <div className="text-gray-500 dark:text-gray-400 text-sm text-center py-8">No developer data.</div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-gray-50 dark:bg-gray-700 border-b dark:border-gray-600">
               <tr>
                 <th className="text-left px-4 py-3 font-medium">Developer</th>
                 <th className="text-right px-4 py-3 font-medium">Sessions</th>
@@ -295,9 +320,9 @@ export default function AnalyticsPage() {
                 <th className="text-right px-4 py-3 font-medium">Violations</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y dark:divide-gray-700">
               {analytics.developers.map((dev) => (
-                <tr key={dev.email} className="hover:bg-gray-50">
+                <tr key={dev.email} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                   <td className="px-4 py-3">{dev.email}</td>
                   <td className="px-4 py-3 text-right">{dev.sessionCount}</td>
                   <td className="px-4 py-3 text-right">{dev.commitCount}</td>

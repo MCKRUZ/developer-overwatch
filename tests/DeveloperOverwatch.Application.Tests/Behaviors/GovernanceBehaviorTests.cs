@@ -16,11 +16,12 @@ using Xunit;
 public class GovernanceBehaviorTests
 {
     private readonly IGovernanceEngine _engine = Substitute.For<IGovernanceEngine>();
+    private readonly IOverwatchNotifier _notifier = Substitute.For<IOverwatchNotifier>();
     private readonly GovernanceBehavior _behavior;
 
     public GovernanceBehaviorTests()
     {
-        _behavior = new GovernanceBehavior(_engine, NullLogger<GovernanceBehavior>.Instance);
+        _behavior = new GovernanceBehavior(_engine, _notifier, NullLogger<GovernanceBehavior>.Instance);
     }
 
     [Fact]
@@ -40,6 +41,8 @@ public class GovernanceBehaviorTests
 
         result.IsSuccess.Should().BeTrue();
         await _engine.Received(1).EvaluateAsync("s1", Arg.Any<CancellationToken>());
+        await _notifier.Received(1).ViolationCreatedAsync(
+            Arg.Is<GovernanceViolation>(v => v.Id == "v1"), Arg.Any<CancellationToken>());
     }
 
     [Fact]

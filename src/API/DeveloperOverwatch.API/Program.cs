@@ -2,8 +2,10 @@ using System.Reflection;
 using System.Threading.RateLimiting;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DeveloperOverwatch.API.Authentication;
+using DeveloperOverwatch.API.Hubs;
 using DeveloperOverwatch.API.Middleware;
 using DeveloperOverwatch.Application;
+using DeveloperOverwatch.Domain.Interfaces;
 using DeveloperOverwatch.Infrastructure;
 using DeveloperOverwatch.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -85,6 +87,9 @@ builder.Services.AddSwaggerGen(options =>
     if (File.Exists(xmlPath))
         options.IncludeXmlComments(xmlPath);
 });
+
+builder.Services.AddSignalR();
+builder.Services.AddScoped<IOverwatchNotifier, SignalROverwatchNotifier>();
 
 builder.Services.AddCors(options =>
 {
@@ -227,6 +232,7 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<OverwatchHub>("/hubs/overwatch");
 app.MapHealthChecks("/health");
 
 if (!hasOidc)

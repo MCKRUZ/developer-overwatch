@@ -22,7 +22,7 @@ export default function PrQueuePage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="text-gray-500">Loading pull requests...</div>;
+  if (loading) return <div className="text-gray-500 dark:text-gray-400">Loading pull requests...</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
 
   const filtered = filterStatus ? prs.filter((pr) => pr.status === filterStatus) : prs;
@@ -61,21 +61,21 @@ export default function PrQueuePage() {
       <h2 className="text-xl font-semibold mb-4">PR Queue</h2>
 
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold">{counts.total}</div>
-          <div className="text-sm text-gray-500">Total PRs</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Total PRs</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-yellow-600">{counts.pending}</div>
-          <div className="text-sm text-gray-500">Pending</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Pending</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-green-600">{counts.approved}</div>
-          <div className="text-sm text-gray-500">Approved</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Approved</div>
         </div>
-        <div className="bg-white rounded-lg border p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
           <div className="text-2xl font-bold text-red-600">{counts.needsChanges}</div>
-          <div className="text-sm text-gray-500">Needs Changes</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Needs Changes</div>
         </div>
       </div>
 
@@ -83,7 +83,7 @@ export default function PrQueuePage() {
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value as FilterStatus)}
-          className="border rounded px-3 py-1.5 text-sm"
+          className="border dark:border-gray-600 rounded px-3 py-1.5 text-sm bg-white dark:bg-gray-800 dark:text-gray-100"
         >
           <option value="">All Statuses</option>
           <option value="Pending">Pending</option>
@@ -93,11 +93,11 @@ export default function PrQueuePage() {
       </div>
 
       {sorted.length === 0 ? (
-        <div className="text-gray-500 text-center py-8">No pull requests found.</div>
+        <div className="text-gray-500 dark:text-gray-400 text-center py-8">No pull requests found.</div>
       ) : (
-        <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-gray-50 dark:bg-gray-700 border-b dark:border-gray-600">
               <tr>
                 <th
                   className="text-left px-4 py-3 font-medium cursor-pointer select-none"
@@ -120,15 +120,15 @@ export default function PrQueuePage() {
                 <th className="text-left px-4 py-3 font-medium">Reviewed By</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y dark:divide-gray-700">
               {sorted.map((pr) => (
-                <tr key={pr.id} className="hover:bg-gray-50">
+                <tr key={pr.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                   <td className="px-4 py-3 font-mono">#{pr.prNumber}</td>
                   <td className="px-4 py-3">{pr.repo}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={pr.status} />
                   </td>
-                  <td className="px-4 py-3 text-gray-500">{pr.reviewedBy ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{pr.reviewedBy ?? "—"}</td>
                 </tr>
               ))}
             </tbody>

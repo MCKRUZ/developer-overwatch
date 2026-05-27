@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --chart-text: #6b7280;
+  --chart-grid: #e5e7eb;
+}
+
+.dark {
+  --chart-text: #9ca3af;
+  --chart-grid: #374151;
+}

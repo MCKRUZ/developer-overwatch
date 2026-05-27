@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { isAuthConfigured, useAuthContext } from "../auth/AuthProvider";
+import { useDarkMode } from "../hooks/useDarkMode";
 
 const navItems = [
   { to: "/", label: "PR Queue" },
@@ -37,6 +38,8 @@ function UserInfo() {
 }
 
 export default function Layout() {
+  const { isDark, toggle } = useDarkMode();
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="bg-gray-900 text-white">
@@ -61,6 +64,14 @@ export default function Layout() {
                 </NavLink>
               ))}
             </nav>
+            <button
+              type="button"
+              onClick={toggle}
+              className="rounded px-2 py-1.5 text-sm text-gray-300 transition-colors hover:text-white hover:bg-gray-800"
+              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDark ? "☀️" : "🌙"}
+            </button>
             <UserInfo />
           </div>
         </div>

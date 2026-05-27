@@ -1,5 +1,6 @@
 namespace DeveloperOverwatch.API.Controllers;
 
+using DeveloperOverwatch.API.Hubs;
 using DeveloperOverwatch.Application.Commands.IngestSessionEnd;
 using DeveloperOverwatch.Application.Commands.IngestSessionEvents;
 using DeveloperOverwatch.Application.Commands.IngestSessionStart;
@@ -8,6 +9,7 @@ using DeveloperOverwatch.Application.Queries.GetSessions;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 [ApiController]
 [Route("api/sessions")]
@@ -17,8 +19,15 @@ using Microsoft.AspNetCore.Mvc;
 public sealed class SessionsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IHubContext<OverwatchHub, IOverwatchHubClient> _hub;
 
-    public SessionsController(IMediator mediator) => _mediator = mediator;
+    public SessionsController(
+        IMediator mediator,
+        IHubContext<OverwatchHub, IOverwatchHubClient> hub)
+    {
+        _mediator = mediator;
+        _hub = hub;
+    }
 
     [HttpPost("start")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -30,11 +39,18 @@ public sealed class SessionsController : ControllerBase
         CancellationToken ct)
     {
         var result = await _mediator.Send(command, ct);
-        return result.IsSuccess
-            ? Ok(new { sessionId = result.Value })
-            : result.ValidationErrors.Count > 0
+
+        if (!result.IsSuccess)
+        {
+            return result.ValidationErrors.Count > 0
                 ? BadRequest(new { errors = result.ValidationErrors })
                 : Conflict(new { error = result.Error });
+        }
+
+        await _hub.Clients.All.SessionStarted(
+            command.SessionId, command.DeveloperEmail, command.RepoPath);
+
+        return Ok(new { sessionId = result.Value });
     }
 
     [HttpPost("{sessionId}/events")]
@@ -51,11 +67,27 @@ public sealed class SessionsController : ControllerBase
             return BadRequest(new { error = "Session ID mismatch" });
 
         var result = await _mediator.Send(command, ct);
-        return result.IsSuccess
-            ? Ok(new { eventsIngested = result.Value })
-            : result.ValidationErrors.Count > 0
+
+        if (!result.IsSuccess)
+        {
+            return result.ValidationErrors.Count > 0
                 ? BadRequest(new { errors = result.ValidationErrors })
                 : NotFound(new { error = result.Error });
+        }
+
+        await _hub.Clients.Group(sessionId).EventsIngested(
+            sessionId,
+            command.ConversationTurns.Count,
+            command.ToolExecutions.Count,
+            command.FileChanges.Count);
+
+        await _hub.Clients.All.EventsIngested(
+            sessionId,
+            command.ConversationTurns.Count,
+            command.ToolExecutions.Count,
+            command.FileChanges.Count);
+
+        return Ok(new { eventsIngested = result.Value });
     }
 
     [HttpPost("{sessionId}/end")]
@@ -72,11 +104,18 @@ public sealed class SessionsController : ControllerBase
             return BadRequest(new { error = "Session ID mismatch" });
 
         var result = await _mediator.Send(command, ct);
-        return result.IsSuccess
-            ? Ok(new { sessionId = result.Value })
-            : result.ValidationErrors.Count > 0
+
+        if (!result.IsSuccess)
+        {
+            return result.ValidationErrors.Count > 0
                 ? BadRequest(new { errors = result.ValidationErrors })
                 : NotFound(new { error = result.Error });
+        }
+
+        await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
+        await _hub.Clients.All.SessionEnded(sessionId);
+
+        return Ok(new { sessionId = result.Value });
     }
 
     [HttpGet("{sessionId}")]
