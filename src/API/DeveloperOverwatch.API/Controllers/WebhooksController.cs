@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.RateLimiting;
 [Route("api/webhooks")]
 [AllowAnonymous]
 [EnableRateLimiting("webhook")]
+[Produces("application/json")]
+[Tags("Webhooks")]
 public sealed class WebhooksController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -24,6 +26,8 @@ public sealed class WebhooksController : ControllerBase
     }
 
     [HttpPost("github")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> HandleGitHubWebhook(CancellationToken ct)
     {
         var eventType = Request.Headers["X-GitHub-Event"].ToString();

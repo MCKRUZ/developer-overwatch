@@ -7,9 +7,13 @@ using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/auth")]
 [Authorize]
+[Produces("application/json")]
+[Tags("Authentication")]
 public sealed class AuthController : ControllerBase
 {
     [HttpGet("me")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public IActionResult GetCurrentUser()
     {
         var user = HttpContext.User;

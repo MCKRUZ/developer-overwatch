@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/governance")]
 [Authorize]
+[Produces("application/json")]
+[Tags("Governance")]
 public sealed class GovernanceController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -17,6 +19,9 @@ public sealed class GovernanceController : ControllerBase
     public GovernanceController(IMediator mediator) => _mediator = mediator;
 
     [HttpGet("violations/{sessionId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetViolations(
         string sessionId,
         [FromQuery] ViolationSeverity? severity = null,
@@ -28,6 +33,10 @@ public sealed class GovernanceController : ControllerBase
     }
 
     [HttpPost("violations/{violationId}/resolve")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ResolveViolation(
         string violationId,
         [FromBody] ResolveViolationRequest request,

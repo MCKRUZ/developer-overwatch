@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/sessions")]
 [Authorize]
+[Produces("application/json")]
+[Tags("Sessions")]
 public sealed class SessionsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -19,6 +21,10 @@ public sealed class SessionsController : ControllerBase
     public SessionsController(IMediator mediator) => _mediator = mediator;
 
     [HttpPost("start")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> StartSession(
         [FromBody] IngestSessionStartCommand command,
         CancellationToken ct)
@@ -32,6 +38,10 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpPost("{sessionId}/events")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> IngestEvents(
         string sessionId,
         [FromBody] IngestSessionEventsCommand command,
@@ -49,6 +59,10 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpPost("{sessionId}/end")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> EndSession(
         string sessionId,
         [FromBody] IngestSessionEndCommand command,
@@ -66,6 +80,9 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetSession(string sessionId, CancellationToken ct)
     {
         var result = await _mediator.Send(new GetSessionQuery(sessionId), ct);
@@ -75,6 +92,8 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetSessions(
         [FromQuery] string? developer = null,
         [FromQuery] string? repo = null,

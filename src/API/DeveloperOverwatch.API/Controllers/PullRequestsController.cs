@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/prs")]
 [Authorize]
+[Produces("application/json")]
+[Tags("Pull Requests")]
 public sealed class PullRequestsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -17,6 +19,8 @@ public sealed class PullRequestsController : ControllerBase
     public PullRequestsController(IMediator mediator) => _mediator = mediator;
 
     [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetPullRequests(
         [FromQuery] string? repo = null,
         CancellationToken ct = default)
@@ -26,6 +30,9 @@ public sealed class PullRequestsController : ControllerBase
     }
 
     [HttpGet("{owner}/{repoName}/{prNumber:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetPullRequestDetail(
         string owner, string repoName, int prNumber, CancellationToken ct)
     {
@@ -37,6 +44,10 @@ public sealed class PullRequestsController : ControllerBase
     }
 
     [HttpPost("{owner}/{repoName}/{prNumber:int}/review")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ReviewPullRequest(
         string owner,
         string repoName,

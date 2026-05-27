@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/analytics")]
 [Authorize]
+[Produces("application/json")]
+[Tags("Analytics")]
 public sealed class AnalyticsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -16,6 +18,9 @@ public sealed class AnalyticsController : ControllerBase
     public AnalyticsController(IMediator mediator) => _mediator = mediator;
 
     [HttpGet("team")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetTeamAnalytics(CancellationToken ct)
     {
         var result = await _mediator.Send(new GetTeamAnalyticsQuery(), ct);
@@ -23,6 +28,10 @@ public sealed class AnalyticsController : ControllerBase
     }
 
     [HttpGet("developer/{email}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetDeveloperAnalytics(string email, CancellationToken ct)
     {
         var result = await _mediator.Send(new GetDeveloperAnalyticsQuery(email), ct);

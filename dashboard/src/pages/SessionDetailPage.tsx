@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { Session, GovernanceViolation } from "../types";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
+import SessionTimeline from "../components/SessionTimeline";
 
 export default function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -57,9 +58,7 @@ export default function SessionDetailPage() {
     }
   }
 
-  const turns = [...session.conversationTurns].sort((a, b) => a.turnIndex - b.turnIndex);
   const violations = fetchedViolations.length > 0 ? fetchedViolations : session.governanceViolations;
-  const fileChanges = session.fileChanges;
   const annotations = session.architectAnnotations;
 
   const violationCounts = {
@@ -69,10 +68,6 @@ export default function SessionDetailPage() {
     warning: violations.filter((v) => v.severity === "Warning").length,
     info: violations.filter((v) => v.severity === "Info").length,
   };
-
-  function formatTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString();
-  }
 
   return (
     <div>
@@ -104,7 +99,8 @@ export default function SessionDetailPage() {
             <span>{session.endedAt ? new Date(session.endedAt).toLocaleString() : "In progress"}</span>
           </div>
           <div>
-            <span className="text-gray-500">Turns:</span> <span>{turns.length}</span>
+            <span className="text-gray-500">Turns:</span>{" "}
+            <span>{session.conversationTurns.length}</span>
           </div>
         </div>
       </div>
@@ -176,78 +172,9 @@ export default function SessionDetailPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-lg border p-4 mb-6">
-        <h3 className="font-semibold mb-3">Conversation Timeline</h3>
-        <div className="space-y-3">
-          {turns.length === 0 ? (
-            <div className="text-gray-500 text-sm">No conversation turns recorded.</div>
-          ) : (
-            turns.map((turn) => (
-              <div
-                key={turn.id}
-                className={`p-3 rounded text-sm ${
-                  turn.role === "user"
-                    ? "bg-blue-50 border-l-4 border-blue-400"
-                    : turn.role === "assistant"
-                      ? "bg-gray-50 border-l-4 border-gray-400"
-                      : "bg-yellow-50 border-l-4 border-yellow-400"
-                } ${turn.isDecision ? "ring-2 ring-amber-300" : ""}`}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium capitalize">{turn.role}</span>
-                  <span className="text-gray-400 text-xs">{formatTime(turn.timestamp)}</span>
-                  {turn.isDecision && (
-                    <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
-                      Decision
-                    </span>
-                  )}
-                  {turn.tokenCount != null && (
-                    <span className="text-xs text-gray-400">{turn.tokenCount} tokens</span>
-                  )}
-                </div>
-                {turn.content && (
-                  <pre className="whitespace-pre-wrap text-sm text-gray-700 max-h-40 overflow-y-auto">
-                    {turn.content}
-                  </pre>
-                )}
-              </div>
-            ))
-          )}
-        </div>
+      <div className="mb-6">
+        <SessionTimeline session={session} />
       </div>
-
-      {fileChanges.length > 0 && (
-        <div className="bg-white rounded-lg border p-4 mb-6">
-          <h3 className="font-semibold mb-3">File Changes ({fileChanges.length})</h3>
-          <div className="space-y-2">
-            {fileChanges.map((fc) => (
-              <div key={fc.id} className="p-3 bg-gray-50 rounded">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-mono">{fc.filePath}</span>
-                  {fc.changeType && (
-                    <span
-                      className={`text-xs px-1.5 py-0.5 rounded ${
-                        fc.changeType === "Created"
-                          ? "bg-green-100 text-green-700"
-                          : fc.changeType === "Deleted"
-                            ? "bg-red-100 text-red-700"
-                            : "bg-blue-100 text-blue-700"
-                      }`}
-                    >
-                      {fc.changeType}
-                    </span>
-                  )}
-                </div>
-                {fc.diffText && (
-                  <pre className="mt-2 text-xs bg-gray-900 text-gray-100 p-3 rounded overflow-x-auto max-h-60 overflow-y-auto">
-                    {fc.diffText}
-                  </pre>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="bg-white rounded-lg border p-4 mb-6">
         <h3 className="font-semibold mb-3">

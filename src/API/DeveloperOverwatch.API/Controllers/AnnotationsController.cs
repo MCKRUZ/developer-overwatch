@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/annotations")]
 [Authorize]
+[Produces("application/json")]
+[Tags("Annotations")]
 public sealed class AnnotationsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -15,6 +17,10 @@ public sealed class AnnotationsController : ControllerBase
     public AnnotationsController(IMediator mediator) => _mediator = mediator;
 
     [HttpPost]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> AddAnnotation([FromBody] AddAnnotationRequest request, CancellationToken ct)
     {
         var command = new AddAnnotationCommand(

@@ -160,7 +160,7 @@ describe("SessionDetailPage", () => {
     });
   });
 
-  it("renders file changes with diff text", async () => {
+  it("renders file changes in timeline", async () => {
     mockApi.sessions.get.mockResolvedValue(
       buildSession({
         fileChanges: [
@@ -173,7 +173,8 @@ describe("SessionDetailPage", () => {
       expect(screen.getByText("src/app.ts")).toBeInTheDocument();
     });
     expect(screen.getByText("Modified")).toBeInTheDocument();
-    expect(screen.getByText("+new line")).toBeInTheDocument();
+    // Diff text is behind an expand button
+    expect(screen.getByText("Show diff")).toBeInTheDocument();
   });
 
   it("renders existing annotations", async () => {
@@ -247,13 +248,13 @@ describe("SessionDetailPage", () => {
     expect(screen.getByRole("button", { name: "Adding..." })).toBeDisabled();
   });
 
-  it("shows empty conversation timeline message", async () => {
+  it("shows empty timeline message when no events exist", async () => {
     mockApi.sessions.get.mockResolvedValue(
-      buildSession({ conversationTurns: [] }),
+      buildSession({ conversationTurns: [], toolExecutions: [], fileChanges: [] }),
     );
     renderWithRoute("sess-001");
     await waitFor(() => {
-      expect(screen.getByText("No conversation turns recorded.")).toBeInTheDocument();
+      expect(screen.getByText("No events recorded for this session.")).toBeInTheDocument();
     });
   });
 
