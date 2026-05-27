@@ -10,6 +10,15 @@ services:
     volumes:
       - overwatch-data:/data
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - overwatch-api
+
   jaeger:
     image: jaegertracing/all-in-one:latest
     ports:
