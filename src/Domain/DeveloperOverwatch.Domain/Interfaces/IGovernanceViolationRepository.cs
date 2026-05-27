@@ -9,6 +9,7 @@ public interface IGovernanceViolationRepository
     Task<IReadOnlyList<GovernanceViolation>> GetBySessionIdAsync(string sessionId, CancellationToken ct = default);
     Task<IReadOnlyList<GovernanceViolation>> GetBySessionIdAsync(string sessionId, ViolationSeverity? severity, CancellationToken ct = default);
     Task<IReadOnlyList<GovernanceViolation>> GetRecentAsync(TimeSpan window, CancellationToken ct = default);
+    Task<IReadOnlyList<GovernanceViolation>> GetAllAsync(CancellationToken ct = default);
     Task AddRangeAsync(IEnumerable<GovernanceViolation> violations, CancellationToken ct = default);
     Task UpdateAsync(GovernanceViolation violation, CancellationToken ct = default);
 }
