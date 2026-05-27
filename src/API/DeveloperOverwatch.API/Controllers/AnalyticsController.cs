@@ -3,10 +3,12 @@ namespace DeveloperOverwatch.API.Controllers;
 using DeveloperOverwatch.Application.Queries.GetDeveloperAnalytics;
 using DeveloperOverwatch.Application.Queries.GetTeamAnalytics;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/analytics")]
+[Authorize]
 public sealed class AnalyticsController : ControllerBase
 {
     private readonly IMediator _mediator;

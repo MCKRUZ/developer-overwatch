@@ -19,7 +19,6 @@ public class PullRequestsControllerTests : IClassFixture<OverwatchWebApplication
         {
             builder.ConfigureServices(services =>
             {
-                // Remove all IGitHostingService-related registrations (AddHttpClient registers several)
                 var descriptors = services
                     .Where(d => d.ServiceType == typeof(IGitHostingService))
                     .ToList();
@@ -36,6 +35,7 @@ public class PullRequestsControllerTests : IClassFixture<OverwatchWebApplication
                 services.AddSingleton(stub);
             });
         }).CreateClient();
+        _client.DefaultRequestHeaders.Add("X-Api-Key", OverwatchWebApplicationFactory.TestApiKey);
     }
 
     [Fact]

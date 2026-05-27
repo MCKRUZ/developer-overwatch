@@ -17,7 +17,7 @@ public class GovernanceControllerTests : IClassFixture<OverwatchWebApplicationFa
     public GovernanceControllerTests(OverwatchWebApplicationFactory factory)
     {
         _factory = factory;
-        _client = factory.CreateClient();
+        _client = factory.CreateAuthenticatedClient();
     }
 
     [Fact]

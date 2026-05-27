@@ -18,7 +18,6 @@ public class WebhooksControllerTests : IClassFixture<OverwatchWebApplicationFact
         {
             builder.ConfigureServices(services =>
             {
-                // Remove all IGitHostingService-related registrations (AddHttpClient registers several)
                 var descriptors = services
                     .Where(d => d.ServiceType == typeof(IGitHostingService))
                     .ToList();

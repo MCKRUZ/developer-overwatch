@@ -15,7 +15,7 @@ public class AnalyticsControllerTests : IClassFixture<OverwatchWebApplicationFac
     public AnalyticsControllerTests(OverwatchWebApplicationFactory factory)
     {
         _factory = factory;
-        _client = factory.CreateClient();
+        _client = factory.CreateAuthenticatedClient();
     }
 
     [Fact]

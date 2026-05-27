@@ -8,11 +8,14 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 public class OverwatchWebApplicationFactory : WebApplicationFactory<Program>, IDisposable
 {
+    public const string TestApiKey = "test-integration-api-key";
+
     private readonly SqliteConnection _connection;
 
     public OverwatchWebApplicationFactory()
@@ -23,18 +26,31 @@ public class OverwatchWebApplicationFactory : WebApplicationFactory<Program>, ID
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.ConfigureAppConfiguration(config =>
+        {
+            config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ApiKeys:Keys:0"] = TestApiKey
+            });
+        });
+
         builder.ConfigureServices(services =>
         {
-            // Remove existing DbContext registrations
             var descriptor = services.SingleOrDefault(
                 d => d.ServiceType == typeof(DbContextOptions<OverwatchDbContext>));
             if (descriptor is not null)
                 services.Remove(descriptor);
 
-            // Register with in-memory SQLite using the shared open connection
             services.AddDbContext<OverwatchDbContext>(options =>
                 options.UseSqlite(_connection));
         });
+    }
+
+    public HttpClient CreateAuthenticatedClient()
+    {
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+        return client;
     }
 
     protected override void Dispose(bool disposing)
@@ -51,7 +67,7 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
 
     public SessionsControllerTests(OverwatchWebApplicationFactory factory)
     {
-        _client = factory.CreateClient();
+        _client = factory.CreateAuthenticatedClient();
     }
 
     [Fact]
@@ -59,7 +75,6 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
     {
         var sessionId = Guid.NewGuid().ToString();
 
-        // Start session
         var startCmd = new
         {
             SessionId = sessionId,
@@ -71,7 +86,6 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
         var startResponse = await _client.PostAsJsonAsync("/api/sessions/start", startCmd);
         startResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Ingest events
         var eventsCmd = new
         {
             SessionId = sessionId,
@@ -102,7 +116,6 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
         var eventsResponse = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", eventsCmd);
         eventsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // End session
         var endCmd = new
         {
             SessionId = sessionId,
@@ -112,7 +125,6 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
         var endResponse = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/end", endCmd);
         endResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Query session
         var getResponse = await _client.GetAsync($"/api/sessions/{sessionId}");
         getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -148,5 +160,16 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
         var cmd = new { SessionId = Guid.NewGuid().ToString(), DeveloperEmail = "", StartedAt = DateTime.UtcNow };
         var response = await _client.PostAsJsonAsync("/api/sessions/start", cmd);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task StartSession_NoApiKey_Returns401()
+    {
+        var factory = new OverwatchWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var cmd = new { SessionId = Guid.NewGuid().ToString(), DeveloperEmail = "dev@test.com", StartedAt = DateTime.UtcNow };
+        var response = await client.PostAsJsonAsync("/api/sessions/start", cmd);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 }

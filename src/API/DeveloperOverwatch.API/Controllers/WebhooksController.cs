@@ -4,10 +4,12 @@ using System.Text.Json;
 using DeveloperOverwatch.Application.Commands.ProcessPrWebhook;
 using DeveloperOverwatch.Application.Commands.ProcessPushWebhook;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/webhooks")]
+[AllowAnonymous]
 public sealed class WebhooksController : ControllerBase
 {
     private readonly IMediator _mediator;

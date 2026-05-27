@@ -2,10 +2,12 @@ namespace DeveloperOverwatch.API.Controllers;
 
 using DeveloperOverwatch.Application.Commands.AddAnnotation;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/annotations")]
+[Authorize]
 public sealed class AnnotationsController : ControllerBase
 {
     private readonly IMediator _mediator;

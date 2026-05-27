@@ -4,11 +4,13 @@ using DeveloperOverwatch.Application.Commands.ResolveViolation;
 using DeveloperOverwatch.Application.Queries.GetViolations;
 using DeveloperOverwatch.Domain.Enums;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/governance")]
-public class GovernanceController : ControllerBase
+[Authorize]
+public sealed class GovernanceController : ControllerBase
 {
     private readonly IMediator _mediator;
 

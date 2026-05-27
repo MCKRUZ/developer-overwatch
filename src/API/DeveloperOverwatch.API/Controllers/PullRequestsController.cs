@@ -4,10 +4,12 @@ using DeveloperOverwatch.Application.Commands.ReviewPullRequest;
 using DeveloperOverwatch.Application.Queries.GetPullRequestDetail;
 using DeveloperOverwatch.Application.Queries.GetPullRequests;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/prs")]
+[Authorize]
 public sealed class PullRequestsController : ControllerBase
 {
     private readonly IMediator _mediator;

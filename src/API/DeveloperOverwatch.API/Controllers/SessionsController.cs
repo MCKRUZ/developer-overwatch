@@ -6,10 +6,12 @@ using DeveloperOverwatch.Application.Commands.IngestSessionStart;
 using DeveloperOverwatch.Application.Queries.GetSession;
 using DeveloperOverwatch.Application.Queries.GetSessions;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/sessions")]
+[Authorize]
 public sealed class SessionsController : ControllerBase
 {
     private readonly IMediator _mediator;

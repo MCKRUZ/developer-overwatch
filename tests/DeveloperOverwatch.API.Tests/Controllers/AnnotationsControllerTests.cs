@@ -16,7 +16,7 @@ public class AnnotationsControllerTests : IClassFixture<OverwatchWebApplicationF
     public AnnotationsControllerTests(OverwatchWebApplicationFactory factory)
     {
         _factory = factory;
-        _client = factory.CreateClient();
+        _client = factory.CreateAuthenticatedClient();
     }
 
     [Fact]
