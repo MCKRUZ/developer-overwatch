@@ -1,18 +1,12 @@
 # hooks/overwatch-post-tool-use.ps1
-# Claude Code PostToolUse hook — sends tool execution data to Overwatch
-# Receives tool info via CLAUDE_TOOL_NAME, CLAUDE_TOOL_INPUT, CLAUDE_TOOL_OUTPUT env vars
+# Claude Code PostToolUse hook — queues tool execution events locally
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$activeSessionPath = Join-Path $env:USERPROFILE ".overwatch" "active-session"
+$overwatchDir = Join-Path $env:USERPROFILE ".overwatch"
+$activeSessionPath = Join-Path $overwatchDir "active-session"
 if (-not (Test-Path $activeSessionPath)) { exit 0 }
 $sessionId = Get-Content $activeSessionPath -Raw
-
-$configPath = Join-Path $env:USERPROFILE ".overwatch" "config.json"
-if (-not (Test-Path $configPath)) { exit 0 }
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
-$apiUrl = $config.apiUrl
-if (-not $apiUrl) { exit 0 }
 
 $toolName = $env:CLAUDE_TOOL_NAME
 if (-not $toolName) { exit 0 }
@@ -25,10 +19,11 @@ $outputSummary = if ($env:CLAUDE_TOOL_OUTPUT) {
     $env:CLAUDE_TOOL_OUTPUT.Substring(0, [Math]::Min($env:CLAUDE_TOOL_OUTPUT.Length, 2048))
 } else { $null }
 
-$body = @{
+$toolExecId = [guid]::NewGuid().ToString()
+$payload = @{
     sessionId = $sessionId
     toolExecutions = @(@{
-        id = [guid]::NewGuid().ToString()
+        id = $toolExecId
         toolName = $toolName
         inputParams = $inputParams
         outputSummary = $outputSummary
@@ -38,8 +33,21 @@ $body = @{
     conversationTurns = @()
 } | ConvertTo-Json -Depth 4 -Compress
 
+$dbPath = Join-Path $overwatchDir "queue.db"
+$eventId = [guid]::NewGuid().ToString()
+$now = (Get-Date).ToUniversalTime().ToString("o")
+$escapedPayload = $payload.Replace("'", "''")
+
 try {
-    $headers = @{ "Content-Type" = "application/json" }
-    if ($config.apiKey) { $headers["X-Api-Key"] = $config.apiKey }
-    Invoke-RestMethod -Uri "$apiUrl/api/sessions/$sessionId/events" -Method Post -Body $body -Headers $headers -TimeoutSec 5 | Out-Null
-} catch { }
+    $connStr = "Data Source=$dbPath"
+    $conn = New-Object Microsoft.Data.Sqlite.SqliteConnection($connStr)
+    $conn.Open()
+    $cmd = $conn.CreateCommand()
+    $cmd.CommandText = "INSERT OR IGNORE INTO events (id, session_id, event_type, payload_json, created_at) VALUES ('$eventId', '$sessionId', 'ToolExecution', '$escapedPayload', '$now')"
+    $cmd.ExecuteNonQuery() | Out-Null
+    $conn.Close()
+} catch {
+    $fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
+    $line = @{ id = $eventId; sessionId = $sessionId; eventType = "ToolExecution"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
+    $line | Add-Content $fallbackFile
+}

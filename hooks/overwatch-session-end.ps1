@@ -1,27 +1,36 @@
 # hooks/overwatch-session-end.ps1
-# Claude Code SessionEnd hook — finalizes the session in Overwatch
+# Claude Code SessionEnd hook — queues session-end event locally
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$activeSessionPath = Join-Path $env:USERPROFILE ".overwatch" "active-session"
+$overwatchDir = Join-Path $env:USERPROFILE ".overwatch"
+$activeSessionPath = Join-Path $overwatchDir "active-session"
 if (-not (Test-Path $activeSessionPath)) { exit 0 }
 $sessionId = Get-Content $activeSessionPath -Raw
 
-$configPath = Join-Path $env:USERPROFILE ".overwatch" "config.json"
-if (-not (Test-Path $configPath)) { exit 0 }
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
-$apiUrl = $config.apiUrl
-if (-not $apiUrl) { exit 0 }
-
-$body = @{
+$payload = @{
     sessionId = $sessionId
     endedAt = (Get-Date).ToUniversalTime().ToString("o")
 } | ConvertTo-Json -Compress
 
+$dbPath = Join-Path $overwatchDir "queue.db"
+$eventId = [guid]::NewGuid().ToString()
+$now = (Get-Date).ToUniversalTime().ToString("o")
+$escapedPayload = $payload.Replace("'", "''")
+
 try {
-    $headers = @{ "Content-Type" = "application/json" }
-    if ($config.apiKey) { $headers["X-Api-Key"] = $config.apiKey }
-    Invoke-RestMethod -Uri "$apiUrl/api/sessions/$sessionId/end" -Method Post -Body $body -Headers $headers -TimeoutSec 5 | Out-Null
-} catch { }
+    $connStr = "Data Source=$dbPath"
+    $conn = New-Object Microsoft.Data.Sqlite.SqliteConnection($connStr)
+    $conn.Open()
+    $cmd = $conn.CreateCommand()
+    $cmd.CommandText = "INSERT OR IGNORE INTO events (id, session_id, event_type, payload_json, created_at) VALUES ('$eventId', '$sessionId', 'SessionEnd', '$escapedPayload', '$now')"
+    $cmd.ExecuteNonQuery() | Out-Null
+    $conn.Close()
+} catch {
+    $fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
+    $line = @{ id = $eventId; sessionId = $sessionId; eventType = "SessionEnd"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
+    $line | Add-Content $fallbackFile
+}
 
 Remove-Item $activeSessionPath -Force 2>$null
+Remove-Item (Join-Path $overwatchDir "active-repo") -Force 2>$null

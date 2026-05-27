@@ -94,3 +94,13 @@ secrets.json
 # Node / Frontend
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
+
+# SQLite test databases
+overwatch-test.db
+*.db-shm
+*.db-wal
+
+# Superpowers internal state
+.superpowers/

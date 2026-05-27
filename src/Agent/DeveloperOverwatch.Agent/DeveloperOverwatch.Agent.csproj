@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DeveloperOverwatch.Agent</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>overwatch-agent</ToolCommandName>
+    <PackageId>DeveloperOverwatch.Agent</PackageId>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.*" />
+  </ItemGroup>
+</Project>
