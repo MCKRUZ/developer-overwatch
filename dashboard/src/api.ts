@@ -44,7 +44,7 @@ export const api = {
       owner: string,
       repoName: string,
       prNumber: number,
-      body: { repo: string; prNumber: number; status: string; reviewedBy: string; notes?: string },
+      body: { repo: string; prNumber: number; status: PullRequestReview["status"]; reviewedBy: string; notes?: string },
     ): Promise<{ reviewId: string }> {
       return fetchJson(`${BASE}/prs/${owner}/${repoName}/${prNumber}/review`, {
         method: "POST",
@@ -64,14 +64,16 @@ export const api = {
   },
 
   governance: {
-    violations(sessionId: string, severity?: string): Promise<GovernanceViolation[]> {
-      const qs = severity ? `?severity=${severity}` : "";
-      return fetchJson(`${BASE}/governance/violations/${sessionId}${qs}`);
+    violations(sessionId: string, severity?: GovernanceViolation["severity"]): Promise<GovernanceViolation[]> {
+      const params = new URLSearchParams();
+      if (severity) params.set("severity", severity);
+      const qs = params.toString();
+      return fetchJson(`${BASE}/governance/violations/${sessionId}${qs ? `?${qs}` : ""}`);
     },
     resolve(
       violationId: string,
       body: { resolvedBy: string; resolutionReason: string },
-    ): Promise<void> {
+    ): Promise<{ violationId: string }> {
       return fetchJson(`${BASE}/governance/violations/${violationId}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
