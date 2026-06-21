@@ -2,6 +2,8 @@
 
 Monitors Claude Code sessions in real time, enforces governance policies, and surfaces analytics through a React dashboard.
 
+**Workspace:** `agentic-architecture-and-governance/accelerators/developer-overwatch/` — usage telemetry **accelerator**. Architecture: [`../../architecture/agentic-architecture/`](../../architecture/agentic-architecture/). Governance: [`../../governance/ai-governance-in-practice/`](../../governance/ai-governance-in-practice/).
+
 <!-- TODO: Replace with actual badge URLs once CI is wired up -->
 ![CI](https://img.shields.io/badge/build-passing-brightgreen)
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)
@@ -78,6 +80,8 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 - (Optional) An OIDC provider for dashboard authentication (Entra ID, Auth0, etc.)
 
 ## Getting Started
+
+**Contributor checklist:** [docs/local-dev-setup.md](docs/local-dev-setup.md) — prerequisites, run commands, agent/hooks, tests, troubleshooting.
 
 ```bash
 # Clone the repository
