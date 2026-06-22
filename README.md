@@ -4,8 +4,7 @@ Monitors Claude Code sessions in real time, enforces governance policies, and su
 
 **Workspace:** `agentic-architecture-and-governance/accelerators/developer-overwatch/` — usage telemetry **accelerator**. Architecture: [`../../architecture/agentic-architecture/`](../../architecture/agentic-architecture/). Governance: [`../../governance/ai-governance-in-practice/`](../../governance/ai-governance-in-practice/).
 
-<!-- TODO: Replace with actual badge URLs once CI is wired up -->
-![CI](https://img.shields.io/badge/build-passing-brightgreen)
+[![CI](https://github.com/MCKRUZ/developer-overwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/MCKRUZ/developer-overwatch/actions/workflows/ci.yml)
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)
 ![React 19](https://img.shields.io/badge/React-19.1-61DAFB)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -48,9 +47,9 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 | Project | Layer | Purpose |
 |---------|-------|---------|
 | `DeveloperOverwatch.Domain` | Domain | Entities (`Session`, `ConversationTurn`, `ToolExecution`, `FileChange`, `GovernanceViolation`, `CommitSessionLink`, `PullRequestReview`, `ArchitectAnnotation`), enums, `Result<T>`, repository/service interfaces |
-| `DeveloperOverwatch.Application` | Application | MediatR commands/queries (CQRS), FluentValidation, pipeline behaviors (validation, logging, governance), session-commit correlation |
+| `DeveloperOverwatch.Application` | Application | MediatR commands/queries (CQRS), FluentValidation, pipeline behaviors (request tracing, idempotency, validation, logging, governance), session-commit correlation |
 | `DeveloperOverwatch.Infrastructure` | Infrastructure | EF Core persistence (SQLite/SQL Server), repository implementations, GitHub service, governance engine (pattern rules, semantic rules, drift detection, LLM client), Slack/email notifications |
-| `DeveloperOverwatch.API` | Presentation | ASP.NET Core controllers, SignalR hub (`/hubs/overwatch`), middleware (security headers, request logging, webhook signature verification), dual auth (API key + JWT), rate limiting, Swagger/OpenAPI |
+| `DeveloperOverwatch.API` | Presentation | ASP.NET Core controllers, SignalR hub (`/hubs/overwatch`), middleware (global exception handling, security headers, request logging, webhook signature verification), dual auth (API key + JWT), rate limiting, Swagger/OpenAPI |
 | `DeveloperOverwatch.Agent` | Agent | .NET global tool (`overwatch-agent`), local SQLite queue, privacy redaction, decision detection, conversation capture, git fallback writer, background queue processor |
 | `dashboard` | Frontend | React 19 + Vite + Tailwind CSS + Recharts, OIDC authentication, SignalR real-time updates, session timeline, governance violations, analytics charts, PDF/CSV export |
 
@@ -70,6 +69,9 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 - **Dark Mode** -- Tailwind-based dark theme support
 - **Notifications** -- Slack webhooks and email alerts for governance violations
 - **Webhook Integration** -- GitHub push and pull_request webhooks with HMAC signature verification
+- **Idempotent Webhooks** -- Duplicate deliveries are deduplicated by `X-GitHub-Delivery` id, so provider retries never double-process
+- **Structured Error Responses** -- RFC 7807 ProblemDetails on all failures (detailed in development, generic in production)
+- **Distributed Tracing** -- Each request is wrapped in an OpenTelemetry span (exported to Application Insights when configured)
 - **Rate Limiting** -- Fixed-window rate limiting per IP, separate policy for webhooks
 - **Health Checks** -- `/health` endpoint with database connectivity checks
 
@@ -80,8 +82,6 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 - (Optional) An OIDC provider for dashboard authentication (Entra ID, Auth0, etc.)
 
 ## Getting Started
-
-**Contributor checklist:** [docs/local-dev-setup.md](docs/local-dev-setup.md) — prerequisites, run commands, agent/hooks, tests, troubleshooting.
 
 ```bash
 # Clone the repository
@@ -176,10 +176,13 @@ The agent polls the queue and ships events in batches to the API. If the API is 
 | `LlmModel` | `claude-sonnet-4-6` | Model for semantic rule evaluation |
 | `LlmMaxTokens` | `1024` | Max tokens per LLM response |
 | `LlmTimeoutSeconds` | `30` | LLM request timeout |
+| `SemanticJurySize` | `1` | Number of independent judges per semantic rule. `1` is the single-judge default; `>1` runs a panel and reduces findings by consensus |
+| `SemanticJuryPersonas` | `null` | Optional list of distinct judge "lenses"; when set, drives panel size and overrides `SemanticJurySize` (empty/null ⇒ identical judges) |
+| `SemanticConsensusThreshold` | `0.5` | Fraction of judges that must agree for a panel finding to stand (`0.5` = simple majority) |
 
 ### Dashboard Environment Variables
 
-Create `dashboard/.env.local` from the template:
+Create `dashboard/.env.local` with the following variables (all optional — omit them to run the dashboard without authentication):
 
 | Variable | Description |
 |----------|-------------|
@@ -265,7 +268,7 @@ Environment-specific parameter files: `infra/parameters/dev.bicepparam` and `inf
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `ci.yml` | PRs to main, push to main | Build, test, pack agent tool |
+| `ci.yml` | PRs + pushes to main/master | Backend build + test with coverage gate, dashboard typecheck + test, supply-chain vulnerability scan, pack agent tool |
 | `deploy.yml` | Push to main, manual dispatch | Build Docker images, push to ACR, deploy Bicep, update Container Apps |
 | `agent-release.yml` | `agent-v*` tags | Pack and publish agent to NuGet.org |
 
@@ -352,7 +355,9 @@ developer-overwatch/
 |   |   +-- Interfaces/          # Repository and service contracts
 |   |   +-- Models/              # GovernancePolicy
 |   +-- Application/DeveloperOverwatch.Application/
-|   |   +-- Behaviors/           # ValidationBehavior, LoggingBehavior, GovernanceBehavior
+|   |   +-- Behaviors/           # RequestTracingBehavior, IdempotencyBehavior, ValidationBehavior,
+|   |   |                        # LoggingBehavior, GovernanceBehavior
+|   |   +-- Idempotency/          # IIdempotentRequest, IIdempotencyStore, InMemoryIdempotencyStore
 |   |   +-- Commands/            # IngestSessionStart/Events/End, ProcessPushWebhook,
 |   |   |                        # ProcessPrWebhook, ReviewPullRequest, ResolveViolation,
 |   |   |                        # AddAnnotation
@@ -369,7 +374,7 @@ developer-overwatch/
 |   |   +-- Controllers/         # Sessions, PullRequests, Webhooks, Governance, Analytics,
 |   |   |                        # Annotations, Auth
 |   |   +-- Hubs/                # OverwatchHub (SignalR)
-|   |   +-- Middleware/          # SecurityHeaders, RequestLogging, WebhookSignature
+|   |   +-- Middleware/          # GlobalException, SecurityHeaders, RequestLogging, WebhookSignature
 |   |   +-- Authentication/      # ApiKeyAuthenticationHandler
 |   +-- Agent/DeveloperOverwatch.Agent/
 |       +-- Models/              # AgentConfig, EventType, QueuedEvent
