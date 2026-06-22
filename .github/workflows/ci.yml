@@ -1,14 +1,14 @@
 # Continuous Integration — Developer Overwatch
-# Runs on every PR to main and every push to main.
-# Builds the solution, runs all tests, and (on main push) packs the Agent global tool.
+# Builds + tests the .NET solution (with coverage gate), the React dashboard, and runs a
+# supply-chain vulnerability scan. Runs on every PR and push to the default branch.
 
 name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, master]
   push:
-    branches: [main]
+    branches: [main, master]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -17,9 +17,16 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Minimum line coverage (%) for the whole .NET solution. Floor is set just below the current
+  # 60.3% so the gate can only move up. Business-logic layers are already high (API ~91%,
+  # Application ~88%, Domain ~88%); the global number is held down by Infrastructure's external
+  # HTTP integrations and the Agent entry point. Ratchet this up as those gaps close.
+  MIN_COVERAGE: '58'
+
 jobs:
-  build-and-test:
-    name: Build & Test
+  backend:
+    name: Backend — Build, Test & Coverage
     runs-on: ubuntu-latest
 
     steps:
@@ -35,10 +42,38 @@ jobs:
         run: dotnet restore
 
       - name: Build
-        run: dotnet build --no-restore
+        run: dotnet build --no-restore --configuration Release
 
-      - name: Test
-        run: dotnet test --no-build --verbosity normal --logger "trx;LogFileName=results.trx"
+      - name: Test with coverage
+        run: >
+          dotnet test --no-build --configuration Release
+          --verbosity normal
+          --logger "trx;LogFileName=results.trx"
+          --collect:"XPlat Code Coverage"
+          --results-directory ./TestResults
+
+      - name: Generate coverage report
+        if: always()
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          reportgenerator \
+            -reports:'./TestResults/**/coverage.cobertura.xml' \
+            -targetdir:./coveragereport \
+            -reporttypes:'Html;MarkdownSummaryGithub;Cobertura'
+
+      - name: Publish coverage summary
+        if: always()
+        run: cat ./coveragereport/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce coverage threshold
+        run: |
+          line_rate=$(grep -oP 'line-rate="\K[0-9.]+' ./coveragereport/Cobertura.xml | head -1)
+          pct=$(awk "BEGIN{printf \"%.1f\", ${line_rate}*100}")
+          echo "Line coverage: ${pct}% (minimum ${MIN_COVERAGE}%)"
+          awk "BEGIN{exit !(${line_rate}*100 >= ${MIN_COVERAGE})}" || {
+            echo "::error::Line coverage ${pct}% is below the required ${MIN_COVERAGE}%";
+            exit 1;
+          }
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -48,14 +83,84 @@ jobs:
           path: '**/TestResults/*.trx'
           retention-days: 14
 
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: ./coveragereport
+          retention-days: 14
+
       - name: Pack Agent global tool
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: dotnet pack src/Agent/DeveloperOverwatch.Agent/ -c Release -o ./artifacts
 
       - name: Upload Agent NuGet package
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: actions/upload-artifact@v4
         with:
           name: agent-nupkg
           path: ./artifacts/*.nupkg
           retention-days: 30
+
+  frontend:
+    name: Dashboard — Typecheck & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+  security:
+    name: Supply-chain Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Scan NuGet packages for known vulnerabilities
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vuln.log
+          if grep -qiE '>\s*(Critical|High|Moderate)' vuln.log; then
+            echo "::error::Vulnerable NuGet packages detected";
+            exit 1;
+          fi
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Audit npm dependencies
+        working-directory: dashboard
+        run: npm audit --audit-level=high

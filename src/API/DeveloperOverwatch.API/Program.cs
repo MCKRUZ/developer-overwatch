@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,10 +24,12 @@ var dbProvider = builder.Configuration.GetValue("Database:Provider", "sqlite");
 var appInsightsCs = builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
 if (!string.IsNullOrEmpty(appInsightsCs))
 {
-    builder.Services.AddOpenTelemetry().UseAzureMonitor(options =>
-    {
-        options.ConnectionString = appInsightsCs;
-    });
+    builder.Services.AddOpenTelemetry()
+        .UseAzureMonitor(options =>
+        {
+            options.ConnectionString = appInsightsCs;
+        })
+        .WithTracing(tracing => tracing.AddSource(ApplicationTelemetry.ActivitySourceName));
 }
 
 var healthChecks = builder.Services.AddHealthChecks();
@@ -224,6 +227,7 @@ using (var scope = app.Services.CreateScope())
         await db.Database.EnsureCreatedAsync();
 }
 
+app.UseMiddleware<GlobalExceptionMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
