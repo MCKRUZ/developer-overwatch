@@ -6,7 +6,14 @@ using DeveloperOverwatch.Domain.Entities;
 using DeveloperOverwatch.Domain.Enums;
 using DeveloperOverwatch.Domain.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
+/// <summary>
+/// Evaluates a semantic governance rule with an LLM. By default a single judge runs (behavior
+/// unchanged); when <see cref="GovernanceConfig.SemanticJurySize"/> &gt; 1 or
+/// <see cref="GovernanceConfig.SemanticJuryPersonas"/> is set, a panel of independent judges
+/// votes and only a consensus violation is recorded — cutting any one judge's false positives.
+/// </summary>
 public sealed class SemanticRuleEvaluator
 {
     private const int MaxFilesPerEvaluation = 20;
@@ -28,36 +35,140 @@ public sealed class SemanticRuleEvaluator
     };
 
     private readonly ILlmClient _llmClient;
+    private readonly IOptions<GovernanceConfig> _config;
     private readonly ILogger<SemanticRuleEvaluator> _logger;
 
-    public SemanticRuleEvaluator(ILlmClient llmClient, ILogger<SemanticRuleEvaluator> logger)
+    public SemanticRuleEvaluator(
+        ILlmClient llmClient,
+        IOptions<GovernanceConfig> config,
+        ILogger<SemanticRuleEvaluator> logger)
     {
         _llmClient = llmClient;
+        _config = config;
         _logger = logger;
     }
 
     public async Task<IReadOnlyList<GovernanceViolation>> EvaluateAsync(
         GovernancePolicy policy, Session session, CancellationToken ct = default)
     {
+        var cfg = _config.Value;
+        var personas = cfg.SemanticJuryPersonas;
+        var hasPersonas = personas is { Count: > 0 };
+        var panelSize = hasPersonas ? personas!.Count : Math.Max(1, cfg.SemanticJurySize);
+
         var userPrompt = BuildUserPrompt(policy, session);
 
+        return panelSize <= 1
+            ? await EvaluateSingleAsync(policy, session.Id, userPrompt, hasPersonas ? personas![0] : null, ct)
+            : await EvaluatePanelAsync(
+                // Pass null (not an empty list) when there are no personas, so the panelist loop
+                // never indexes past the end — panelSize then comes from SemanticJurySize.
+                policy, session.Id, userPrompt, hasPersonas ? personas : null, panelSize,
+                cfg.SemanticConsensusThreshold, ct);
+    }
+
+    private async Task<IReadOnlyList<GovernanceViolation>> EvaluateSingleAsync(
+        GovernancePolicy policy, string sessionId, string userPrompt, string? persona, CancellationToken ct)
+    {
         string? response;
         try
         {
-            response = await _llmClient.CompleteAsync(SystemPrompt, userPrompt, ct);
+            response = await _llmClient.CompleteAsync(BuildSystemPrompt(persona), userPrompt, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "LLM call failed for policy {PolicyId} on session {SessionId}",
-                policy.Id, session.Id);
+                policy.Id, sessionId);
             return [];
         }
 
         if (response is null)
             return [];
 
-        return ParseResponse(response, policy, session.Id);
+        return ParseResponse(response, policy, sessionId);
     }
+
+    private async Task<IReadOnlyList<GovernanceViolation>> EvaluatePanelAsync(
+        GovernancePolicy policy, string sessionId, string userPrompt,
+        IReadOnlyList<string>? personas, int panelSize, double threshold, CancellationToken ct)
+    {
+        var tasks = new Task<PanelistVerdict>[panelSize];
+        for (var i = 0; i < panelSize; i++)
+        {
+            var persona = personas is not null ? personas[i] : null;
+            tasks[i] = RunPanelistAsync(policy, userPrompt, persona, ct);
+        }
+
+        var verdicts = await Task.WhenAll(tasks);
+        var consensus = JuryVoteAggregator.Aggregate(verdicts, threshold);
+
+        _logger.LogInformation(
+            "Semantic jury for policy {PolicyId}: {Bucket} — {Votes}/{Responded} of {Panel} judges flagged a violation",
+            policy.Id, consensus.Bucket, consensus.ViolatedVotes, consensus.Responded, consensus.Panelists);
+
+        if (!consensus.Violated)
+            return [];
+
+        return consensus.Findings
+            .Where(f => !string.IsNullOrWhiteSpace(f.Message))
+            .Select(f => BuildViolation(policy, sessionId, f.Message, JsonSerializer.Serialize(
+                new
+                {
+                    f.Evidence,
+                    Consensus = consensus.Bucket.ToString(),
+                    Votes = consensus.ViolatedVotes,
+                    Responded = consensus.Responded,
+                    Panelists = consensus.Panelists
+                },
+                JsonOptions)))
+            .ToArray();
+    }
+
+    private static GovernanceViolation BuildViolation(
+        GovernancePolicy policy, string sessionId, string message, string contextJson) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        SessionId = sessionId,
+        RuleId = policy.Id,
+        Severity = policy.Severity,
+        Message = message,
+        ContextJson = contextJson,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    private async Task<PanelistVerdict> RunPanelistAsync(
+        GovernancePolicy policy, string userPrompt, string? persona, CancellationToken ct)
+    {
+        string? response;
+        try
+        {
+            response = await _llmClient.CompleteAsync(BuildSystemPrompt(persona), userPrompt, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Jury panelist LLM call failed for policy {PolicyId}", policy.Id);
+            return new PanelistVerdict(false, false, []);
+        }
+
+        if (response is null)
+            return new PanelistVerdict(false, false, []);
+
+        var audit = TryParseAudit(response, policy.Id);
+        if (audit is null)
+            return new PanelistVerdict(false, false, []);
+
+        var findings = audit.Violations
+            .Where(v => !string.IsNullOrWhiteSpace(v.Message))
+            .Select(v => new SemanticFinding(v.Message, v.Evidence))
+            .ToArray();
+
+        return new PanelistVerdict(true, audit.Violated && findings.Length > 0, findings);
+    }
+
+    private static string BuildSystemPrompt(string? persona) =>
+        string.IsNullOrWhiteSpace(persona)
+            ? SystemPrompt
+            : $"{SystemPrompt}\n\nReview from this perspective: {persona}";
 
     private static string BuildUserPrompt(GovernancePolicy policy, Session session)
     {
@@ -168,48 +279,44 @@ public sealed class SemanticRuleEvaluator
 
     private IReadOnlyList<GovernanceViolation> ParseResponse(string response, GovernancePolicy policy, string sessionId)
     {
+        var result = TryParseAudit(response, policy.Id);
+
+        if (result is not { Violated: true, Violations.Count: > 0 })
+            return [];
+
+        var violations = new List<GovernanceViolation>(result.Violations.Count);
+
+        foreach (var v in result.Violations)
+        {
+            if (string.IsNullOrWhiteSpace(v.Message))
+                continue;
+
+            violations.Add(BuildViolation(
+                policy, sessionId, v.Message, JsonSerializer.Serialize(new { v.Evidence }, JsonOptions)));
+        }
+
+        return violations;
+    }
+
+    private LlmAuditResponse? TryParseAudit(string response, string policyId)
+    {
         try
         {
             var jsonStart = response.IndexOf('{');
             var jsonEnd = response.LastIndexOf('}');
             if (jsonStart < 0 || jsonEnd < 0 || jsonEnd <= jsonStart)
             {
-                _logger.LogWarning("LLM response for policy {PolicyId} contained no JSON object", policy.Id);
-                return [];
+                _logger.LogWarning("LLM response for policy {PolicyId} contained no JSON object", policyId);
+                return null;
             }
 
             var jsonSpan = response[jsonStart..(jsonEnd + 1)];
-            var result = JsonSerializer.Deserialize<LlmAuditResponse>(jsonSpan, JsonOptions);
-
-            if (result is not { Violated: true, Violations.Count: > 0 })
-                return [];
-
-            var violations = new List<GovernanceViolation>(result.Violations.Count);
-
-            foreach (var v in result.Violations)
-            {
-                if (string.IsNullOrWhiteSpace(v.Message))
-                    continue;
-
-                violations.Add(new GovernanceViolation
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    SessionId = sessionId,
-                    RuleId = policy.Id,
-                    Severity = policy.Severity,
-                    Message = v.Message,
-                    ContextJson = JsonSerializer.Serialize(
-                        new { v.Evidence }, JsonOptions),
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-
-            return violations;
+            return JsonSerializer.Deserialize<LlmAuditResponse>(jsonSpan, JsonOptions);
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "Failed to parse LLM response for policy {PolicyId}", policy.Id);
-            return [];
+            _logger.LogWarning(ex, "Failed to parse LLM response for policy {PolicyId}", policyId);
+            return null;
         }
     }
 

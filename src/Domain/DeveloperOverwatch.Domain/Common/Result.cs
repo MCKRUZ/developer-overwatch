@@ -1,6 +1,15 @@
 namespace DeveloperOverwatch.Domain.Common;
 
-public sealed class Result<T>
+/// <summary>
+/// Non-generic view over a <see cref="Result{T}"/>, allowing cross-cutting code
+/// (e.g. MediatR pipeline behaviors) to inspect success without knowing the value type.
+/// </summary>
+public interface IResult
+{
+    bool IsSuccess { get; }
+}
+
+public sealed class Result<T> : IResult
 {
     public bool IsSuccess { get; }
     public T? Value { get; }

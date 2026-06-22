@@ -72,9 +72,11 @@ MSBuildWorkspace.log
 # Test results
 TestResults/
 [Tt]est[Rr]esult*/
+coveragereport*/
 *.trx
 *.coverage
 *.coveragexml
+*.cobertura.xml
 
 # dotnet
 launchSettings.json

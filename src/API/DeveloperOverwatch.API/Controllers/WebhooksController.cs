@@ -31,6 +31,7 @@ public sealed class WebhooksController : ControllerBase
     public async Task<IActionResult> HandleGitHubWebhook(CancellationToken ct)
     {
         var eventType = Request.Headers["X-GitHub-Event"].ToString();
+        var deliveryId = Request.Headers["X-GitHub-Delivery"].ToString();
 
         using var reader = new StreamReader(Request.Body);
         var body = await reader.ReadToEndAsync(ct);
@@ -38,13 +39,13 @@ public sealed class WebhooksController : ControllerBase
 
         return eventType switch
         {
-            "push" => await HandlePush(payload, ct),
-            "pull_request" => await HandlePullRequest(payload, ct),
+            "push" => await HandlePush(payload, deliveryId, ct),
+            "pull_request" => await HandlePullRequest(payload, deliveryId, ct),
             _ => Ok(new { message = $"Event '{eventType}' ignored" })
         };
     }
 
-    private async Task<IActionResult> HandlePush(JsonDocument payload, CancellationToken ct)
+    private async Task<IActionResult> HandlePush(JsonDocument payload, string deliveryId, CancellationToken ct)
     {
         var root = payload.RootElement;
         var repo = root.GetProperty("repository").GetProperty("full_name").GetString()!;
@@ -66,7 +67,8 @@ public sealed class WebhooksController : ControllerBase
         var command = new ProcessPushWebhookCommand
         {
             Repo = repo,
-            Commits = commits
+            Commits = commits,
+            DeliveryId = deliveryId
         };
 
         var result = await _mediator.Send(command, ct);
@@ -75,7 +77,7 @@ public sealed class WebhooksController : ControllerBase
             : BadRequest(new { error = result.Error });
     }
 
-    private async Task<IActionResult> HandlePullRequest(JsonDocument payload, CancellationToken ct)
+    private async Task<IActionResult> HandlePullRequest(JsonDocument payload, string deliveryId, CancellationToken ct)
     {
         var root = payload.RootElement;
         var action = root.GetProperty("action").GetString()!;
@@ -93,7 +95,8 @@ public sealed class WebhooksController : ControllerBase
         {
             Repo = repo,
             PrNumber = prNumber,
-            Action = action
+            Action = action,
+            DeliveryId = deliveryId
         };
 
         var result = await _mediator.Send(command, ct);

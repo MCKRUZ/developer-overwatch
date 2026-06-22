@@ -6,6 +6,7 @@ using DeveloperOverwatch.Domain.Models;
 using DeveloperOverwatch.Infrastructure.Governance;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -16,7 +17,10 @@ public class SemanticRuleEvaluatorTests
 
     public SemanticRuleEvaluatorTests()
     {
-        _evaluator = new SemanticRuleEvaluator(_llmClient, NullLogger<SemanticRuleEvaluator>.Instance);
+        _evaluator = new SemanticRuleEvaluator(
+            _llmClient,
+            Options.Create(new GovernanceConfig()),
+            NullLogger<SemanticRuleEvaluator>.Instance);
     }
 
     [Fact]
