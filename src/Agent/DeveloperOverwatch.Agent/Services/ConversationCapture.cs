@@ -1,13 +1,31 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace DeveloperOverwatch.Agent.Services;
 
-public sealed record CapturedTurn(string Role, string Content, DateTime? Timestamp);
+public sealed record CapturedTurn(
+    string Role,
+    string Content,
+    DateTime? Timestamp,
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheCreationInputTokens = null,
+    int? CacheReadInputTokens = null,
+    string? Model = null);
+
+public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines);
 
 public interface IConversationCapture
 {
-    Task<IReadOnlyList<CapturedTurn>> CaptureAsync(string? repoPath, CancellationToken ct);
+    /// <summary>
+    /// Parses a Claude Code transcript JSONL file, returning only turns found after
+    /// <paramref name="fromLineIndex"/> (0-based line count already processed by the caller),
+    /// plus the file's current total line count so the caller can advance its cursor.
+    /// </summary>
+    Task<ConversationCaptureResult> CaptureFromFileAsync(
+        string transcriptPath, int fromLineIndex, CancellationToken ct);
+
     string? FindProjectDir(string repoPath);
 }
 
@@ -20,38 +38,77 @@ public sealed class ConversationCapture : IConversationCapture
 
     private readonly ILogger<ConversationCapture> _logger;
 
+    private static readonly Regex TaskNotificationRegex = new(
+        @"<task-notification>.*?<task-id>([^<]+)</task-id>.*?<subagent_tokens>(\d+)</subagent_tokens>",
+        RegexOptions.Singleline | RegexOptions.Compiled);
+
     public ConversationCapture(ILogger<ConversationCapture> logger)
     {
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<CapturedTurn>> CaptureAsync(string? repoPath, CancellationToken ct)
+    public async Task<ConversationCaptureResult> CaptureFromFileAsync(
+        string transcriptPath, int fromLineIndex, CancellationToken ct)
     {
         try
         {
-            var searchDir = ResolveSearchDirectory(repoPath);
-            if (searchDir is null)
+            if (!File.Exists(transcriptPath))
             {
-                _logger.LogDebug("No Claude projects directory found");
-                return [];
+                _logger.LogDebug("Transcript file not found: {Path}", transcriptPath);
+                return new ConversationCaptureResult([], fromLineIndex);
             }
 
-            var conversationFile = FindMostRecentConversation(searchDir);
-            if (conversationFile is null)
+            var turns = new List<CapturedTurn>();
+            var lineIndex = 0;
+
+            // Subagents (the "Agent" tool) resolve to their own model at launch time — a field
+            // that never appears on the main conversation's own turns — and only report their
+            // actual token usage later, in an unrelated "queue-operation" completion event
+            // correlated by agentId. Both must be scanned from the start of the file regardless
+            // of the cursor, since a long-running subagent's launch can be far behind
+            // fromLineIndex by the time its completion is captured.
+            var agentModelsById = new Dictionary<string, string>();
+
+            using var stream = new FileStream(
+                transcriptPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+
+            while (await reader.ReadLineAsync(ct) is { } line)
             {
-                _logger.LogDebug("No conversation files found in {Dir}", searchDir);
-                return [];
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    TryTrackAgentLaunch(line, agentModelsById);
+
+                    if (lineIndex >= fromLineIndex)
+                    {
+                        var turn = TryParseTurn(line);
+                        if (turn is not null)
+                            turns.Add(turn);
+
+                        var subagentTurn = TryParseSubagentCompletion(line, agentModelsById);
+                        if (subagentTurn is not null)
+                            turns.Add(subagentTurn);
+                    }
+                }
+
+                lineIndex++;
             }
 
-            return await ParseConversationFileAsync(conversationFile, ct);
+            return new ConversationCaptureResult(turns, lineIndex);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Conversation capture failed — returning empty");
-            return [];
+            _logger.LogWarning(ex, "Conversation capture failed for {Path} — returning empty", transcriptPath);
+            return new ConversationCaptureResult([], fromLineIndex);
         }
     }
 
+    /// <summary>
+    /// Best-effort fallback for locating a project's transcript directory when no explicit
+    /// transcript_path was supplied. Claude Code names project directories by taking the
+    /// absolute repo path and replacing ':', '\', '/', and '.' with '-' (e.g.
+    /// "C:\Users\me\repo" -> "C--Users-me-repo").
+    /// </summary>
     public string? FindProjectDir(string repoPath)
     {
         try
@@ -59,15 +116,9 @@ public sealed class ConversationCapture : IConversationCapture
             if (!Directory.Exists(ClaudeProjectsDir))
                 return null;
 
-            var normalized = NormalizePath(repoPath);
-
-            foreach (var dir in Directory.EnumerateDirectories(ClaudeProjectsDir))
-            {
-                if (MatchesProjectDir(dir, normalized))
-                    return dir;
-            }
-
-            return null;
+            var encoded = EncodeProjectDirName(repoPath);
+            var candidate = Path.Combine(ClaudeProjectsDir, encoded);
+            return Directory.Exists(candidate) ? candidate : null;
         }
         catch (Exception ex)
         {
@@ -76,50 +127,18 @@ public sealed class ConversationCapture : IConversationCapture
         }
     }
 
-    private string? ResolveSearchDirectory(string? repoPath)
+    private static string EncodeProjectDirName(string repoPath)
     {
-        if (!Directory.Exists(ClaudeProjectsDir))
-            return null;
+        var full = Path.GetFullPath(repoPath).TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        if (repoPath is not null)
+        var chars = full.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
         {
-            var projectDir = FindProjectDir(repoPath);
-            if (projectDir is not null)
-                return projectDir;
+            if (chars[i] is ':' or '\\' or '/' or '.')
+                chars[i] = '-';
         }
-
-        return ClaudeProjectsDir;
-    }
-
-    private static FileInfo? FindMostRecentConversation(string directory)
-    {
-        var dir = new DirectoryInfo(directory);
-        if (!dir.Exists)
-            return null;
-
-        return dir.EnumerateFiles("*.jsonl", SearchOption.AllDirectories)
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .FirstOrDefault();
-    }
-
-    private async Task<IReadOnlyList<CapturedTurn>> ParseConversationFileAsync(
-        FileInfo file, CancellationToken ct)
-    {
-        var turns = new List<CapturedTurn>();
-
-        using var reader = new StreamReader(file.FullName);
-        while (await reader.ReadLineAsync(ct) is { } line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            var turn = TryParseTurn(line);
-            if (turn is not null)
-                turns.Add(turn);
-        }
-
-        _logger.LogDebug("Parsed {Count} turns from {File}", turns.Count, file.Name);
-        return turns;
+        return new string(chars);
     }
 
     private CapturedTurn? TryParseTurn(string line)
@@ -129,14 +148,17 @@ public sealed class ConversationCapture : IConversationCapture
             using var doc = JsonDocument.Parse(line);
             var root = doc.RootElement;
 
-            if (!root.TryGetProperty("role", out var roleProp))
+            if (!root.TryGetProperty("message", out var message))
+                return null;
+
+            if (!message.TryGetProperty("role", out var roleProp))
                 return null;
 
             var role = roleProp.GetString();
             if (string.IsNullOrEmpty(role))
                 return null;
 
-            var content = ExtractContent(root);
+            var content = ExtractContent(message);
             if (string.IsNullOrEmpty(content))
                 return null;
 
@@ -144,7 +166,21 @@ public sealed class ConversationCapture : IConversationCapture
             if (root.TryGetProperty("timestamp", out var tsProp))
                 timestamp = TryParseTimestamp(tsProp);
 
-            return new CapturedTurn(role, content, timestamp);
+            int? inputTokens = null, outputTokens = null, cacheCreation = null, cacheRead = null;
+            if (message.TryGetProperty("usage", out var usage))
+            {
+                inputTokens = TryGetInt(usage, "input_tokens");
+                outputTokens = TryGetInt(usage, "output_tokens");
+                cacheCreation = TryGetInt(usage, "cache_creation_input_tokens");
+                cacheRead = TryGetInt(usage, "cache_read_input_tokens");
+            }
+
+            string? model = null;
+            if (message.TryGetProperty("model", out var modelProp))
+                model = modelProp.GetString();
+
+            return new CapturedTurn(
+                role, content, timestamp, inputTokens, outputTokens, cacheCreation, cacheRead, model);
         }
         catch (JsonException)
         {
@@ -153,9 +189,91 @@ public sealed class ConversationCapture : IConversationCapture
         }
     }
 
-    private static string? ExtractContent(JsonElement root)
+    /// <summary>Records which model a subagent (the "Agent" tool) resolved to at launch time, so
+    /// its later completion event — which carries token usage but no model name — can be
+    /// attributed correctly.</summary>
+    private static void TryTrackAgentLaunch(string line, Dictionary<string, string> agentModelsById)
     {
-        if (!root.TryGetProperty("content", out var contentProp))
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            if (!doc.RootElement.TryGetProperty("toolUseResult", out var toolUseResult))
+                return;
+            if (toolUseResult.ValueKind != JsonValueKind.Object)
+                return;
+            if (!toolUseResult.TryGetProperty("agentId", out var idProp) || idProp.ValueKind != JsonValueKind.String)
+                return;
+            if (!toolUseResult.TryGetProperty("resolvedModel", out var modelProp) || modelProp.ValueKind != JsonValueKind.String)
+                return;
+
+            var agentId = idProp.GetString();
+            var model = modelProp.GetString();
+            if (!string.IsNullOrEmpty(agentId) && !string.IsNullOrEmpty(model))
+                agentModelsById[agentId] = model;
+        }
+        catch (JsonException)
+        {
+            // Not every line is JSON-parseable as an object with this shape — expected, not an error.
+        }
+    }
+
+    /// <summary>A subagent's actual token usage only ever appears in a "queue-operation" entry
+    /// bearing a `<task-notification>` string once it completes — surfaced here as a synthetic
+    /// turn so it flows through the same cost-attribution and model-breakdown pipeline as every
+    /// other turn, rather than needing its own separate tracking path.</summary>
+    private static CapturedTurn? TryParseSubagentCompletion(string line, IReadOnlyDictionary<string, string> agentModelsById)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("type", out var typeProp) || typeProp.GetString() != "queue-operation")
+                return null;
+            if (!root.TryGetProperty("content", out var contentProp) || contentProp.ValueKind != JsonValueKind.String)
+                return null;
+
+            var content = contentProp.GetString();
+            if (string.IsNullOrEmpty(content))
+                return null;
+
+            var match = TaskNotificationRegex.Match(content);
+            if (!match.Success)
+                return null;
+
+            var taskId = match.Groups[1].Value.Trim();
+            if (!int.TryParse(match.Groups[2].Value, out var tokens))
+                return null;
+
+            agentModelsById.TryGetValue(taskId, out var model);
+
+            DateTime? timestamp = root.TryGetProperty("timestamp", out var tsProp) ? TryParseTimestamp(tsProp) : null;
+
+            // The notification reports one combined token count with no input/output split.
+            // Treating it as output tokens is an approximation — subagent work is generally
+            // generation-heavy (reports, analysis), so this prices closer to the true cost than
+            // treating it as input tokens would.
+            return new CapturedTurn(
+                Role: "subagent",
+                Content: $"Subagent completed ({tokens:N0} tokens)",
+                Timestamp: timestamp,
+                OutputTokens: tokens,
+                Model: model);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static int? TryGetInt(JsonElement obj, string propertyName) =>
+        obj.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.Number
+            ? prop.GetInt32()
+            : null;
+
+    private static string? ExtractContent(JsonElement message)
+    {
+        if (!message.TryGetProperty("content", out var contentProp))
             return null;
 
         return contentProp.ValueKind switch
@@ -172,16 +290,20 @@ public sealed class ConversationCapture : IConversationCapture
 
         foreach (var element in array.EnumerateArray())
         {
-            var text = element.ValueKind switch
-            {
-                JsonValueKind.String => element.GetString(),
-                JsonValueKind.Object when element.TryGetProperty("text", out var textProp)
-                    => textProp.GetString(),
-                _ => null
-            };
+            if (element.ValueKind != JsonValueKind.Object)
+                continue;
 
-            if (!string.IsNullOrEmpty(text))
-                parts.Add(text);
+            // Only surface actual conversational text — skip "thinking", "tool_use", and
+            // "tool_result" blocks, which are captured separately via the PostToolUse hook.
+            if (!element.TryGetProperty("type", out var typeProp) || typeProp.GetString() != "text")
+                continue;
+
+            if (element.TryGetProperty("text", out var textProp))
+            {
+                var text = textProp.GetString();
+                if (!string.IsNullOrEmpty(text))
+                    parts.Add(text);
+            }
         }
 
         return parts.Count > 0 ? string.Join("\n", parts) : null;
@@ -202,53 +324,5 @@ public sealed class ConversationCapture : IConversationCapture
         {
             return null;
         }
-    }
-
-    private static bool MatchesProjectDir(string dir, string normalizedRepoPath)
-    {
-        // Claude Code project dirs use a hash of the repo path as the directory name.
-        // Check for a config/metadata file inside that references the repo path.
-        try
-        {
-            var configCandidates = new[] { "config.json", ".project", "project.json" };
-
-            foreach (var candidate in configCandidates)
-            {
-                var configPath = Path.Combine(dir, candidate);
-                if (!File.Exists(configPath))
-                    continue;
-
-                var configContent = File.ReadAllText(configPath);
-                if (configContent.Contains(normalizedRepoPath, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-
-            // Fallback: directory name itself might encode the path (dash-separated segments)
-            var dirName = Path.GetFileName(dir);
-            if (dirName is not null)
-            {
-                var pathSegments = normalizedRepoPath.Split(
-                    new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
-                    StringSplitOptions.RemoveEmptyEntries);
-
-                if (pathSegments.Length >= 2)
-                {
-                    var lastTwo = string.Join("-", pathSegments[^2..]);
-                    if (dirName.Contains(lastTwo, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-            }
-        }
-        catch
-        {
-            // Best effort — if we can't read configs, this dir is a miss
-        }
-
-        return false;
-    }
-
-    private static string NormalizePath(string path)
-    {
-        return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 }

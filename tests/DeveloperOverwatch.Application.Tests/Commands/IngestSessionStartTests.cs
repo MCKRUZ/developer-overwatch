@@ -40,11 +40,58 @@ public class IngestSessionStartTests
     }
 
     [Fact]
-    public async Task Handle_DuplicateSession_ReturnsFail()
+    public async Task Handle_WithTitle_SetsSessionTitleOnCreate()
+    {
+        var handler = new IngestSessionStartCommandHandler(_repo, _uow);
+        var command = new IngestSessionStartCommand
+        {
+            SessionId = Guid.NewGuid().ToString(),
+            DeveloperEmail = "dev@team.dev",
+            Title = "initial-setup",
+            StartedAt = DateTime.UtcNow
+        };
+
+        await handler.Handle(command, CancellationToken.None);
+
+        await _repo.Received(1).AddAsync(
+            Arg.Is<Session>(s => s.Title == "initial-setup"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_ExistingSessionResumedWithTitle_UpdatesTitle()
     {
         var sessionId = Guid.NewGuid().ToString();
-        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>())
-            .Returns(new Session { Id = sessionId });
+        var existing = new Session { Id = sessionId, Status = SessionStatus.Completed, Title = null };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(existing);
+
+        var handler = new IngestSessionStartCommandHandler(_repo, _uow);
+        var command = new IngestSessionStartCommand
+        {
+            SessionId = sessionId,
+            DeveloperEmail = "dev@team.dev",
+            Title = "renamed-later",
+            StartedAt = DateTime.UtcNow
+        };
+
+        await handler.Handle(command, CancellationToken.None);
+
+        existing.Title.Should().Be("renamed-later");
+    }
+
+    [Fact]
+    public async Task Handle_ExistingCompletedSession_ReactivatesInstead()
+    {
+        // A resumed Claude Code session fires SessionStart again with the same session_id —
+        // reactivate the existing (possibly Completed) session rather than rejecting it.
+        var sessionId = Guid.NewGuid().ToString();
+        var existing = new Session
+        {
+            Id = sessionId,
+            Status = SessionStatus.Completed,
+            EndedAt = DateTime.UtcNow.AddMinutes(-5)
+        };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(existing);
 
         var handler = new IngestSessionStartCommandHandler(_repo, _uow);
         var command = new IngestSessionStartCommand
@@ -56,8 +103,12 @@ public class IngestSessionStartTests
 
         var result = await handler.Handle(command, CancellationToken.None);
 
-        result.IsSuccess.Should().BeFalse();
-        result.Error.Should().Contain("already exists");
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Be(sessionId);
+        existing.Status.Should().Be(SessionStatus.Active);
+        existing.EndedAt.Should().BeNull();
+        await _repo.Received(1).UpdateAsync(existing, Arg.Any<CancellationToken>());
+        await _uow.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
     [Fact]

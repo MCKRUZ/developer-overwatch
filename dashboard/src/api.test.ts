@@ -27,9 +27,9 @@ describe("api", () => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/sessions", undefined);
     });
 
-    it("list(developer, repo) appends query params", async () => {
+    it("list(filters) appends query params", async () => {
       globalThis.fetch = mockFetch([]);
-      await api.sessions.list("dev@test.com", "org/repo");
+      await api.sessions.list({ developer: "dev@test.com", repo: "org/repo" });
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/sessions?developer=dev%40test.com&repo=org%2Frepo",
         undefined,

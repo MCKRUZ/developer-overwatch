@@ -1,5 +1,10 @@
 import type {
-  Session,
+  SessionListItem,
+  SessionDetail,
+  SessionTimelinePage,
+  DailyUsage,
+  DailyCostUsage,
+  ModelUsage,
   ConversationTurn,
   ToolExecution,
   FileChange,
@@ -13,7 +18,7 @@ import type {
   DeveloperMetrics,
 } from "../types";
 
-export function buildSession(overrides?: Partial<Session>): Session {
+export function buildSessionListItem(overrides?: Partial<SessionListItem>): SessionListItem {
   return {
     id: "sess-001",
     developerEmail: "dev@example.com",
@@ -22,9 +27,34 @@ export function buildSession(overrides?: Partial<Session>): Session {
     startedAt: "2026-05-27T08:00:00Z",
     endedAt: "2026-05-27T09:30:00Z",
     createdAt: "2026-05-27T08:00:00Z",
-    conversationTurns: [],
-    toolExecutions: [],
-    fileChanges: [],
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCacheCreationInputTokens: 0,
+    totalCacheReadInputTokens: 0,
+    estimatedCostUsd: 0,
+    violationCount: 0,
+    dailyUsage: {},
+    ...overrides,
+  };
+}
+
+export function buildSessionDetail(overrides?: Partial<SessionDetail>): SessionDetail {
+  return {
+    id: "sess-001",
+    developerEmail: "dev@example.com",
+    repoPath: "org/repo",
+    status: "Completed",
+    startedAt: "2026-05-27T08:00:00Z",
+    endedAt: "2026-05-27T09:30:00Z",
+    createdAt: "2026-05-27T08:00:00Z",
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCacheCreationInputTokens: 0,
+    totalCacheReadInputTokens: 0,
+    estimatedCostUsd: 0,
+    conversationTurnCount: 0,
+    toolExecutionCount: 0,
+    fileChangeCount: 0,
     governanceViolations: [],
     architectAnnotations: [],
     ...overrides,
@@ -54,7 +84,6 @@ export function buildToolExecution(overrides?: Partial<ToolExecution>): ToolExec
     outputSummary: "File contents returned",
     durationMs: 150,
     timestamp: "2026-05-27T08:02:00Z",
-    fileChanges: [],
     ...overrides,
   };
 }
@@ -66,6 +95,54 @@ export function buildFileChange(overrides?: Partial<FileChange>): FileChange {
     filePath: "src/utils.ts",
     changeType: "Modified",
     diffText: "@@ -1,3 +1,4 @@\n+import { foo } from './foo';",
+    ...overrides,
+  };
+}
+
+export function buildSessionTimelinePage(overrides?: Partial<SessionTimelinePage>): SessionTimelinePage {
+  return {
+    conversationTurns: [],
+    toolExecutions: [],
+    fileChanges: [],
+    hasMore: false,
+    ...overrides,
+  };
+}
+
+export function buildDailyUsage(overrides?: Partial<DailyUsage>): DailyUsage {
+  return {
+    date: "2026-05-27",
+    turnCount: 1,
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    estimatedCostUsd: 0.01,
+    ...overrides,
+  };
+}
+
+export function buildDailyCostUsage(overrides?: Partial<DailyCostUsage>): DailyCostUsage {
+  return {
+    date: "2026-05-27",
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    estimatedCostUsd: 0.01,
+    ...overrides,
+  };
+}
+
+export function buildModelUsage(overrides?: Partial<ModelUsage>): ModelUsage {
+  return {
+    model: "claude-sonnet-5",
+    turnCount: 1,
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    estimatedCostUsd: 0.01,
     ...overrides,
   };
 }
@@ -136,6 +213,8 @@ export function buildTeamAnalytics(overrides?: Partial<TeamAnalytics>): TeamAnal
     totalViolations: 25,
     violationsThisWeek: 3,
     developers: [],
+    dailyCostTrend: [],
+    dailyCostThresholdUsd: 50,
     ...overrides,
   };
 }

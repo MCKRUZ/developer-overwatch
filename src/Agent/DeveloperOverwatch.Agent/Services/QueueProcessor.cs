@@ -11,6 +11,8 @@ public sealed class QueueProcessor : BackgroundService
     private readonly IApiClient _api;
     private readonly IPrivacyRedactor _redactor;
     private readonly IGitFallbackWriter _gitFallback;
+    private readonly IConversationCapture _conversationCapture;
+    private readonly IConversationCursorStore _cursorStore;
     private readonly AgentConfig _config;
     private readonly ILogger<QueueProcessor> _logger;
 
@@ -21,6 +23,8 @@ public sealed class QueueProcessor : BackgroundService
         IApiClient api,
         IPrivacyRedactor redactor,
         IGitFallbackWriter gitFallback,
+        IConversationCapture conversationCapture,
+        IConversationCursorStore cursorStore,
         AgentConfig config,
         ILogger<QueueProcessor> logger)
     {
@@ -28,6 +32,8 @@ public sealed class QueueProcessor : BackgroundService
         _api = api;
         _redactor = redactor;
         _gitFallback = gitFallback;
+        _conversationCapture = conversationCapture;
+        _cursorStore = cursorStore;
         _config = config;
         _logger = logger;
     }
@@ -102,6 +108,7 @@ public sealed class QueueProcessor : BackgroundService
             {
                 EventType.SessionStart => await _api.SendSessionStartAsync(redacted, ct),
                 EventType.SessionEnd => await _api.SendSessionEndAsync(sessionId, redacted, ct),
+                EventType.ConversationTurn => await CaptureAndShipConversationAsync(sessionId, evt, ct),
                 _ => await _api.SendSessionEventsAsync(sessionId, redacted, ct)
             };
 
@@ -110,6 +117,105 @@ public sealed class QueueProcessor : BackgroundService
         }
 
         return true;
+    }
+
+    private const int MaxTurnContentLength = 4096;
+
+    private async Task<bool> CaptureAndShipConversationAsync(
+        string sessionId, QueuedEvent evt, CancellationToken ct)
+    {
+        string? transcriptPath = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(evt.PayloadJson);
+            if (doc.RootElement.TryGetProperty("transcriptPath", out var tp))
+                transcriptPath = tp.GetString();
+        }
+        catch (JsonException)
+        {
+            _logger.LogDebug("Malformed ConversationTurn marker payload, skipping");
+        }
+
+        if (string.IsNullOrEmpty(transcriptPath))
+            return true;
+
+        var cursor = await _cursorStore.GetAsync(sessionId, ct);
+        var result = await _conversationCapture.CaptureFromFileAsync(transcriptPath, cursor, ct);
+
+        if (result.Turns.Count == 0)
+        {
+            await _cursorStore.SetAsync(sessionId, result.TotalLines, ct);
+            return true;
+        }
+
+        var sessionTitle = await ResolveSessionTitleAsync(transcriptPath, ct);
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            sessionId,
+            sessionTitle,
+            conversationTurns = result.Turns.Select((t, i) => new
+            {
+                id = Guid.NewGuid().ToString(),
+                turnIndex = cursor + i,
+                role = t.Role,
+                content = t.Content.Length > MaxTurnContentLength
+                    ? t.Content[..MaxTurnContentLength]
+                    : t.Content,
+                tokenCount = (t.InputTokens ?? 0) + (t.OutputTokens ?? 0) is var total && total > 0
+                    ? total
+                    : (int?)null,
+                inputTokens = t.InputTokens,
+                outputTokens = t.OutputTokens,
+                cacheCreationInputTokens = t.CacheCreationInputTokens,
+                cacheReadInputTokens = t.CacheReadInputTokens,
+                model = t.Model,
+                // Computed from the RAW (pre-redaction) content — by the time this payload is
+                // redacted below, the secret itself is gone, so this flag is the only signal the
+                // server ever gets that one was present. Governance can't detect it after the
+                // fact once redaction has already erased it.
+                containsRedactedSecret = _redactor.ContainsSensitive(t.Content),
+                timestamp = (t.Timestamp ?? DateTime.UtcNow).ToString("o"),
+                isDecision = false
+            }),
+            toolExecutions = Array.Empty<object>(),
+            fileChanges = Array.Empty<object>()
+        });
+
+        var redactedPayload = _redactor.Redact(payload);
+        var success = await _api.SendSessionEventsAsync(sessionId, redactedPayload, ct);
+        if (success)
+            await _cursorStore.SetAsync(sessionId, result.TotalLines, ct);
+
+        return success;
+    }
+
+    // Claude Code stores a `/rename`d session title in a sidecar file next to the transcript
+    // (<projects-dir>/<encoded-repo>/<session-id>/custom-title.json), not in the transcript
+    // itself — read it fresh on every capture so a mid-session rename shows up on the dashboard
+    // instead of the raw session GUID.
+    private static async Task<string?> ResolveSessionTitleAsync(string transcriptPath, CancellationToken ct)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(transcriptPath);
+            if (dir is null)
+                return null;
+
+            var sessionFolder = Path.GetFileNameWithoutExtension(transcriptPath);
+            var titlePath = Path.Combine(dir, sessionFolder, "custom-title.json");
+            if (!File.Exists(titlePath))
+                return null;
+
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(titlePath, ct));
+            return doc.RootElement.TryGetProperty("customTitle", out var titleProp)
+                ? titleProp.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private async Task CheckGitFallbackAsync(string sessionId, CancellationToken ct)
@@ -123,7 +229,7 @@ public sealed class QueueProcessor : BackgroundService
             unshipped, _config.GitFallbackThreshold);
 
         var allUnshipped = await _queue.DequeueBatchAsync(unshipped);
-        var repoPath = await GetActiveRepoPathAsync();
+        var repoPath = await GetRepoPathForSessionAsync(sessionId);
 
         if (repoPath is not null)
         {
@@ -200,18 +306,36 @@ public sealed class QueueProcessor : BackgroundService
         }
     }
 
-    private Task<string?> GetActiveRepoPathAsync()
+    /// <summary>
+    /// Looks up the repo path for a given (our) session ID by scanning the per-Claude-session
+    /// mapping files under ~/.overwatch/sessions/ (written by overwatch-session-start.ps1) —
+    /// there's no direct sessionId -> file lookup since those files are keyed by Claude Code's
+    /// own session_id, not ours.
+    /// </summary>
+    private async Task<string?> GetRepoPathForSessionAsync(string sessionId)
     {
         try
         {
-            var path = _config.ActiveSessionPath.Replace("active-session", "active-repo");
-            if (File.Exists(path))
-                return Task.FromResult<string?>(File.ReadAllText(path).Trim());
+            var sessionsDir = Path.Combine(_config.OverwatchDir, "sessions");
+            if (!Directory.Exists(sessionsDir))
+                return null;
+
+            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.json"))
+            {
+                var json = await File.ReadAllTextAsync(file);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("ourSessionId", out var idProp) &&
+                    idProp.GetString() == sessionId &&
+                    doc.RootElement.TryGetProperty("repoPath", out var repoProp))
+                {
+                    return repoProp.GetString();
+                }
+            }
         }
         catch
         {
             // best effort
         }
-        return Task.FromResult<string?>(null);
+        return null;
     }
 }

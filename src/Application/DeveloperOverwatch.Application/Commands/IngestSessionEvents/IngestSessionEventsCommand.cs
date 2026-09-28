@@ -7,6 +7,7 @@ using MediatR;
 public sealed record IngestSessionEventsCommand : IRequest<Result<int>>
 {
     public required string SessionId { get; init; }
+    public string? SessionTitle { get; init; }
     public IReadOnlyList<ConversationTurnDto> ConversationTurns { get; init; } = [];
     public IReadOnlyList<ToolExecutionDto> ToolExecutions { get; init; } = [];
     public IReadOnlyList<FileChangeDto> FileChanges { get; init; } = [];
@@ -19,6 +20,12 @@ public sealed record ConversationTurnDto
     public required string Role { get; init; }
     public string? Content { get; init; }
     public int? TokenCount { get; init; }
+    public int? InputTokens { get; init; }
+    public int? OutputTokens { get; init; }
+    public int? CacheCreationInputTokens { get; init; }
+    public int? CacheReadInputTokens { get; init; }
+    public string? Model { get; init; }
+    public bool ContainsRedactedSecret { get; init; }
     public required DateTime Timestamp { get; init; }
     public bool IsDecision { get; init; }
 }

@@ -9,7 +9,22 @@ public sealed class GovernanceConfig
     public int DriftBucketHours { get; init; } = 4;
     public string? LlmApiUrl { get; init; }
     public string? LlmApiKey { get; init; }
-    public string LlmModel { get; init; } = "claude-sonnet-4-6";
+
+    /// <summary>Use an Azure AD bearer token (via Managed Identity) instead of a static
+    /// <see cref="LlmApiKey"/> — for Claude models served through Azure AI Foundry, which
+    /// doesn't use Anthropic-issued API keys. Takes precedence over <see cref="LlmApiKey"/>
+    /// when true. Requires "Cognitive Services User" (or equivalent) on the target resource.</summary>
+    public bool UseManagedIdentityAuth { get; init; }
+
+    /// <summary>Client ID of a user-assigned managed identity. Leave null to use the
+    /// system-assigned identity (or local dev credentials via DefaultAzureCredential).</summary>
+    public string? ManagedIdentityClientId { get; init; }
+
+    // Default assumes whatever's actually deployed in your Azure AI Foundry resource — don't
+    // assume a specific tier (e.g. Haiku) is available there; set this to match your real
+    // deployment name. A cheaper/faster model is nice-to-have for a high-frequency check like
+    // this, but only if your Foundry resource actually has one deployed.
+    public string LlmModel { get; init; } = "claude-sonnet-5-gce";
     public int LlmMaxTokens { get; init; } = 1024;
     public int LlmTimeoutSeconds { get; init; } = 30;
 

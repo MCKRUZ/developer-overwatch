@@ -4,9 +4,10 @@ services:
       context: .
       dockerfile: src/API/DeveloperOverwatch.API/Dockerfile
     ports:
-      - "5000:5000"
+      - "3001:3001"
     environment:
       - Database__ConnectionString=Data Source=/data/overwatch.db
+      - ApiKeys__Keys__0=dev-local-test-key
     volumes:
       - overwatch-data:/data
 
@@ -15,7 +16,9 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
     ports:
-      - "3000:80"
+      - "3000:3000"
+    environment:
+      - API_UPSTREAM=http://overwatch-api:3001
     depends_on:
       - overwatch-api
 

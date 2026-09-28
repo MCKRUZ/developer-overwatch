@@ -41,7 +41,7 @@ public class ProcessPrWebhookTests
         _gitService.GetCommitFilesAsync("owner/repo", "abc123", Arg.Any<CancellationToken>())
             .Returns(new List<string> { "src/Thing.cs" });
 
-        _sessionRepo.GetAllAsync(null, "owner/repo", Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: "owner/repo", ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session>
             {
                 new()

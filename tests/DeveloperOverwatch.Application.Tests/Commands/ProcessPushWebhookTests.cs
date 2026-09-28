@@ -39,7 +39,7 @@ public class ProcessPushWebhookTests
 
         _gitService.GetCommitFilesAsync("owner/repo", "abc123", Arg.Any<CancellationToken>())
             .Returns(new List<string>());
-        _sessionRepo.GetAllAsync(null, "owner/repo", Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: "owner/repo", ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session>());
 
         var result = await handler.Handle(command, CancellationToken.None);
@@ -77,7 +77,7 @@ public class ProcessPushWebhookTests
         _gitService.GetCommitFilesAsync("owner/repo", "def456", Arg.Any<CancellationToken>())
             .Returns(new List<string> { "src/File.cs" });
 
-        _sessionRepo.GetAllAsync(null, "owner/repo", Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: "owner/repo", ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session>
             {
                 new()

@@ -17,7 +17,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.8")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -96,11 +96,33 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("nvarchar(450)");
 
+                    b.Property<int?>("CacheCreationInputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("CacheReadInputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("ContainsRedactedSecret")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Content")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<decimal?>("EstimatedCostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("decimal(18,6)");
+
+                    b.Property<int?>("InputTokens")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsDecision")
                         .HasColumnType("bit");
+
+                    b.Property<string>("Model")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("OutputTokens")
+                        .HasColumnType("int");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -171,6 +193,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("ContextJson")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("ConversationTurnId")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -202,6 +227,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Severity")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ToolExecutionId")
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -264,6 +292,13 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("EndedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<decimal>("EstimatedCostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("decimal(18,6)");
+
+                    b.Property<DateTime>("LastActivityAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("RepoPath")
                         .HasColumnType("nvarchar(max)");
 
@@ -276,6 +311,21 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("SummaryJson")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("TotalCacheCreationInputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<int>("TotalCacheReadInputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<int>("TotalInputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<int>("TotalOutputTokens")
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 

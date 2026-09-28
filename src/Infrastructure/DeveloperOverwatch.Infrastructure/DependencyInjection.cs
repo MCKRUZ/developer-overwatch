@@ -1,5 +1,6 @@
 namespace DeveloperOverwatch.Infrastructure;
 
+using Azure.Identity;
 using DeveloperOverwatch.Application.Interfaces;
 using DeveloperOverwatch.Domain.Interfaces;
 using DeveloperOverwatch.Infrastructure.Persistence;
@@ -17,11 +18,25 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         var provider = configuration.GetValue("Database:Provider", "sqlite");
+        var isSqlServer = string.Equals(provider, "sqlserver", StringComparison.OrdinalIgnoreCase);
+        var dbConfig = configuration.GetSection("Database").Get<DatabaseConfig>() ?? new DatabaseConfig();
 
-        services.AddDbContext<OverwatchDbContext>(options =>
+        if (isSqlServer && dbConfig.UseManagedIdentityAuth)
         {
-            if (string.Equals(provider, "sqlserver", StringComparison.OrdinalIgnoreCase))
+            Azure.Core.TokenCredential credential = string.IsNullOrEmpty(dbConfig.ManagedIdentityClientId)
+                ? new DefaultAzureCredential()
+                : new ManagedIdentityCredential(dbConfig.ManagedIdentityClientId);
+            services.AddSingleton(new SqlManagedIdentityConnectionInterceptor(credential));
+        }
+
+        services.AddDbContext<OverwatchDbContext>((sp, options) =>
+        {
+            if (isSqlServer)
+            {
                 options.UseSqlServer(connectionString);
+                if (dbConfig.UseManagedIdentityAuth)
+                    options.AddInterceptors(sp.GetRequiredService<SqlManagedIdentityConnectionInterceptor>());
+            }
             else
                 options.UseSqlite(connectionString);
         });
@@ -34,6 +49,15 @@ public static class DependencyInjection
 
         services.Configure<GitHubConfig>(configuration.GetSection("GitHub"));
         services.AddHttpClient<IGitHostingService, GitHubService>();
+
+        services.Configure<TokenPricingConfig>(configuration.GetSection("TokenPricing"));
+        services.AddSingleton<ITokenPricingCalculator, TokenPricingCalculator>();
+
+        services.Configure<CostAlertsConfig>(configuration.GetSection("CostAlerts"));
+        services.AddSingleton<ICostThresholdProvider, CostThresholdProvider>();
+
+        services.Configure<SessionActivityConfig>(configuration.GetSection("SessionActivity"));
+        services.AddSingleton<ISessionStaleThresholdProvider, SessionStaleThresholdProvider>();
 
         services.AddScoped<IGovernanceViolationRepository, GovernanceViolationRepository>();
 

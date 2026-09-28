@@ -1,110 +1,84 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart,
   Bar,
   XAxis,
   YAxis,
   Tooltip,
-  PieChart,
-  Pie,
-  Cell,
+  ReferenceLine,
   ResponsiveContainer,
   CartesianGrid,
   Legend,
 } from "recharts";
 import { api } from "../api";
-import type { TeamAnalytics, Session } from "../types";
+import type { TeamAnalytics, SessionListItem } from "../types";
 import ChartCard from "../components/ChartCard";
 import ExportButtons from "../components/ExportButtons";
 import { exportCsv } from "../utils/exportCsv";
 import { exportPdf } from "../utils/exportPdf";
+import { formatCost } from "../utils/tokenFormat";
 
 const COLORS = {
   primary: "#2563eb",
   secondary: "#7c3aed",
-  success: "#16a34a",
-  warning: "#d97706",
   danger: "#dc2626",
-  info: "#0891b2",
 };
 
-const SEVERITY_COLORS: Record<string, string> = {
-  Critical: "#dc2626",
-  Error: "#ea580c",
-  Warning: "#d97706",
-  Info: "#2563eb",
-};
-
-const PIE_PALETTE = [
-  COLORS.primary,
-  COLORS.secondary,
-  COLORS.success,
-  COLORS.warning,
-  COLORS.danger,
-  COLORS.info,
+// Validated categorical palette (dataviz skill) — fixed hue order, never cycled.
+// Beyond 8 developers, extras fold into "Other" rather than generating a new hue.
+const USER_PALETTE = [
+  "#2a78d6",
+  "#eb6834",
+  "#1baf7a",
+  "#eda100",
+  "#e87ba4",
+  "#008300",
+  "#4a3aa7",
+  "#e34948",
 ];
+const OTHER_BUCKET = "Other";
 
-interface SessionsByDay {
+interface DayUserRow {
   date: string;
-  count: number;
+  total: number;
+  [developer: string]: string | number;
 }
 
-interface ToolUsageEntry {
-  name: string;
-  count: number;
-}
+export function deriveSessionsByDayAndUser(sessions: SessionListItem[]): {
+  data: DayUserRow[];
+  developers: string[];
+} {
+  const sessionCounts = new Map<string, number>();
+  for (const s of sessions) {
+    sessionCounts.set(s.developerEmail, (sessionCounts.get(s.developerEmail) ?? 0) + 1);
+  }
+  const topDevelopers = [...sessionCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, USER_PALETTE.length)
+    .map(([email]) => email);
+  const topSet = new Set(topDevelopers);
+  const hasOverflow = sessionCounts.size > topDevelopers.length;
+  const developers = hasOverflow ? [...topDevelopers, OTHER_BUCKET] : topDevelopers;
 
-interface SeverityEntry {
-  name: string;
-  count: number;
-  color: string;
-}
-
-function deriveSessionsByDay(sessions: Session[]): SessionsByDay[] {
-  const counts = new Map<string, number>();
+  const byDay = new Map<string, DayUserRow>();
   for (const s of sessions) {
     const day = s.startedAt.slice(0, 10);
-    counts.set(day, (counts.get(day) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function deriveToolUsage(sessions: Session[]): ToolUsageEntry[] {
-  const counts = new Map<string, number>();
-  for (const s of sessions) {
-    for (const t of s.toolExecutions) {
-      counts.set(t.toolName, (counts.get(t.toolName) ?? 0) + 1);
+    if (!byDay.has(day)) {
+      const row: DayUserRow = { date: day, total: 0 };
+      for (const dev of developers) row[dev] = 0;
+      byDay.set(day, row);
     }
+    const row = byDay.get(day)!;
+    const key = topSet.has(s.developerEmail) ? s.developerEmail : OTHER_BUCKET;
+    row[key] = (row[key] as number) + 1;
+    row.total = (row.total as number) + 1;
   }
-  return [...counts.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 8);
-}
 
-const SEVERITY_KEYS = ["Critical", "Error", "Warning", "Info"] as const;
-
-function deriveViolationsBySeverity(sessions: Session[]): SeverityEntry[] {
-  const counts = new Map<string, number>(
-    SEVERITY_KEYS.map((k) => [k, 0]),
-  );
-  for (const s of sessions) {
-    for (const v of s.governanceViolations) {
-      const prev = counts.get(v.severity);
-      if (prev !== undefined) {
-        counts.set(v.severity, prev + 1);
-      }
-    }
-  }
-  return [...counts.entries()]
-    .filter(([, count]) => count > 0)
-    .map(([name, count]) => ({
-      name,
-      count,
-      color: SEVERITY_COLORS[name] ?? "#6b7280",
-    }));
+  return {
+    data: [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    developers,
+  };
 }
 
 function EmptyChart({ message }: { message: string }) {
@@ -115,36 +89,39 @@ function EmptyChart({ message }: { message: string }) {
   );
 }
 
-function renderToolLabel(props: { name?: string; percent?: number }) {
-  const { name, percent } = props;
-  if (!name || percent == null) return "";
-  return `${name} ${(percent * 100).toFixed(0)}%`;
-}
-
-function renderSeverityLabel(props: { name?: string; value?: number }) {
-  const { name, value } = props;
-  if (!name || value == null) return "";
-  return `${name} (${value})`;
-}
-
 const CHART_TICK = { fontSize: 12, fill: "var(--chart-text)" };
 const CHART_TICK_SM = { fontSize: 11, fill: "var(--chart-text)" };
 
 export default function AnalyticsPage() {
+  const navigate = useNavigate();
   const [analytics, setAnalytics] = useState<TeamAnalytics | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filterDev, setFilterDev] = useState("");
 
   useEffect(() => {
-    Promise.all([api.analytics.team(), api.sessions.list()])
+    setLoading(true);
+    Promise.all([
+      api.analytics.team(undefined, undefined, filterDev || undefined),
+      api.sessions.list({ developer: filterDev || undefined }),
+    ])
       .then(([teamData, sessionData]) => {
         setAnalytics(teamData);
         setSessions(sessionData);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [filterDev]);
+
+  const { data: sessionsByDayUser, developers: chartDevelopers } = useMemo(
+    () => deriveSessionsByDayAndUser(sessions),
+    [sessions],
+  );
+  const developerOptions = useMemo(
+    () => [...new Set(sessions.map((s) => s.developerEmail))].sort(),
+    [sessions],
+  );
 
   if (loading) return <div className="text-gray-500 dark:text-gray-400">Loading analytics...</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
@@ -155,9 +132,17 @@ export default function AnalyticsPage() {
       ? Math.round((analytics.approvedPullRequests / analytics.totalPullRequests) * 100)
       : 0;
 
-  const sessionsByDay = deriveSessionsByDay(sessions);
-  const toolUsage = deriveToolUsage(sessions);
-  const violationsBySeverity = deriveViolationsBySeverity(sessions);
+  const overThreshold = analytics.dailyCostTrend.some(
+    (d) => d.estimatedCostUsd > analytics.dailyCostThresholdUsd,
+  );
+
+  function drillIntoSessions(day: string, developer?: string) {
+    const from = new Date(`${day}T00:00:00.000Z`).toISOString();
+    const to = new Date(new Date(`${day}T00:00:00.000Z`).getTime() + 86_400_000).toISOString();
+    const params = new URLSearchParams({ from, to });
+    if (developer && developer !== OTHER_BUCKET) params.set("developer", developer);
+    navigate(`/sessions?${params.toString()}`);
+  }
 
   const exportHeaders = ["Developer", "Sessions", "Commits", "Violations"];
   const exportRows = analytics.developers.map((dev) => [
@@ -180,6 +165,22 @@ export default function AnalyticsPage() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold">Team Analytics</h2>
         <ExportButtons onExportCsv={handleExportCsv} onExportPdf={handleExportPdf} />
+      </div>
+
+      <div className="flex flex-wrap gap-3 mb-4">
+        <select
+          value={filterDev}
+          onChange={(e) => setFilterDev(e.target.value)}
+          aria-label="Developer"
+          className="border dark:border-gray-600 rounded px-3 py-1.5 text-sm bg-white dark:bg-gray-800 dark:text-gray-100"
+        >
+          <option value="">All Developers</option>
+          {developerOptions.map((dev) => (
+            <option key={dev} value={dev}>
+              {dev}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="grid grid-cols-4 gap-4 mb-6">
@@ -217,46 +218,58 @@ export default function AnalyticsPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <ChartCard title="Sessions Over Time">
-          {sessionsByDay.length === 0 ? (
+        <ChartCard title="Sessions Per Day by Developer">
+          {sessionsByDayUser.length === 0 ? (
             <EmptyChart message="No session data available" />
           ) : (
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={sessionsByDay}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis dataKey="date" tick={CHART_TICK} />
-                <YAxis allowDecimals={false} tick={CHART_TICK} />
-                <Tooltip />
-                <Bar dataKey="count" name="Sessions" fill={COLORS.primary} />
-              </BarChart>
-            </ResponsiveContainer>
+            <>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={sessionsByDayUser}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                  <XAxis dataKey="date" tick={CHART_TICK} />
+                  <YAxis allowDecimals={false} tick={CHART_TICK} />
+                  <Tooltip />
+                  <Legend />
+                  {chartDevelopers.map((dev, i) => (
+                    <Bar
+                      key={dev}
+                      dataKey={dev}
+                      name={dev}
+                      stackId="sessions"
+                      fill={dev === OTHER_BUCKET ? "var(--chart-grid)" : USER_PALETTE[i]}
+                      cursor="pointer"
+                      onClick={(item) => drillIntoSessions((item.payload as DayUserRow).date, dev)}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                Click a segment to drill into that day&apos;s sessions for that developer.
+              </p>
+            </>
           )}
         </ChartCard>
 
-        <ChartCard title="Tool Usage Distribution">
-          {toolUsage.length === 0 ? (
-            <EmptyChart message="No tool usage data available" />
+        <ChartCard
+          title={`Daily Cost Trend${overThreshold ? " ⚠" : ""}`}
+        >
+          {analytics.dailyCostTrend.length === 0 ? (
+            <EmptyChart message="No cost data available" />
           ) : (
             <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={toolUsage}
-                  dataKey="count"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={90}
-                  label={renderToolLabel}
-                >
-                  {toolUsage.map((_entry, index) => (
-                    <Cell
-                      key={`tool-${index}`}
-                      fill={PIE_PALETTE[index % PIE_PALETTE.length]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
+              <BarChart data={analytics.dailyCostTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                <XAxis dataKey="date" tick={CHART_TICK} />
+                <YAxis tick={CHART_TICK} tickFormatter={(v: number) => `$${v}`} />
+                <Tooltip formatter={(value) => formatCost(Number(value))} />
+                <ReferenceLine
+                  y={analytics.dailyCostThresholdUsd}
+                  stroke={COLORS.danger}
+                  strokeDasharray="4 4"
+                  label={{ value: "Threshold", fill: COLORS.danger, fontSize: 11 }}
+                />
+                <Bar dataKey="estimatedCostUsd" name="Cost (USD)" fill={COLORS.secondary} />
+              </BarChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
@@ -275,32 +288,6 @@ export default function AnalyticsPage() {
                 <Bar dataKey="sessionCount" name="Sessions" fill={COLORS.primary} />
                 <Bar dataKey="commitCount" name="Commits" fill={COLORS.secondary} />
               </BarChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
-
-        <ChartCard title="Governance Violations by Severity">
-          {violationsBySeverity.length === 0 ? (
-            <EmptyChart message="No violation data available" />
-          ) : (
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={violationsBySeverity}
-                  dataKey="count"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={90}
-                  label={renderSeverityLabel}
-                >
-                  {violationsBySeverity.map((entry) => (
-                    <Cell key={`sev-${entry.name}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
             </ResponsiveContainer>
           )}
         </ChartCard>

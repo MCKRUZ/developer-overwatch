@@ -14,12 +14,18 @@ public sealed class AgentConfig
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".overwatch");
 
     public string QueueDbPath => Path.Combine(OverwatchDir, "queue.db");
-    public string ActiveSessionPath => Path.Combine(OverwatchDir, "active-session");
     public string ConfigPath => Path.Combine(OverwatchDir, "config.json");
 
     private static readonly string[] DefaultRedactionPatterns =
     [
-        @"(?i)(api[_-]?key|token|secret|password|credential|auth)\s*[=:]\s*\S+",
+        // Separator is optional and may be whitespace, not just `=`/`:` — HTTP-header-style
+        // secrets ("x-api-key <value>", "api key <value>") use a space, and requiring `=`/`:`
+        // let those through uncaught. \b...\b on the keyword stops "auth" from matching inside
+        // ordinary words like "authorization"/"author". The value must contain a digit and be
+        // >=8 chars — real secrets/tokens are near-universally alphanumeric, whereas plain
+        // English words following "auth"/"secret" (e.g. "auth alongside", "secrets-detection")
+        // are not; a pure length check alone (tried first) still over-matched these badly.
+        @"(?i)\b(api[\s_-]?key|tokens?|secrets?|passwords?|credentials?|auth)\b\s*[=:]?\s*(?=\S*\d)[A-Za-z0-9_\-\.\/+]{8,}",
         @"(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*",
         @"sk-[A-Za-z0-9]{20,}",
         @"ghp_[A-Za-z0-9]{36}",

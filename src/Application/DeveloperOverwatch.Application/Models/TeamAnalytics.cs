@@ -9,4 +9,14 @@ public sealed record TeamAnalytics(
     int NeedsChangesPullRequests,
     int TotalViolations,
     int ViolationsThisWeek,
-    IReadOnlyList<DeveloperMetrics> Developers);
+    IReadOnlyList<DeveloperMetrics> Developers,
+    IReadOnlyList<DailyCostUsage> DailyCostTrend,
+    decimal DailyCostThresholdUsd);
+
+public sealed record DailyCostUsage(
+    DateOnly Date,
+    int InputTokens,
+    int OutputTokens,
+    int CacheCreationInputTokens,
+    int CacheReadInputTokens,
+    decimal EstimatedCostUsd);

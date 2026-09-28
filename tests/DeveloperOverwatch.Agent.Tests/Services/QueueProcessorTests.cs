@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using DeveloperOverwatch.Agent.Services;
 using FluentAssertions;
@@ -13,6 +14,8 @@ public sealed class QueueProcessorTests
     private readonly IApiClient _api;
     private readonly IPrivacyRedactor _redactor;
     private readonly IGitFallbackWriter _gitFallback;
+    private readonly IConversationCapture _conversationCapture;
+    private readonly IConversationCursorStore _cursorStore;
     private readonly AgentConfig _config;
     private readonly QueueProcessor _sut;
 
@@ -22,6 +25,8 @@ public sealed class QueueProcessorTests
         _api = Substitute.For<IApiClient>();
         _redactor = Substitute.For<IPrivacyRedactor>();
         _gitFallback = Substitute.For<IGitFallbackWriter>();
+        _conversationCapture = Substitute.For<IConversationCapture>();
+        _cursorStore = Substitute.For<IConversationCursorStore>();
 
         _redactor.Redact(Arg.Any<string>()).Returns(ci => ci.Arg<string>());
 
@@ -33,7 +38,8 @@ public sealed class QueueProcessorTests
         };
 
         var logger = Substitute.For<ILogger<QueueProcessor>>();
-        _sut = new QueueProcessor(_queue, _api, _redactor, _gitFallback, _config, logger);
+        _sut = new QueueProcessor(
+            _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _config, logger);
     }
 
     private static QueuedEvent CreateEvent(
@@ -209,5 +215,75 @@ public sealed class QueueProcessorTests
         await RunOneTickAsync();
 
         await _queue.Received().PurgeShippedAsync(Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task ConversationTurn_WithCustomTitleSidecar_IncludesSessionTitleInPayload()
+    {
+        var projectDir = Directory.CreateTempSubdirectory();
+        try
+        {
+            var transcriptPath = Path.Combine(projectDir.FullName, "abc-session.jsonl");
+            File.WriteAllText(transcriptPath, "{}");
+            var sidecarDir = Directory.CreateDirectory(Path.Combine(projectDir.FullName, "abc-session"));
+            File.WriteAllText(
+                Path.Combine(sidecarDir.FullName, "custom-title.json"),
+                "{\"customTitle\":\"renamed-session\"}");
+
+            var evt = CreateEvent(
+                type: EventType.ConversationTurn,
+                payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
+            _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(new List<QueuedEvent> { evt }, []);
+            _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(new ConversationCaptureResult(
+                    [new CapturedTurn("user", "hello", DateTime.UtcNow)], 1));
+            _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(true);
+
+            await RunOneTickAsync();
+
+            await _api.Received(1).SendSessionEventsAsync(
+                evt.SessionId,
+                Arg.Is<string>(json => json.Contains("\"sessionTitle\":\"renamed-session\"")),
+                Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            projectDir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConversationTurn_WithoutCustomTitleSidecar_OmitsSessionTitleAsNull()
+    {
+        var projectDir = Directory.CreateTempSubdirectory();
+        try
+        {
+            var transcriptPath = Path.Combine(projectDir.FullName, "abc-session.jsonl");
+            File.WriteAllText(transcriptPath, "{}");
+
+            var evt = CreateEvent(
+                type: EventType.ConversationTurn,
+                payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
+            _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(new List<QueuedEvent> { evt }, []);
+            _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(new ConversationCaptureResult(
+                    [new CapturedTurn("user", "hello", DateTime.UtcNow)], 1));
+            _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(true);
+
+            await RunOneTickAsync();
+
+            await _api.Received(1).SendSessionEventsAsync(
+                evt.SessionId,
+                Arg.Is<string>(json => json.Contains("\"sessionTitle\":null")),
+                Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            projectDir.Delete(recursive: true);
+        }
     }
 }

@@ -17,6 +17,7 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.*" />
     <PackageReference Include="YamlDotNet" Version="16.*" />
+    <PackageReference Include="Azure.Identity" Version="1.17.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Domain\DeveloperOverwatch.Domain\DeveloperOverwatch.Domain.csproj" />

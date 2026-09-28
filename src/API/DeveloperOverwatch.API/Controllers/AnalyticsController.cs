@@ -21,9 +21,10 @@ public sealed class AnalyticsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> GetTeamAnalytics(CancellationToken ct)
+    public async Task<IActionResult> GetTeamAnalytics(
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] string? developer, CancellationToken ct)
     {
-        var result = await _mediator.Send(new GetTeamAnalyticsQuery(), ct);
+        var result = await _mediator.Send(new GetTeamAnalyticsQuery(from, to, developer), ct);
         return result.IsSuccess ? Ok(result.Value) : BadRequest(result.Error);
     }
 

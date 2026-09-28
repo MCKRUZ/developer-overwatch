@@ -120,6 +120,40 @@ public class PolicyLoaderTests : IDisposable
         policies.Should().BeEmpty();
     }
 
+    [Fact]
+    public void LoadPolicies_RelativePath_ResolvesAgainstRunningAssemblyNotCwd()
+    {
+        // A relative PoliciesPath must resolve against AppContext.BaseDirectory (where the app's
+        // own files live) — not Directory.GetCurrentDirectory(), which depends on how/where the
+        // process was launched and silently produced zero policies in every real deployment.
+        var relativeDirName = $"overwatch-relative-policies-{Guid.NewGuid():N}";
+        var absoluteDir = Path.Combine(AppContext.BaseDirectory, relativeDirName);
+        Directory.CreateDirectory(absoluteDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(absoluteDir, "test.yaml"), """
+                policies:
+                  - id: relative-rule
+                    name: "Relative rule"
+                    severity: info
+                    type: pattern
+                    scan: [diffs]
+                    patterns: ["pattern1"]
+                """);
+
+            var config = Options.Create(new GovernanceConfig { PoliciesPath = relativeDirName });
+            var loader = new PolicyLoader(config, NullLogger<PolicyLoader>.Instance);
+
+            var policies = loader.LoadPolicies();
+
+            policies.Should().ContainSingle().Which.Id.Should().Be("relative-rule");
+        }
+        finally
+        {
+            Directory.Delete(absoluteDir, recursive: true);
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))

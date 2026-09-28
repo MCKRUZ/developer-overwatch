@@ -9,6 +9,16 @@
     <ProjectReference Include="..\..\Infrastructure\DeveloperOverwatch.Infrastructure\DeveloperOverwatch.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Governance policies must ship alongside the built app (build output AND publish/Docker
+         output) — PolicyLoader resolves this path relative to the running assembly, not the
+         repo, so the file has to travel with the binary in every deployment. -->
+    <Content Include="..\..\..\policies\**\*.yaml">
+      <Link>policies\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.Sqlite" Version="8.*" />
     <PackageReference Include="AspNetCore.HealthChecks.SqlServer" Version="8.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.*">
@@ -16,6 +26,9 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.*" />
+    <PackageReference Include="Azure.Identity" Version="1.17.1">
+      <Aliases>AzureIdentityAlias</Aliases>
+    </PackageReference>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.*" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.*" />
   </ItemGroup>

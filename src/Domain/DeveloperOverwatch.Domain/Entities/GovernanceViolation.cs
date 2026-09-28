@@ -10,6 +10,12 @@ public class GovernanceViolation
     public ViolationSeverity Severity { get; set; }
     public string Message { get; set; } = string.Empty;
     public string? ContextJson { get; set; }
+
+    // Anchors the violation to where it actually occurred in the timeline, so the dashboard can
+    // jump straight there instead of just opening the session. At most one is set, depending on
+    // which scan target (conversation vs diffs) produced the violation.
+    public string? ConversationTurnId { get; set; }
+    public string? ToolExecutionId { get; set; }
     public bool Resolved { get; set; }
     public string? ResolvedBy { get; set; }
     public string? ResolutionReason { get; set; }
