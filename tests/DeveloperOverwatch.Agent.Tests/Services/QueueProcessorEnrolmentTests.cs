@@ -111,6 +111,23 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
         sent.Should().Contain(StableTurnId.From("uuid:old")).And.Contain("\"inputTokens\":10").And.NotContain("pre-enrolment text");
     }
 
+    // Backfill reuses a live session's id, so the session it fills in may have begun before enrolment.
+    [Fact]
+    public async Task BackfillOfAPreEnrolmentSession_ShipsItsUsage_AndNoText()
+    {
+        var sut = CreateSut();
+        await EnqueueAsync(Start("start", "s"), _pilotSince.AddMinutes(-10));
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        CaptureTurns(("uuid:old", "pre-enrolment text", _pilotSince.AddMinutes(-5)));
+        await EnqueueAsync(Start("backfill-start", "s"), _pilotSince.AddMinutes(1));
+        await EnqueueAsync(Event("marker", "s", EventType.ConversationTurn, BackfillMarker(usageOnly: true)), _pilotSince.AddMinutes(2));
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain(StableTurnId.From("uuid:old")).And.Contain("\"inputTokens\":10").And.NotContain("pre-enrolment text");
+    }
+
     // The exemption is keyed on the backfill flag, not on what a turn happens to carry.
     [Fact]
     public async Task LiveMarker_PreEnrolmentTurnWithNoContent_IsNotSent()
