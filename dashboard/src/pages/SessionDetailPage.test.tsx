@@ -12,6 +12,7 @@ import {
 
 vi.mock("../api", () => ({
   api: {
+    pricing: { get: vi.fn().mockResolvedValue({ asOf: "2026-11-09" }) },
     sessions: {
       get: vi.fn(),
       dailyUsage: vi.fn(),

@@ -11,6 +11,7 @@ import {
 
 vi.mock("../api", () => ({
   api: {
+    pricing: { get: vi.fn().mockResolvedValue({ asOf: "2026-11-09" }) },
     analytics: {
       team: vi.fn(),
     },

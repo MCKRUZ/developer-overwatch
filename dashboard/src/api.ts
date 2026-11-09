@@ -9,6 +9,7 @@ import type {
   TeamAnalytics,
   DeveloperAnalytics,
   GovernanceViolation,
+  PricingInfo,
 } from "./types";
 
 const BASE = "/api";
@@ -146,6 +147,12 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+    },
+  },
+
+  pricing: {
+    get(): Promise<PricingInfo> {
+      return fetchJson(`${BASE}/pricing`);
     },
   },
 
