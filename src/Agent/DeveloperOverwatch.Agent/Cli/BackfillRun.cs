@@ -154,6 +154,7 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
             transcriptPath = transcript,
             at = lastActiveAt,
             usageOnly = true,
+            isBackfill = true,
             from = Iso(cutoffUtc),
         });
         // The payload overwatch-session-end.ps1 queues, dated when the session was last active.

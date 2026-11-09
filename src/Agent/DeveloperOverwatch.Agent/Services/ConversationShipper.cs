@@ -183,8 +183,9 @@ internal sealed class ConversationShipper
         await _usageStore.RecordTurnsAsync(sessionId, turns.Select(t => t.Turn).ToList(), ct);
         // Left out of Turns, a pre-enrolment turn is never sent, and the cursor moves past it like an answered one.
         // A turn with no timestamp cannot be shown to postdate enrolment, so with a cutoff it is never sent either.
+        // Backfill is the explicit opt-in for that usage, and never carries text.
         var shippable = turns
-            .Where(t => _pilotSince is not { } since || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= since))
+            .Where(t => marker.Backfill || _pilotSince is not { } since || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= since))
             .ToList();
         return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, shippable);
     }

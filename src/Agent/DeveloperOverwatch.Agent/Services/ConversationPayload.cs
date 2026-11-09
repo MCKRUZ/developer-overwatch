@@ -4,8 +4,11 @@ using System.Text.Json;
 namespace DeveloperOverwatch.Agent.Services;
 
 /// <summary>What a ConversationTurn marker asks for. The Stop hook's marker names only the transcript.
-/// Backfill's marker adds <c>usageOnly</c> and <c>from</c>: ship usage since <c>from</c>, never text.</summary>
-internal sealed record ConversationMarker(string TranscriptPath, bool UsageOnly, DateTime? From)
+/// Backfill's marker adds <c>usageOnly</c>, <c>isBackfill</c> and <c>from</c>: ship usage since <c>from</c>,
+/// never text.</summary>
+/// <param name="Backfill">The explicit backfill opt-in: its turns ship even from before enrolment. It always
+/// means usage only, whatever <c>usageOnly</c> says.</param>
+internal sealed record ConversationMarker(string TranscriptPath, bool UsageOnly, DateTime? From, bool Backfill = false)
 {
     /// <summary>Null when the payload is malformed or names no transcript.</summary>
     public static ConversationMarker? Parse(string payloadJson)
@@ -19,18 +22,21 @@ internal sealed record ConversationMarker(string TranscriptPath, bool UsageOnly,
                 || tp.GetString() is not { Length: > 0 } path)
                 return null;
 
-            var usageOnly = root.TryGetProperty("usageOnly", out var u) && u.ValueKind == JsonValueKind.True;
+            var backfill = IsTrue(root, "isBackfill");
             DateTime? from = root.TryGetProperty("from", out var f) && f.ValueKind == JsonValueKind.String
                 && DateTime.TryParse(f.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
                     ? parsed.ToUniversalTime()
                     : null;
-            return new ConversationMarker(path, usageOnly, from);
+            return new ConversationMarker(path, backfill || IsTrue(root, "usageOnly"), from, backfill);
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    private static bool IsTrue(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
 }
 
 /// <summary>Builds the <c>/events</c> payload that carries captured conversation turns.</summary>

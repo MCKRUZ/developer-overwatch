@@ -127,7 +127,9 @@ public sealed class BackfillCommandTests : IDisposable
 
         using var marker = JsonDocument.Parse(events[1].PayloadJson);
         marker.RootElement.EnumerateObject().Select(p => p.Name).Should()
-            .Equal("sessionId", "transcriptPath", "at", "usageOnly", "from");
+            .Equal("sessionId", "transcriptPath", "at", "usageOnly", "isBackfill", "from");
+        marker.RootElement.GetProperty("isBackfill").GetBoolean().Should().BeTrue(
+            "the explicit backfill opt-in is what lets pre-enrolment usage ship");
         marker.RootElement.GetProperty("sessionId").GetString().Should().Be(MappedId);
         marker.RootElement.GetProperty("transcriptPath").GetString().Should().Be(_transcriptA);
         marker.RootElement.GetProperty("at").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-1),

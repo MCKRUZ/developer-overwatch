@@ -97,6 +97,48 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
+    // Backfill is the explicit opt-in for Local-era usage, so its marker is exempt from the turn cutoff.
+    [Fact]
+    public async Task BackfillMarker_PreEnrolmentTurn_ShipsItsUsage_AndNoText()
+    {
+        CaptureTurns(("uuid:old", "pre-enrolment text", _pilotSince.AddMinutes(-5)));
+        await EnqueueAsync(Start("start", "s"), _pilotSince.AddMinutes(1));
+        await EnqueueAsync(Event("marker", "s", EventType.ConversationTurn, BackfillMarker(usageOnly: true)), _pilotSince.AddMinutes(2));
+
+        await CreateSut().PollOnceAsync(CancellationToken.None);
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain(StableTurnId.From("uuid:old")).And.Contain("\"inputTokens\":10").And.NotContain("pre-enrolment text");
+    }
+
+    // The exemption is keyed on the backfill flag, not on what a turn happens to carry.
+    [Fact]
+    public async Task LiveMarker_PreEnrolmentTurnWithNoContent_IsNotSent()
+    {
+        CaptureTurns(("uuid:quiet", null, _pilotSince.AddMinutes(-5)));
+        await EnqueueAsync(Start("start", "s"), _pilotSince.AddMinutes(1));
+        await EnqueueAsync(Event("marker", "s", EventType.ConversationTurn, Marker()), _pilotSince.AddMinutes(2));
+
+        await CreateSut().PollOnceAsync(CancellationToken.None);
+
+        string.Join("\n", _http.Bodies).Should().NotContain(StableTurnId.From("uuid:quiet"));
+    }
+
+    // Usage only holds by construction: a backfill marker strips text at send time even without usageOnly.
+    [Fact]
+    public async Task BackfillMarker_TurnWithText_SendsNoText_AndLeavesTheLiveCursorAlone()
+    {
+        CaptureTurns(("uuid:new", "backfilled secret text", _pilotSince.AddMinutes(5)));
+        await EnqueueAsync(Start("start", "s"), _pilotSince.AddMinutes(1));
+        await EnqueueAsync(Event("marker", "s", EventType.ConversationTurn, BackfillMarker(usageOnly: false)), _pilotSince.AddMinutes(6));
+
+        await CreateSut().PollOnceAsync(CancellationToken.None);
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain(StableTurnId.From("uuid:new")).And.NotContain("backfilled secret text");
+        await _cursors.DidNotReceive().SetAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
     private QueueProcessor CreateSut()
     {
         var config = new AgentConfig { Mode = AgentMode.Pilot, PilotSince = _pilotSince, OverwatchDir = _dir };
@@ -141,6 +183,10 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
             JsonSerializer.Serialize(new { sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow }));
 
     private static string Marker() => JsonSerializer.Serialize(new { transcriptPath = Transcript });
+
+    private string BackfillMarker(bool usageOnly) => usageOnly
+        ? JsonSerializer.Serialize(new { transcriptPath = Transcript, usageOnly, isBackfill = true, from = _pilotSince.AddDays(-1) })
+        : JsonSerializer.Serialize(new { transcriptPath = Transcript, isBackfill = true, from = _pilotSince.AddDays(-1) });
 
     private static string ToolFailed() => $$"""{"toolName":"Bash","at":"{{DateTime.UtcNow:o}}"}""";
 
