@@ -34,32 +34,31 @@ internal sealed class ConversationShipper
         _logger = logger;
     }
 
-    /// <summary>Records the usage and sends nothing. With no cutoff (Local mode) the live cursors move to the
-    /// end. A Pilot marker from before enrolment moves each cursor only up to its first turn from after
-    /// enrolment, so a later marker still sends that turn and the ones after it.</summary>
-    /// <param name="wholeTranscript">Move the cursors to the end whatever the cutoff: the session itself
-    /// began before enrolment, so none of these turns is ever sent.</param>
+    /// <summary>Records the usage and sends nothing. Each live cursor moves up to its first turn dated at or
+    /// after the bound, so a later marker still sends that turn and the ones after it; with no bound (Local
+    /// mode) it moves to the end.</summary>
+    /// <param name="keepFrom">The bound, when it is not enrolment itself: the session began before
+    /// enrolment, and only its turns from this instant on may ship after it is resumed.</param>
     public async Task RecordLocallyAsync(
-        string sessionId, QueuedEvent marker, CancellationToken ct, bool wholeTranscript = false)
+        string sessionId, QueuedEvent marker, CancellationToken ct, DateTime? keepFrom = null)
     {
         if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
             return;
 
+        var bound = keepFrom ?? _pilotSince;
         foreach (var transcript in captured.Transcripts)
         {
-            var stop = wholeTranscript ? null : FirstEnrolledLine(transcript);
+            var stop = bound is { } from ? FirstLineFrom(transcript, from) : null;
             await AdvanceAsync(transcript, stop ?? transcript.Result.TotalLines, ct);
         }
     }
 
     /// <summary>An undated turn is not one: with a cutoff it is never sent, so the cursor may pass it.</summary>
-    private int? FirstEnrolledLine(TranscriptCapture transcript) =>
-        _pilotSince is { } since
-            ? transcript.Result.Turns
-                .Where(t => t.Timestamp is { } ts && ToUtc(ts) >= since)
-                .Select(t => (int?)t.StartLine)
-                .Min()
-            : null;
+    private static int? FirstLineFrom(TranscriptCapture transcript, DateTime from) =>
+        transcript.Result.Turns
+            .Where(t => t.Timestamp is { } ts && ToUtc(ts) >= from)
+            .Select(t => (int?)t.StartLine)
+            .Min();
 
     /// <summary>Done once every captured turn has a definitive outcome. A transient chunk stops there:
     /// the cursors keep what earlier chunks earned, and the next poll resumes from them.</summary>

@@ -96,11 +96,17 @@ internal sealed class SessionShipper
     }
 
     /// <summary>An item of a session that began before enrolment, queued after it: handled here like the
-    /// session's earlier items. Its turns' cursors go to the end, so a later resume does not send them.</summary>
+    /// session's earlier items. A turn marker reads the transcript as it is now, which may already hold turns
+    /// from after the session's next start, so its cursors pass only the turns before that start (or, with
+    /// none queued, before the marker), and a later resume does not send them.</summary>
     private async Task KeepLocalAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
     {
         if (evt.EventType == EventType.ConversationTurn)
-            await _conversations.RecordLocallyAsync(sessionId, evt, ct, wholeTranscript: true);
+        {
+            var resumedAt = await _queue.GetNextStartAtAsync(sessionId, evt.CreatedAt, ct);
+            await _conversations.RecordLocallyAsync(sessionId, evt, ct, keepFrom: resumedAt ?? evt.CreatedAt);
+        }
+
         await run.MarkShippedAsync([evt], ct);
     }
 

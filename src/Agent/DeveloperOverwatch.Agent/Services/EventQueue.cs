@@ -17,6 +17,11 @@ public interface IEventQueue
     /// <summary>Whether a start of the session already reached the server, as far as this queue knows.
     /// Pending starts do not count.</summary>
     Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default);
+
+    /// <summary>When the session's first start queued after <paramref name="after"/> was queued, whatever
+    /// its state; null when the queue holds none.</summary>
+    Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default);
+
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
 
     /// <summary>Never dequeued again: the server does not know the session. Purged like shipped events.</summary>
@@ -185,6 +190,25 @@ public sealed class EventQueue : IEventQueue, IDisposable
             : states.Contains(Dead) ? StartState.Dead
             : StartState.Unknown;
         return Task.FromResult(state);
+    }
+
+    public Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = """
+                SELECT MIN(created_at) FROM events
+                WHERE session_id = $sessionId AND event_type = $eventType AND created_at > $after
+                """;
+            cmd.Parameters.AddWithValue("$sessionId", sessionId);
+            cmd.Parameters.AddWithValue("$eventType", nameof(EventType.SessionStart));
+            cmd.Parameters.AddWithValue("$after", ToUtc(after).ToString("o"));
+
+            var at = cmd.ExecuteScalar() as string;
+            return Task.FromResult<DateTime?>(
+                at is null ? null : DateTime.Parse(at, null, System.Globalization.DateTimeStyles.RoundtripKind));
+        }
     }
 
     // Values of the `shipped` column. Only Pending is ever dequeued.

@@ -97,6 +97,36 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
+    // A marker handled here reads the transcript as it is at processing time, which can already hold turns
+    // from after the resume. It passes only the turns before the resume, wherever the resume start sits in
+    // the queue: in its batch, or in a later one.
+    [Theory]
+    [InlineData(50)]
+    [InlineData(1)]
+    public async Task LocalMarker_BeforeAResume_PassesOnlyTheTurnsBeforeIt(int batchSize)
+    {
+        var cursors = TrackCursors();
+        var sut = CreateSut(batchSize);
+        await EnqueueAsync(Start("start", "s"), _pilotSince.AddMinutes(-10));
+        await DrainAsync(sut);
+
+        var resumeAt = _pilotSince.AddMinutes(10);
+        CaptureTurns(
+            ("uuid:pre", "text from before the resume", resumeAt.AddMinutes(-2)),
+            ("uuid:post", "text from after the resume", resumeAt.AddMinutes(1)));
+        await EnqueueAsync(Event("marker", "s", EventType.ConversationTurn, Marker()), _pilotSince.AddMinutes(5));
+        await EnqueueAsync(Start("resume", "s"), resumeAt);
+        await DrainAsync(sut);
+
+        string.Join("\n", _http.Bodies).Should().NotContain("text from");
+        cursors["s"].Should().Be(1, "the turn after the resume belongs to the resumed session");
+
+        await EnqueueAsync(Event("marker-2", "s", EventType.ConversationTurn, Marker()), resumeAt.AddMinutes(2));
+        await DrainAsync(sut);
+
+        string.Join("\n", _http.Bodies).Should().Contain("text from after the resume").And.NotContain("text from before the resume");
+    }
+
     // Backfill is the explicit opt-in for Local-era usage, so its marker is exempt from the turn cutoff.
     [Fact]
     public async Task BackfillMarker_PreEnrolmentTurn_ShipsItsUsage_AndNoText()
@@ -156,9 +186,18 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
         await _cursors.DidNotReceive().SetAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
-    private QueueProcessor CreateSut()
+    private async Task DrainAsync(QueueProcessor sut)
     {
-        var config = new AgentConfig { Mode = AgentMode.Pilot, PilotSince = _pilotSince, OverwatchDir = _dir };
+        for (var poll = 0; poll < 10 && await _queue.GetUnshippedCountAsync() > 0; poll++)
+            await sut.PollOnceAsync(CancellationToken.None);
+    }
+
+    private QueueProcessor CreateSut(int batchSize = 50)
+    {
+        var config = new AgentConfig
+        {
+            Mode = AgentMode.Pilot, PilotSince = _pilotSince, OverwatchDir = _dir, BatchSize = batchSize
+        };
         var redactor = Substitute.For<IPrivacyRedactor>();
         redactor.Redact(Arg.Any<string>()).Returns(ci => ci.Arg<string>());
         var api = new ApiClient(new HttpClient(_http) { BaseAddress = new Uri("http://overwatch.invalid/") }, NullLogger<ApiClient>.Instance);
