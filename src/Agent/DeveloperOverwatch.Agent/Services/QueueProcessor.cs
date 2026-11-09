@@ -46,8 +46,10 @@ public sealed class QueueProcessor : BackgroundService
         _lifetime = lifetime;
         _logger = logger;
 
+        // The enrolment cutoff exists only in Pilot: Local mode sends nothing, so its cursors go to the end.
         var conversations = new ConversationShipper(
-            api, redactor, conversationCapture, cursorStore, usageStore, logger, config.PilotSince);
+            api, redactor, conversationCapture, cursorStore, usageStore, logger,
+            config.Mode == AgentMode.Pilot ? config.PilotSince : null);
         _sessions = new SessionShipper(queue, api, redactor, gitRemote, usageStore, conversations, logger);
         _backoff = new SessionBackoff(config.PollIntervalSeconds);
     }

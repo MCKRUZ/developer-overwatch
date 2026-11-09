@@ -34,15 +34,26 @@ internal sealed class ConversationShipper
         _logger = logger;
     }
 
-    /// <summary>Local mode: records the usage and moves the live cursors to the end. Sends nothing.</summary>
+    /// <summary>Records the usage and sends nothing. With no cutoff (Local mode) the live cursors move to the
+    /// end. A Pilot marker from before enrolment moves each cursor only up to its first turn from after
+    /// enrolment, so a later marker still sends that turn and the ones after it.</summary>
     public async Task RecordLocallyAsync(string sessionId, QueuedEvent marker, CancellationToken ct)
     {
         if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
             return;
 
         foreach (var transcript in captured.Transcripts)
-            await AdvanceAsync(transcript, transcript.Result.TotalLines, ct);
+            await AdvanceAsync(transcript, FirstEnrolledLine(transcript) ?? transcript.Result.TotalLines, ct);
     }
+
+    /// <summary>An undated turn is not one: with a cutoff it is never sent, so the cursor may pass it.</summary>
+    private int? FirstEnrolledLine(TranscriptCapture transcript) =>
+        _pilotSince is { } since
+            ? transcript.Result.Turns
+                .Where(t => t.Timestamp is { } ts && ToUtc(ts) >= since)
+                .Select(t => (int?)t.StartLine)
+                .Min()
+            : null;
 
     /// <summary>Done once every captured turn has a definitive outcome. A transient chunk stops there:
     /// the cursors keep what earlier chunks earned, and the next poll resumes from them.</summary>

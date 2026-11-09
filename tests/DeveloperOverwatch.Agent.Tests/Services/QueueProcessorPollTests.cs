@@ -111,6 +111,55 @@ public sealed class QueueProcessorPollTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
+    // A marker queued before enrolment is handled here, but its transcript may already hold turns from after
+    // enrolment. Moving the cursor past them would mean no later marker ever sends them.
+    [Fact]
+    public async Task Pilot_PreEnrolmentMarker_KeepsTheCursorAtTheFirstPostEnrolmentTurn_SoALaterMarkerSendsIt()
+    {
+        var cursors = TrackCursors();
+        var captured = new List<CapturedTurn>
+        {
+            new("uuid:pre", "user", "pre-enrolment turn", PilotSince.AddMinutes(-5), StartLine: 0),
+            new("uuid:post1", "user", "first post-enrolment turn", PilotSince.AddMinutes(5), StartLine: 1),
+            new("uuid:undated", "user", "turn without a timestamp", null, StartLine: 2),
+            new("uuid:post2", "user", "second post-enrolment turn", PilotSince.AddMinutes(7), StartLine: 3)
+        };
+        _capture.CaptureFromFileAsync(Transcript, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(ci => new ConversationCaptureResult(captured.Where(t => t.StartLine >= ci.ArgAt<int>(1)).ToList(), captured.Count));
+        var sut = CreateSut(new AgentConfig { Mode = AgentMode.Pilot, PilotSince = PilotSince, OverwatchDir = _dir });
+
+        await EnqueueAsync(Event("m-old", "s", EventType.ConversationTurn, MarkerPayload()), PilotSince.AddMinutes(-1));
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        _http.Bodies.Should().BeEmpty();
+        cursors.GetValueOrDefault("s").Should().Be(1, "the cursor stops at the first turn from after enrolment");
+
+        await EnqueueAsync(Start("start", "s"), PilotSince.AddMinutes(8));
+        await EnqueueAsync(Event("m-new", "s", EventType.ConversationTurn, MarkerPayload()), PilotSince.AddMinutes(9));
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain("first post-enrolment turn").And.Contain("second post-enrolment turn")
+            .And.NotContain("pre-enrolment turn").And.NotContain("turn without a timestamp");
+        cursors["s"].Should().Be(4);
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
+    // Local mode sends nothing ever, so its cursor goes straight to the end even with a cutoff configured.
+    [Fact]
+    public async Task Local_Marker_MovesTheCursorToTheEnd_EvenWithAPilotSince()
+    {
+        var cursors = TrackCursors();
+        CaptureTurns(("uuid:a", "earlier turn", PilotSince.AddMinutes(-5)), ("uuid:b", "later turn", PilotSince.AddMinutes(5)));
+        await EnqueueAsync(Event("m", "s", EventType.ConversationTurn, MarkerPayload()), PilotSince.AddMinutes(6));
+
+        await CreateSut(new AgentConfig { Mode = AgentMode.Local, PilotSince = PilotSince, OverwatchDir = _dir })
+            .PollOnceAsync(CancellationToken.None);
+
+        _http.Bodies.Should().BeEmpty();
+        cursors["s"].Should().Be(2);
+    }
+
     [Fact]
     public async Task Pilot_NoPilotSince_HasNoCutoff()
     {
@@ -225,6 +274,18 @@ public sealed class QueueProcessorPollTests : IDisposable
 
     private ApiClient Api() =>
         new(new HttpClient(_http) { BaseAddress = new Uri("http://overwatch.invalid/") }, NullLogger<ApiClient>.Instance);
+
+    /// <summary>Makes the cursor store remember what is written to it, so a later marker reads it back.</summary>
+    private ConcurrentDictionary<string, int> TrackCursors()
+    {
+        var cursors = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
+        _cursors.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci => cursors.GetValueOrDefault(ci.ArgAt<string>(0)));
+        _cursors.SetAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => cursors[ci.ArgAt<string>(0)] = ci.ArgAt<int>(1));
+        return cursors;
+    }
 
     private void CaptureTurns(params (string SourceId, string Content, DateTime At)[] turns)
     {
