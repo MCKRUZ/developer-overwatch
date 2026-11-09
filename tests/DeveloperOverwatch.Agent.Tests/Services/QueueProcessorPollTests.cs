@@ -87,6 +87,30 @@ public sealed class QueueProcessorPollTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
+    // With a cutoff, a turn that carries no timestamp cannot be shown to postdate enrolment, so it fails closed.
+    [Fact]
+    public async Task Pilot_TurnWithNoTimestamp_IsNeverSent_ButItsUsageIsRecorded_AndTheCursorMovesPastIt()
+    {
+        var captured = new List<CapturedTurn>
+        {
+            new("uuid:undated", "user", "turn without a timestamp", null, StartLine: 0),
+            new("uuid:dated", "user", "timestamped turn", PilotSince.AddMinutes(5), StartLine: 1)
+        };
+        _capture.CaptureFromFileAsync(Transcript, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(ci => new ConversationCaptureResult(captured.Where(t => t.StartLine >= ci.ArgAt<int>(1)).ToList(), captured.Count));
+        await EnqueueAsync(Start("s", "s"), PilotSince.AddMinutes(1));
+        await EnqueueAsync(Event("m", "s", EventType.ConversationTurn, MarkerPayload()), PilotSince.AddMinutes(6));
+
+        var sut = CreateSut(new AgentConfig { Mode = AgentMode.Pilot, PilotSince = PilotSince, OverwatchDir = _dir });
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain("timestamped turn").And.NotContain("turn without a timestamp");
+        await _usage.Received().RecordTurnsAsync("s", Arg.Is<IReadOnlyList<CapturedTurn>>(t => t.Count == 2), Arg.Any<CancellationToken>());
+        await _cursors.Received().SetAsync("s", 2, Arg.Any<CancellationToken>());
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
     [Fact]
     public async Task Pilot_NoPilotSince_HasNoCutoff()
     {
