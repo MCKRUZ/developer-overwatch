@@ -78,7 +78,8 @@ public static class DependencyInjection
         services.AddScoped<SlackNotificationService>();
         services.AddScoped<EmailNotificationService>();
         services.AddScoped<INotificationService, CompositeNotificationService>();
-        services.AddScoped<IOverwatchNotifier, OverwatchNotifier>();
+        services.AddKeyedScoped<IOverwatchNotifier, OverwatchNotifier>(
+            Application.Services.CompositeOverwatchNotifier.ChannelKey);
 
         return services;
     }
