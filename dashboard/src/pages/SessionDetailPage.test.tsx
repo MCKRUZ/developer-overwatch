@@ -4,17 +4,19 @@ import { Routes, Route } from "react-router-dom";
 import SessionDetailPage from "./SessionDetailPage";
 import { api } from "../api";
 import {
-  buildSession,
-  buildConversationTurn,
+  buildSessionDetail,
   buildGovernanceViolation,
-  buildFileChange,
   buildArchitectAnnotation,
+  buildModelUsage,
 } from "../test/factories";
 
 vi.mock("../api", () => ({
   api: {
     sessions: {
       get: vi.fn(),
+      dailyUsage: vi.fn(),
+      modelBreakdown: vi.fn(),
+      timeline: vi.fn(),
     },
     annotations: {
       create: vi.fn(),
@@ -40,6 +42,14 @@ describe("SessionDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.governance.violations.mockResolvedValue([]);
+    mockApi.sessions.dailyUsage.mockResolvedValue([]);
+    mockApi.sessions.modelBreakdown.mockResolvedValue([]);
+    mockApi.sessions.timeline.mockResolvedValue({
+      conversationTurns: [],
+      toolExecutions: [],
+      fileChanges: [],
+      hasMore: false,
+    });
   });
 
   it("shows loading state initially", () => {
@@ -58,14 +68,11 @@ describe("SessionDetailPage", () => {
 
   it("renders session header metadata", async () => {
     mockApi.sessions.get.mockResolvedValue(
-      buildSession({
+      buildSessionDetail({
         id: "abcdef123456-rest-of-id",
         repoPath: "org/my-repo",
         status: "Completed",
-        conversationTurns: [
-          buildConversationTurn({ id: "t1", turnIndex: 0 }),
-          buildConversationTurn({ id: "t2", turnIndex: 1 }),
-        ],
+        conversationTurnCount: 2,
       }),
     );
     renderWithRoute("abcdef123456-rest-of-id");
@@ -76,8 +83,20 @@ describe("SessionDetailPage", () => {
     expect(screen.getByText("2")).toBeInTheDocument();
   });
 
+  it("shows the session's custom title instead of the raw GUID when available", async () => {
+    mockApi.sessions.get.mockResolvedValue(
+      buildSessionDetail({ id: "abcdef123456-rest-of-id", title: "initial-setup" }),
+    );
+    renderWithRoute("abcdef123456-rest-of-id");
+    await waitFor(() => {
+      expect(screen.getByText("initial-setup")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("abcdef123456...")).not.toBeInTheDocument();
+    expect(screen.getByText("abcdef123456-rest-of-id")).toBeInTheDocument();
+  });
+
   it("renders back link to sessions list", async () => {
-    mockApi.sessions.get.mockResolvedValue(buildSession());
+    mockApi.sessions.get.mockResolvedValue(buildSessionDetail());
     renderWithRoute("sess-001");
     await waitFor(() => {
       const link = screen.getByRole("link", { name: /Back to Sessions/ });
@@ -85,10 +104,27 @@ describe("SessionDetailPage", () => {
     });
   });
 
+  it("shows total tokens and estimated cost", async () => {
+    mockApi.sessions.get.mockResolvedValue(
+      buildSessionDetail({
+        totalInputTokens: 100,
+        totalOutputTokens: 50,
+        totalCacheCreationInputTokens: 850,
+        totalCacheReadInputTokens: 4000,
+        estimatedCostUsd: 1.2345,
+      }),
+    );
+    renderWithRoute("sess-001");
+    await waitFor(() => {
+      expect(screen.getByText("5,000")).toBeInTheDocument();
+    });
+    expect(screen.getByText("$1.23")).toBeInTheDocument();
+  });
+
   it("renders governance violations with severity badges in collapsible section", async () => {
     const user = userEvent.setup();
     mockApi.sessions.get.mockResolvedValue(
-      buildSession({
+      buildSessionDetail({
         governanceViolations: [
           buildGovernanceViolation({ id: "v1", ruleId: "no-console", severity: "Warning", message: "console.log found" }),
           buildGovernanceViolation({ id: "v2", ruleId: "no-secrets", severity: "Critical", message: "Secret exposed", resolved: true, resolvedBy: "admin", resolutionReason: "False positive" }),
@@ -100,11 +136,9 @@ describe("SessionDetailPage", () => {
       expect(screen.getByText("Governance Violations (2)")).toBeInTheDocument();
     });
 
-    // Severity breakdown badges should be visible in the header
     expect(screen.getByText(/1 Critical/)).toBeInTheDocument();
     expect(screen.getByText(/1 Warning/)).toBeInTheDocument();
 
-    // Expand the section to see violation details
     await user.click(screen.getByText("Governance Violations (2)"));
 
     expect(screen.getByText("no-console")).toBeInTheDocument();
@@ -114,72 +148,9 @@ describe("SessionDetailPage", () => {
     expect(screen.getByText(/Resolved by admin: False positive/)).toBeInTheDocument();
   });
 
-  it("renders conversation timeline with role-based styling", async () => {
-    mockApi.sessions.get.mockResolvedValue(
-      buildSession({
-        conversationTurns: [
-          buildConversationTurn({ id: "t1", turnIndex: 0, role: "user", content: "Fix the bug" }),
-          buildConversationTurn({ id: "t2", turnIndex: 1, role: "assistant", content: "Looking at it now" }),
-        ],
-      }),
-    );
-    renderWithRoute("sess-001");
-    await waitFor(() => {
-      expect(screen.getByText("Fix the bug")).toBeInTheDocument();
-    });
-    expect(screen.getByText("Looking at it now")).toBeInTheDocument();
-    expect(screen.getByText("user")).toBeInTheDocument();
-    expect(screen.getByText("assistant")).toBeInTheDocument();
-  });
-
-  it("highlights decision turns", async () => {
-    mockApi.sessions.get.mockResolvedValue(
-      buildSession({
-        conversationTurns: [
-          buildConversationTurn({ id: "t1", turnIndex: 0, isDecision: true, content: "Decided to use Result pattern" }),
-        ],
-      }),
-    );
-    renderWithRoute("sess-001");
-    await waitFor(() => {
-      expect(screen.getByText("Decision")).toBeInTheDocument();
-    });
-  });
-
-  it("shows token counts on turns", async () => {
-    mockApi.sessions.get.mockResolvedValue(
-      buildSession({
-        conversationTurns: [
-          buildConversationTurn({ id: "t1", turnIndex: 0, tokenCount: 150 }),
-        ],
-      }),
-    );
-    renderWithRoute("sess-001");
-    await waitFor(() => {
-      expect(screen.getByText("150 tokens")).toBeInTheDocument();
-    });
-  });
-
-  it("renders file changes in timeline", async () => {
-    mockApi.sessions.get.mockResolvedValue(
-      buildSession({
-        fileChanges: [
-          buildFileChange({ id: "fc1", filePath: "src/app.ts", changeType: "Modified", diffText: "+new line" }),
-        ],
-      }),
-    );
-    renderWithRoute("sess-001");
-    await waitFor(() => {
-      expect(screen.getByText("src/app.ts")).toBeInTheDocument();
-    });
-    expect(screen.getByText("Modified")).toBeInTheDocument();
-    // Diff text is behind an expand button
-    expect(screen.getByText("Show diff")).toBeInTheDocument();
-  });
-
   it("renders existing annotations", async () => {
     mockApi.sessions.get.mockResolvedValue(
-      buildSession({
+      buildSessionDetail({
         architectAnnotations: [
           buildArchitectAnnotation({ id: "a1", content: "Solid approach", createdBy: "lead@test.com" }),
         ],
@@ -194,8 +165,8 @@ describe("SessionDetailPage", () => {
 
   it("submits annotation form and refetches session", async () => {
     const user = userEvent.setup();
-    const initialSession = buildSession({ architectAnnotations: [] });
-    const updatedSession = buildSession({
+    const initialSession = buildSessionDetail({ architectAnnotations: [] });
+    const updatedSession = buildSessionDetail({
       architectAnnotations: [
         buildArchitectAnnotation({ content: "New note", createdBy: "me@test.com" }),
       ],
@@ -230,7 +201,7 @@ describe("SessionDetailPage", () => {
 
   it("shows submitting state on annotation button", async () => {
     const user = userEvent.setup();
-    mockApi.sessions.get.mockResolvedValue(buildSession());
+    mockApi.sessions.get.mockResolvedValue(buildSessionDetail());
     mockApi.annotations.create.mockReturnValue(new Promise(() => {}));
 
     renderWithRoute("sess-001");
@@ -248,18 +219,8 @@ describe("SessionDetailPage", () => {
     expect(screen.getByRole("button", { name: "Adding..." })).toBeDisabled();
   });
 
-  it("shows empty timeline message when no events exist", async () => {
-    mockApi.sessions.get.mockResolvedValue(
-      buildSession({ conversationTurns: [], toolExecutions: [], fileChanges: [] }),
-    );
-    renderWithRoute("sess-001");
-    await waitFor(() => {
-      expect(screen.getByText("No events recorded for this session.")).toBeInTheDocument();
-    });
-  });
-
   it("fetches violations from governance API", async () => {
-    mockApi.sessions.get.mockResolvedValue(buildSession({ governanceViolations: [] }));
+    mockApi.sessions.get.mockResolvedValue(buildSessionDetail({ governanceViolations: [] }));
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({ id: "v-fetched", ruleId: "fetched-rule", severity: "Error", message: "Fetched violation" }),
     ]);
@@ -270,5 +231,33 @@ describe("SessionDetailPage", () => {
       expect(mockApi.governance.violations).toHaveBeenCalledWith("sess-001");
     });
     expect(screen.getByText("Governance Violations (1)")).toBeInTheDocument();
+  });
+
+  it("shows a single stat instead of a pie chart when only one model was used", async () => {
+    mockApi.sessions.get.mockResolvedValue(buildSessionDetail());
+    mockApi.sessions.modelBreakdown.mockResolvedValue([
+      buildModelUsage({ model: "claude-sonnet-5", estimatedCostUsd: 12.34 }),
+    ]);
+    renderWithRoute("sess-001");
+
+    await waitFor(() => {
+      expect(screen.getByText("claude-sonnet-5")).toBeInTheDocument();
+    });
+    expect(screen.getByText("$12.34")).toBeInTheDocument();
+    expect(screen.getByText("100% of this session's cost")).toBeInTheDocument();
+  });
+
+  it("shows a pie chart when multiple models were used", async () => {
+    mockApi.sessions.get.mockResolvedValue(buildSessionDetail());
+    mockApi.sessions.modelBreakdown.mockResolvedValue([
+      buildModelUsage({ model: "claude-opus", estimatedCostUsd: 10 }),
+      buildModelUsage({ model: "claude-haiku", estimatedCostUsd: 1 }),
+    ]);
+    renderWithRoute("sess-001");
+
+    await waitFor(() => {
+      expect(screen.getByText("Cost by Model")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("100% of this session's cost")).not.toBeInTheDocument();
   });
 });

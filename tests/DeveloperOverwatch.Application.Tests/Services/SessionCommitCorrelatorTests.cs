@@ -45,7 +45,7 @@ public class SessionCommitCorrelatorTests
             }
         };
 
-        _sessionRepo.GetAllAsync(null, repo, Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: repo, ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session> { session });
 
         var links = await _sut.CorrelateCommitAsync(repo, commitSha, commitTime);
@@ -81,7 +81,7 @@ public class SessionCommitCorrelatorTests
             }
         };
 
-        _sessionRepo.GetAllAsync(null, repo, Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: repo, ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session> { session });
 
         var links = await _sut.CorrelateCommitAsync(repo, commitSha, commitTime);
@@ -113,7 +113,7 @@ public class SessionCommitCorrelatorTests
             }
         };
 
-        _sessionRepo.GetAllAsync(null, repo, Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: repo, ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session> { session });
 
         var links = await _sut.CorrelateCommitAsync(repo, commitSha, commitTime);
@@ -146,7 +146,7 @@ public class SessionCommitCorrelatorTests
             }
         };
 
-        _sessionRepo.GetAllAsync(null, repo, Arg.Any<CancellationToken>())
+        _sessionRepo.GetAllAsync(repo: repo, ct: Arg.Any<CancellationToken>())
             .Returns(new List<Session> { session });
 
         var links = await _sut.CorrelateCommitAsync(repo, commitSha, commitTime);

@@ -1,14 +1,38 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
 import { api } from "../api";
-import type { Session, GovernanceViolation } from "../types";
+import type { SessionDetail, GovernanceViolation, DailyUsage, ModelUsage } from "../types";
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
+import ChartCard from "../components/ChartCard";
 import SessionTimeline from "../components/SessionTimeline";
+import { formatTotalTokens, formatCost, tokenBreakdownTooltip } from "../utils/tokenFormat";
+import { violationSessionLink } from "../utils/violationLink";
+
+const PIE_PALETTE = ["#2563eb", "#7c3aed", "#16a34a", "#d97706", "#dc2626", "#0891b2"];
+const CHART_TICK = { fontSize: 12, fill: "var(--chart-text)" };
+
+function renderModelLabel(props: { name?: string; percent?: number }) {
+  const { name, percent } = props;
+  if (!name || percent == null) return "";
+  return `${name} ${(percent * 100).toFixed(0)}%`;
+}
 
 export default function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [annotationContent, setAnnotationContent] = useState("");
@@ -16,6 +40,8 @@ export default function SessionDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [violationsExpanded, setViolationsExpanded] = useState(false);
   const [fetchedViolations, setFetchedViolations] = useState<GovernanceViolation[]>([]);
+  const [dailyUsage, setDailyUsage] = useState<DailyUsage[]>([]);
+  const [modelBreakdown, setModelBreakdown] = useState<ModelUsage[]>([]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -32,6 +58,12 @@ export default function SessionDetailPage() {
       .violations(sessionId)
       .then(setFetchedViolations)
       .catch(() => {});
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    api.sessions.dailyUsage(sessionId).then(setDailyUsage).catch(() => {});
+    api.sessions.modelBreakdown(sessionId).then(setModelBreakdown).catch(() => {});
   }, [sessionId]);
 
   if (loading) return <div className="text-gray-500 dark:text-gray-400">Loading session...</div>;
@@ -80,7 +112,15 @@ export default function SessionDetailPage() {
       <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-6 mb-6">
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-xl font-semibold font-mono">{session.id.slice(0, 12)}...</h2>
+            <h2
+              className={`text-xl font-semibold ${session.title ? "" : "font-mono"}`}
+              title={session.id}
+            >
+              {session.title || `${session.id.slice(0, 12)}...`}
+            </h2>
+            {session.title && (
+              <p className="text-xs text-gray-400 dark:text-gray-500 font-mono">{session.id}</p>
+            )}
             <p className="text-gray-500 dark:text-gray-400 mt-1">{session.developerEmail}</p>
           </div>
           <StatusBadge status={session.status} />
@@ -100,7 +140,24 @@ export default function SessionDetailPage() {
           </div>
           <div>
             <span className="text-gray-500 dark:text-gray-400">Turns:</span>{" "}
-            <span>{session.conversationTurns.length}</span>
+            <span>{session.conversationTurnCount}</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-4 mt-3 text-sm">
+          <div>
+            <span className="text-gray-500 dark:text-gray-400">Total Tokens:</span>{" "}
+            <span title={tokenBreakdownTooltip(session)}>
+              {formatTotalTokens({
+                inputTokens: session.totalInputTokens,
+                outputTokens: session.totalOutputTokens,
+                cacheCreationInputTokens: session.totalCacheCreationInputTokens,
+                cacheReadInputTokens: session.totalCacheReadInputTokens,
+              })}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-500 dark:text-gray-400">Est. Cost:</span>{" "}
+            <span>{formatCost(session.estimatedCostUsd)}</span>
           </div>
         </div>
       </div>
@@ -159,6 +216,14 @@ export default function SessionDetailPage() {
                       </div>
                     )}
                   </div>
+                  {(v.conversationTurnId || v.toolExecutionId) && (
+                    <Link
+                      to={violationSessionLink(v)}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+                    >
+                      Jump to issue
+                    </Link>
+                  )}
                 </div>
               ))}
             </div>
@@ -172,8 +237,61 @@ export default function SessionDetailPage() {
         )}
       </div>
 
+      {(dailyUsage.length > 0 || modelBreakdown.length > 0) && (
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          {dailyUsage.length > 0 && (
+            <ChartCard title="Cost by Day">
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dailyUsage}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                  <XAxis dataKey="date" tick={CHART_TICK} />
+                  <YAxis tick={CHART_TICK} tickFormatter={(v: number) => `$${v}`} />
+                  <Tooltip formatter={(value) => formatCost(Number(value))} />
+                  <Bar dataKey="estimatedCostUsd" name="Cost (USD)" fill="#7c3aed" />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          )}
+
+          {modelBreakdown.length === 1 && modelBreakdown[0] && (
+            <ChartCard title="Cost by Model">
+              {/* A single model is 100% of the cost by definition — a one-slice pie has nothing
+                  to compare against and just wastes space, so show the number directly instead. */}
+              <div className="h-[220px] flex flex-col items-center justify-center gap-1">
+                <div className="text-sm text-gray-500 dark:text-gray-400">{modelBreakdown[0].model}</div>
+                <div className="text-2xl font-semibold">{formatCost(modelBreakdown[0].estimatedCostUsd)}</div>
+                <div className="text-xs text-gray-400 dark:text-gray-500">100% of this session's cost</div>
+              </div>
+            </ChartCard>
+          )}
+
+          {modelBreakdown.length > 1 && (
+            <ChartCard title="Cost by Model">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={modelBreakdown}
+                    dataKey="estimatedCostUsd"
+                    nameKey="model"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    label={renderModelLabel}
+                  >
+                    {modelBreakdown.map((entry, index) => (
+                      <Cell key={entry.model} fill={PIE_PALETTE[index % PIE_PALETTE.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => formatCost(Number(value))} />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          )}
+        </div>
+      )}
+
       <div className="mb-6">
-        <SessionTimeline session={session} />
+        <SessionTimeline sessionId={session.id} />
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4 mb-6">

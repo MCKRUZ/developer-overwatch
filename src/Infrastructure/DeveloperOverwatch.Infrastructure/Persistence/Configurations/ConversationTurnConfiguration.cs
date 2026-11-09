@@ -11,6 +11,7 @@ public class ConversationTurnConfiguration : IEntityTypeConfiguration<Conversati
         builder.HasKey(t => t.Id);
         builder.Property(t => t.Role).IsRequired();
         builder.Property(t => t.Timestamp).IsRequired();
+        builder.Property(t => t.EstimatedCostUsd).HasPrecision(18, 6);
         builder.HasOne(t => t.Session)
                .WithMany(s => s.ConversationTurns)
                .HasForeignKey(t => t.SessionId);

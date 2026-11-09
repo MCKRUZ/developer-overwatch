@@ -1,5 +1,9 @@
 import type {
-  Session,
+  SessionListItem,
+  SessionDetail,
+  SessionTimelinePage,
+  DailyUsage,
+  ModelUsage,
   PullRequestReview,
   PullRequestDetail,
   TeamAnalytics,
@@ -40,17 +44,51 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface SessionListFilters {
+  developer?: string;
+  repo?: string;
+  from?: string;
+  to?: string;
+  status?: SessionListItem["status"];
+}
+
 export const api = {
   sessions: {
-    list(developer?: string, repo?: string): Promise<Session[]> {
+    list(filters?: SessionListFilters): Promise<SessionListItem[]> {
       const params = new URLSearchParams();
-      if (developer) params.set("developer", developer);
-      if (repo) params.set("repo", repo);
+      if (filters?.developer) params.set("developer", filters.developer);
+      if (filters?.repo) params.set("repo", filters.repo);
+      if (filters?.from) params.set("from", filters.from);
+      if (filters?.to) params.set("to", filters.to);
+      if (filters?.status) params.set("status", filters.status);
       const qs = params.toString();
       return fetchJson(`${BASE}/sessions${qs ? `?${qs}` : ""}`);
     },
-    get(id: string): Promise<Session> {
+    get(id: string): Promise<SessionDetail> {
       return fetchJson(`${BASE}/sessions/${id}`);
+    },
+    timeline(id: string, before?: string, limit = 50): Promise<SessionTimelinePage> {
+      const params = new URLSearchParams();
+      if (before) params.set("before", before);
+      params.set("limit", String(limit));
+      return fetchJson(`${BASE}/sessions/${id}/timeline?${params.toString()}`);
+    },
+    timelineAround(
+      id: string,
+      anchor: { turnId?: string; toolExecutionId?: string },
+      limit = 50,
+    ): Promise<SessionTimelinePage> {
+      const params = new URLSearchParams();
+      if (anchor.turnId) params.set("turnId", anchor.turnId);
+      if (anchor.toolExecutionId) params.set("toolExecutionId", anchor.toolExecutionId);
+      params.set("limit", String(limit));
+      return fetchJson(`${BASE}/sessions/${id}/timeline/around?${params.toString()}`);
+    },
+    dailyUsage(id: string): Promise<DailyUsage[]> {
+      return fetchJson(`${BASE}/sessions/${id}/daily-usage`);
+    },
+    modelBreakdown(id: string): Promise<ModelUsage[]> {
+      return fetchJson(`${BASE}/sessions/${id}/model-breakdown`);
     },
   },
 
@@ -79,8 +117,13 @@ export const api = {
   },
 
   analytics: {
-    team(): Promise<TeamAnalytics> {
-      return fetchJson(`${BASE}/analytics/team`);
+    team(from?: string, to?: string, developer?: string): Promise<TeamAnalytics> {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      if (developer) params.set("developer", developer);
+      const qs = params.toString();
+      return fetchJson(`${BASE}/analytics/team${qs ? `?${qs}` : ""}`);
     },
     developer(email: string): Promise<DeveloperAnalytics> {
       return fetchJson(`${BASE}/analytics/developer/${encodeURIComponent(email)}`);

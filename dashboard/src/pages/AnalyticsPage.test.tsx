@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "../test/render";
-import AnalyticsPage from "./AnalyticsPage";
+import { render, screen, waitFor, userEvent } from "../test/render";
+import AnalyticsPage, { deriveSessionsByDayAndUser } from "./AnalyticsPage";
 import { api } from "../api";
 import {
   buildTeamAnalytics,
   buildDeveloperMetrics,
-  buildSession,
-  buildToolExecution,
-  buildGovernanceViolation,
+  buildSessionListItem,
+  buildDailyCostUsage,
 } from "../test/factories";
 
 vi.mock("../api", () => ({
@@ -25,7 +24,7 @@ const mockApi = vi.mocked(api);
 
 function mockDefaults(
   teamOverrides?: Parameters<typeof buildTeamAnalytics>[0],
-  sessions?: ReturnType<typeof buildSession>[],
+  sessions?: ReturnType<typeof buildSessionListItem>[],
 ) {
   mockApi.analytics.team.mockResolvedValue(buildTeamAnalytics(teamOverrides));
   mockApi.sessions.list.mockResolvedValue(sessions ?? []);
@@ -151,82 +150,51 @@ describe("AnalyticsPage", () => {
   });
 
   describe("charts", () => {
-    it("renders all four chart titles", async () => {
+    it("renders chart titles", async () => {
       mockDefaults(
         {
           developers: [
             buildDeveloperMetrics({ email: "a@test.com", sessionCount: 5 }),
           ],
+          dailyCostTrend: [buildDailyCostUsage({ date: "2026-05-27", estimatedCostUsd: 1.23 })],
         },
         [
-          buildSession({
+          buildSessionListItem({
             id: "s1",
             startedAt: "2026-05-27T08:00:00Z",
-            toolExecutions: [buildToolExecution({ toolName: "Read" })],
-            governanceViolations: [
-              buildGovernanceViolation({ severity: "Warning" }),
-            ],
           }),
         ],
       );
       render(<AnalyticsPage />);
       await waitFor(() => {
-        expect(screen.getByText("Sessions Over Time")).toBeInTheDocument();
+        expect(screen.getByText("Sessions Per Day by Developer")).toBeInTheDocument();
       });
-      expect(screen.getByText("Tool Usage Distribution")).toBeInTheDocument();
+      expect(screen.getByText("Daily Cost Trend")).toBeInTheDocument();
       expect(screen.getByText("Developer Activity")).toBeInTheDocument();
-      expect(screen.getByText("Governance Violations by Severity")).toBeInTheDocument();
     });
 
-    it("shows empty chart messages when no session data", async () => {
-      mockDefaults({ developers: [] }, []);
+    it("shows a warning marker in the title when a day exceeds the cost threshold", async () => {
+      mockDefaults(
+        {
+          dailyCostThresholdUsd: 5,
+          dailyCostTrend: [buildDailyCostUsage({ date: "2026-05-27", estimatedCostUsd: 10 })],
+        },
+        [],
+      );
+      render(<AnalyticsPage />);
+      await waitFor(() => {
+        expect(screen.getByText("Daily Cost Trend ⚠")).toBeInTheDocument();
+      });
+    });
+
+    it("shows empty chart messages when no session/cost data", async () => {
+      mockDefaults({ developers: [], dailyCostTrend: [] }, []);
       render(<AnalyticsPage />);
       await waitFor(() => {
         expect(screen.getByText("No session data available")).toBeInTheDocument();
       });
-      expect(screen.getByText("No tool usage data available")).toBeInTheDocument();
+      expect(screen.getByText("No cost data available")).toBeInTheDocument();
       expect(screen.getByText("No developer data available")).toBeInTheDocument();
-      expect(screen.getByText("No violation data available")).toBeInTheDocument();
-    });
-
-    it("renders charts with session data", async () => {
-      mockDefaults(
-        {
-          developers: [
-            buildDeveloperMetrics({ email: "dev@test.com", sessionCount: 3, commitCount: 7 }),
-          ],
-        },
-        [
-          buildSession({
-            id: "s1",
-            startedAt: "2026-05-26T10:00:00Z",
-            toolExecutions: [
-              buildToolExecution({ toolName: "Read" }),
-              buildToolExecution({ toolName: "Write" }),
-              buildToolExecution({ toolName: "Read" }),
-            ],
-            governanceViolations: [
-              buildGovernanceViolation({ severity: "Critical" }),
-              buildGovernanceViolation({ severity: "Warning" }),
-            ],
-          }),
-          buildSession({
-            id: "s2",
-            startedAt: "2026-05-27T10:00:00Z",
-            toolExecutions: [buildToolExecution({ toolName: "Bash" })],
-            governanceViolations: [
-              buildGovernanceViolation({ severity: "Error" }),
-            ],
-          }),
-        ],
-      );
-      render(<AnalyticsPage />);
-      await waitFor(() => {
-        expect(screen.getByText("Sessions Over Time")).toBeInTheDocument();
-      });
-      // Chart titles should be present (Recharts renders SVG internally)
-      expect(screen.getByText("Tool Usage Distribution")).toBeInTheDocument();
-      expect(screen.getByText("Governance Violations by Severity")).toBeInTheDocument();
     });
 
     it("shows error when sessions fetch fails", async () => {
@@ -237,5 +205,58 @@ describe("AnalyticsPage", () => {
         expect(screen.getByText("Error: Session fetch failed")).toBeInTheDocument();
       });
     });
+
+    it("refetches team analytics and sessions scoped to the selected developer", async () => {
+      const user = userEvent.setup();
+      mockDefaults({}, [
+        buildSessionListItem({ id: "s1", developerEmail: "alice@test.com" }),
+        buildSessionListItem({ id: "s2", developerEmail: "bob@test.com" }),
+      ]);
+      render(<AnalyticsPage />);
+      await waitFor(() => {
+        expect(screen.getByLabelText("Developer")).toBeInTheDocument();
+      });
+
+      await user.selectOptions(screen.getByLabelText("Developer"), "alice@test.com");
+
+      await waitFor(() => {
+        expect(mockApi.analytics.team).toHaveBeenLastCalledWith(undefined, undefined, "alice@test.com");
+      });
+      expect(mockApi.sessions.list).toHaveBeenLastCalledWith({ developer: "alice@test.com" });
+    });
+  });
+});
+
+describe("deriveSessionsByDayAndUser", () => {
+  it("buckets session counts per day per developer", () => {
+    const sessions = [
+      buildSessionListItem({ id: "s1", developerEmail: "a@test.com", startedAt: "2026-05-27T08:00:00Z" }),
+      buildSessionListItem({ id: "s2", developerEmail: "a@test.com", startedAt: "2026-05-27T09:00:00Z" }),
+      buildSessionListItem({ id: "s3", developerEmail: "b@test.com", startedAt: "2026-05-27T10:00:00Z" }),
+      buildSessionListItem({ id: "s4", developerEmail: "b@test.com", startedAt: "2026-05-28T10:00:00Z" }),
+    ];
+    const { data, developers } = deriveSessionsByDayAndUser(sessions);
+
+    expect(developers).toEqual(["a@test.com", "b@test.com"]);
+    expect(data).toEqual([
+      { date: "2026-05-27", total: 3, "a@test.com": 2, "b@test.com": 1 },
+      { date: "2026-05-28", total: 1, "a@test.com": 0, "b@test.com": 1 },
+    ]);
+  });
+
+  it("folds developers beyond the 8-slot palette into an Other bucket", () => {
+    const sessions = Array.from({ length: 9 }, (_, i) =>
+      buildSessionListItem({
+        id: `s${i}`,
+        developerEmail: `dev${i}@test.com`,
+        startedAt: "2026-05-27T08:00:00Z",
+      }),
+    );
+    const { data, developers } = deriveSessionsByDayAndUser(sessions);
+
+    expect(developers).toHaveLength(9);
+    expect(developers.at(-1)).toBe("Other");
+    expect(data[0].total).toBe(9);
+    expect(data[0]["Other"]).toBe(1);
   });
 });

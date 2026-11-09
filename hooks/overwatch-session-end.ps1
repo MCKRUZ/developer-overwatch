@@ -1,12 +1,26 @@
 # hooks/overwatch-session-end.ps1
 # Claude Code SessionEnd hook — queues session-end event locally
+#
+# Session state is keyed by Claude Code's own session_id (from hook stdin JSON), not a single
+# shared file — otherwise concurrent Claude Code sessions on the same machine misattribute
+# events to each other.
 
 $ErrorActionPreference = "SilentlyContinue"
 
 $overwatchDir = Join-Path $env:USERPROFILE ".overwatch"
-$activeSessionPath = Join-Path $overwatchDir "active-session"
-if (-not (Test-Path $activeSessionPath)) { exit 0 }
-$sessionId = Get-Content $activeSessionPath -Raw
+
+$stdinJson = [Console]::In.ReadToEnd()
+$hookInput = $null
+try { $hookInput = $stdinJson | ConvertFrom-Json } catch { }
+if (-not $hookInput) { exit 0 }
+
+$claudeSessionId = $hookInput.session_id
+if (-not $claudeSessionId) { exit 0 }
+
+$mappingPath = Join-Path $overwatchDir "sessions\$claudeSessionId.json"
+if (-not (Test-Path $mappingPath)) { exit 0 }
+$mapping = Get-Content $mappingPath -Raw | ConvertFrom-Json
+$sessionId = $mapping.ourSessionId
 
 $payload = @{
     sessionId = $sessionId
@@ -32,5 +46,6 @@ try {
     $line | Add-Content $fallbackFile
 }
 
-Remove-Item $activeSessionPath -Force 2>$null
-Remove-Item (Join-Path $overwatchDir "active-repo") -Force 2>$null
+# Intentionally NOT deleting $mappingPath — it must persist so a later `/resume` of this same
+# Claude session can find it and reactivate the same overwatch session (see
+# overwatch-session-start.ps1) instead of minting a new one.

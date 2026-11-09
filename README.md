@@ -2,9 +2,7 @@
 
 Monitors Claude Code sessions in real time, enforces governance policies, and surfaces analytics through a React dashboard.
 
-**Workspace:** `agentic-architecture-and-governance/accelerators/developer-overwatch/` — usage telemetry **accelerator**. Architecture: [`../../architecture/agentic-architecture/`](../../architecture/agentic-architecture/). Governance: [`../../governance/ai-governance-in-practice/`](../../governance/ai-governance-in-practice/).
 
-[![CI](https://github.com/MCKRUZ/developer-overwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/MCKRUZ/developer-overwatch/actions/workflows/ci.yml)
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)
 ![React 19](https://img.shields.io/badge/React-19.1-61DAFB)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -24,7 +22,7 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 |   Claude Code     | ------------> |   Agent (.NET     | ----------->  |   API Server      |
 |   Session         |  SessionStart |   Global Tool)    |  POST /api/*  |   (ASP.NET Core)  |
 |                   |  PostToolUse  |                   |               |                   |
-|                   |  Stop         | - SQLite queue    |               | - MediatR CQRS    |
+|                   |  SessionEnd   | - SQLite queue    |               | - MediatR CQRS    |
 +-------------------+               | - Privacy redact  |               | - EF Core + SQLite|
                                     | - Git fallback    |               | - Governance Eng. |
                                     +-------------------+               | - SignalR hub     |
@@ -56,6 +54,7 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 ## Features
 
 - **Session Tracking** -- Captures conversation turns, tool executions, and file changes from Claude Code sessions
+- **Stale Session Detection** -- Sessions with no activity for a configurable window (default 30 min) display as `Stale` instead of `Active`; purely a read-time computed status, never a stored/destructive state change -- resuming the session reactivates it normally
 - **Governance Engine** -- Pattern-based rules (regex) and semantic rules (LLM-powered) evaluate sessions on completion
 - **Drift Detection** -- EWMA-based sliding window tracks violation frequency and escalates when thresholds are breached
 - **Real-Time Dashboard** -- SignalR pushes session starts, events, endings, and violation resolutions to connected clients
@@ -126,7 +125,7 @@ overwatch-agent
 
 The install script:
 1. Creates `~/.overwatch/config.json` with API URL, API key, poll interval, and batch size
-2. Registers three hooks in `~/.claude/settings.json`: `SessionStart`, `PostToolUse`, and `Stop`
+2. Registers three hooks in `~/.claude/settings.json`: `SessionStart`, `PostToolUse`, and `SessionEnd`
 3. Hooks write events to a local SQLite queue at `~/.overwatch/queue.db`
 
 The agent polls the queue and ships events in batches to the API. If the API is unreachable, events accumulate locally. When the queue exceeds the git fallback threshold, events are also written to git notes as a safety net.
@@ -138,7 +137,9 @@ The agent polls the queue and ships events in batches to the API. If the API is 
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
 | `Database` | `Provider` | `sqlite` | Database provider (`sqlite` or `sqlserver`) |
-| `Database` | `ConnectionString` | `Data Source=/data/overwatch.db` | Database connection string |
+| `Database` | `ConnectionString` | `Data Source=/data/overwatch.db` | Database connection string. When `UseManagedIdentityAuth` is `true`, omit `User Id`/`Password` -- just `Server=...;Database=...;Encrypt=True;` |
+| `Database` | `UseManagedIdentityAuth` | `false` | Authenticate to Azure SQL via the Container App's Managed Identity (token attached per-connection) instead of a credential embedded in the connection string |
+| `Database` | `ManagedIdentityClientId` | `""` | Client ID of a user-assigned managed identity; leave empty to use the system-assigned identity (or local dev credentials via `DefaultAzureCredential`) |
 | `ApiKeys` | `Keys` | `[]` | Array of valid API keys for agent authentication |
 | `Authentication` | `Authority` | `""` | OIDC authority URL (leave empty to disable JWT auth) |
 | `Authentication` | `Audience` | `""` | OIDC audience / resource identifier |
@@ -162,18 +163,26 @@ The agent polls the queue and ships events in batches to the API. If the API is 
 | `Notifications` | `Email:ToAddresses` | `[]` | Recipient email addresses |
 | `Notifications` | `Email:MinimumSeverity` | `Critical` | Minimum violation severity to email |
 
+### Session Activity (`appsettings.json` under `SessionActivity`)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `StaleAfterMinutes` | `30` | Minutes of inactivity (no new turns/tool executions) before an `Active` session displays as `Stale`. Computed at read time from `Session.LastActivityAt` -- never written back to the stored status |
+
 ### Governance Engine (`appsettings.json` under `Governance`)
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `PoliciesPath` | `policies` | Path to YAML policy definition files |
+| `PoliciesPath` | `policies` | Path to YAML policy definition files (resolved against the running assembly's base directory, not the process's current working directory) |
 | `DriftWindowHours` | `72` | Sliding window for drift detection |
 | `DriftThreshold` | `3` | Violation count to trigger drift escalation |
 | `DriftAlpha` | `0.3` | EWMA smoothing factor |
 | `DriftBucketHours` | `4` | Time bucket size for drift aggregation |
-| `LlmApiUrl` | `null` | API URL for semantic rule evaluation (Claude API) |
-| `LlmApiKey` | `null` | API key for LLM calls |
-| `LlmModel` | `claude-sonnet-4-6` | Model for semantic rule evaluation |
+| `LlmApiUrl` | `null` | API URL for semantic rule evaluation (Claude API / Azure AI Foundry) |
+| `LlmApiKey` | `null` | Static API key for LLM calls; ignored when `UseManagedIdentityAuth` is `true` |
+| `UseManagedIdentityAuth` | `false` | Authenticate to the LLM endpoint with an Azure AD bearer token (via Managed Identity) instead of `LlmApiKey` -- for Claude models served through Azure AI Foundry, which doesn't use Anthropic-issued API keys |
+| `ManagedIdentityClientId` | `null` | Client ID of a user-assigned managed identity; leave null for the system-assigned identity (or local dev credentials via `DefaultAzureCredential`) |
+| `LlmModel` | `claude-sonnet-5-gce` | Model for semantic rule evaluation -- must match a model actually deployed in your Azure AI Foundry resource, don't assume a specific tier (e.g. Haiku) is available |
 | `LlmMaxTokens` | `1024` | Max tokens per LLM response |
 | `LlmTimeoutSeconds` | `30` | LLM request timeout |
 | `SemanticJurySize` | `1` | Number of independent judges per semantic rule. `1` is the single-judge default; `>1` runs a panel and reduces findings by consensus |
@@ -272,6 +281,8 @@ Environment-specific parameter files: `infra/parameters/dev.bicepparam` and `inf
 | `deploy.yml` | Push to main, manual dispatch | Build Docker images, push to ACR, deploy Bicep, update Container Apps |
 | `agent-release.yml` | `agent-v*` tags | Pack and publish agent to NuGet.org |
 
+Database migrations run in-process on API startup (`db.Database.MigrateAsync()`), not as a separate Container Apps Job -- the simpler inline approach is intentional. Note that the API's own identity therefore needs `db_ddladmin` in addition to `db_datareader`/`db_datawriter` when `Database:UseManagedIdentityAuth` is enabled (see the Configuration section above).
+
 **Required secrets for deployment:**
 
 | Secret | Description |
@@ -291,8 +302,10 @@ Environment-specific parameter files: `infra/parameters/dev.bicepparam` and `inf
 | `POST` | `/api/sessions/start` | API Key | Start a new session |
 | `POST` | `/api/sessions/{sessionId}/events` | API Key | Ingest conversation turns, tool executions, and file changes |
 | `POST` | `/api/sessions/{sessionId}/end` | API Key | End a session (triggers governance evaluation) |
-| `GET` | `/api/sessions` | Any | List sessions (filter by `?developer=` and `?repo=`) |
+| `GET` | `/api/sessions` | Any | List sessions (filter by `?developer=`, `?repo=`, `?from=`, `?to=`, and `?status=Active\|Stale\|Completed\|Failed`) |
 | `GET` | `/api/sessions/{sessionId}` | Any | Get session detail with all events |
+
+`Stale` is a computed status, not a stored one -- an `Active` session with no activity for `SessionActivity:StaleAfterMinutes` (default 30) reports as `Stale` in list/detail responses, but reverts to `Active` automatically the moment new events arrive (e.g. resuming the session in Claude Code).
 
 ### Pull Requests
 
@@ -404,8 +417,8 @@ developer-overwatch/
 |   +-- modules/                 # container-registry, monitoring, key-vault, sql-database, container-apps
 |   +-- parameters/              # dev.bicepparam, production.bicepparam
 +-- .github/workflows/
-    +-- ci.yml                   # Build + test
-    +-- deploy.yml               # Docker build + Azure deploy
+    +-- ci.yml                   # Build + test (PRs + main)
+    +-- deploy.yml               # Docker build + push + Container App deploy
     +-- agent-release.yml        # NuGet publish
 ```
 

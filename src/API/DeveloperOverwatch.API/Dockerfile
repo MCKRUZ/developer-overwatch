@@ -18,9 +18,9 @@ WORKDIR /app
 COPY --from=build /app .
 RUN mkdir -p /data && chown -R app:app /data
 
-ENV ASPNETCORE_URLS=http://+:5000
+ENV ASPNETCORE_URLS=http://+:3001
 ENV Database__ConnectionString="Data Source=/data/overwatch.db"
 
-EXPOSE 5000
+EXPOSE 3001
 USER app
 ENTRYPOINT ["dotnet", "DeveloperOverwatch.API.dll"]

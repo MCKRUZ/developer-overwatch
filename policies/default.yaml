@@ -21,6 +21,20 @@ policies:
       - "api[_-]?key\\s*=\\s*[\"'][^\"']+[\"']"
       - "connectionString.*=.*[\"']Server="
 
+  - id: no-secrets-in-conversation
+    name: "No secrets typed into chat"
+    severity: critical
+    type: pattern
+    scan: [conversation]
+    patterns:
+      # Separator is optional/may be whitespace ("x-api-key <value>" uses a space, not `=`/`:`).
+      # \b on the keyword stops it matching inside ordinary words. The value must contain a
+      # digit and be >=8 chars — a length check alone still over-matched plain English words
+      # ("secrets-detection", "auth alongside") that happen to follow these keywords.
+      - "(?i)\\b(password|passwd|pwd)s?\\b\\s*[:=]?\\s*(?=\\S*\\d)[A-Za-z0-9_\\-\\.\\/+]{8,}"
+      - "(?i)\\bapi[\\s_-]?keys?\\b\\s*[:=]?\\s*(?=\\S*\\d)[A-Za-z0-9_\\-\\.\\/+]{8,}"
+      - "-----BEGIN\\s+(RSA\\s+)?PRIVATE\\s+KEY-----"
+
   - id: no-console-log
     name: "No console.log or Console.WriteLine in production code"
     severity: warning
@@ -32,6 +46,18 @@ policies:
     exclude_paths:
       - "**/Tests/**"
       - "**/test/**"
+
+  - id: no-secrets-in-conversation-semantic
+    name: "No secrets typed into chat (semantic catch-all)"
+    severity: critical
+    type: semantic
+    scan: [conversation]
+    rule: >
+      Does any conversation turn contain what looks like a real credential, API key, token,
+      password, or private key — in any format, including ones a strict regex wouldn't catch
+      (e.g. described in prose, split across words, or using non-standard header/field names)?
+      Do not flag placeholder/example values (like "your-api-key-here") or general discussion
+      about secrets/auth that doesn't include an actual-looking value.
 
   - id: auth-middleware-required
     name: "API endpoints must have auth"

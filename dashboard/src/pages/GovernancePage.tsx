@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import type { GovernanceViolation, Session } from "../types";
+import type { GovernanceViolation, SessionListItem } from "../types";
 import SeverityBadge from "../components/SeverityBadge";
 import ExportButtons from "../components/ExportButtons";
 import { exportCsv } from "../utils/exportCsv";
 import { exportPdf } from "../utils/exportPdf";
+import { violationSessionLink } from "../utils/violationLink";
 
 type SeverityFilter = "" | GovernanceViolation["severity"];
 type StatusFilter = "" | "resolved" | "unresolved";
@@ -33,7 +34,7 @@ export default function GovernancePage() {
   async function loadViolations() {
     try {
       setLoading(true);
-      const sessions: Session[] = await api.sessions.list();
+      const sessions: SessionListItem[] = await api.sessions.list();
       const allViolations: ViolationWithSession[] = [];
 
       for (const session of sessions) {
@@ -211,11 +212,12 @@ export default function GovernancePage() {
                   <div className="text-sm text-gray-600 dark:text-gray-300 mt-1">{v.message}</div>
                   <div className="flex items-center gap-3 mt-1 text-xs text-gray-400 dark:text-gray-500">
                     <Link
-                      to={`/sessions/${v.sessionId}`}
+                      to={violationSessionLink(v)}
                       className="text-blue-600 dark:text-blue-400 hover:underline"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {v.sessionId.slice(0, 8)}...
+                      {(v.conversationTurnId || v.toolExecutionId) && " ↳ jump to issue"}
                     </Link>
                     <span>{new Date(v.createdAt).toLocaleString()}</span>
                     <span>{v.developerEmail}</span>

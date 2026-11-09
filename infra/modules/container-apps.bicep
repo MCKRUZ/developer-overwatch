@@ -110,7 +110,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
-        targetPort: 5000
+        targetPort: 3001
         transport: 'http'
         allowInsecure: false
       }
@@ -168,7 +168,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
               type: 'Liveness'
               httpGet: {
                 path: '/health'
-                port: 5000
+                port: 3001
                 scheme: 'HTTP'
               }
               initialDelaySeconds: 10
@@ -178,7 +178,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
               type: 'Readiness'
               httpGet: {
                 path: '/health'
-                port: 5000
+                port: 3001
                 scheme: 'HTTP'
               }
               initialDelaySeconds: 5
@@ -228,7 +228,7 @@ resource dashboardApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
-        targetPort: 80
+        targetPort: 3000
         transport: 'http'
         allowInsecure: false
       }
@@ -255,6 +255,12 @@ resource dashboardApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.25')
             memory: '0.5Gi'
           }
+          env: [
+            {
+              name: 'API_UPSTREAM'
+              value: 'https://${apiApp.properties.configuration.ingress.fqdn}'
+            }
+          ]
         }
       ]
       scale: {

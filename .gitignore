@@ -106,3 +106,7 @@ overwatch-test.db
 
 # Superpowers internal state
 .superpowers/
+
+# Git-fallback runtime snapshots (written locally when the Agent's queue backlog exceeds
+# threshold) — local dev artifacts, not source
+.sessions/

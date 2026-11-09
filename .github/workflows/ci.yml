@@ -5,8 +5,8 @@
 name: CI
 
 on:
+  # Every pull request, including ones stacked on another PR's branch.
   pull_request:
-    branches: [main, master]
   push:
     branches: [main, master]
 
@@ -18,11 +18,11 @@ permissions:
   contents: read
 
 env:
-  # Minimum line coverage (%) for the whole .NET solution. Floor is set just below the current
-  # 60.3% so the gate can only move up. Business-logic layers are already high (API ~91%,
-  # Application ~88%, Domain ~88%); the global number is held down by Infrastructure's external
-  # HTTP integrations and the Agent entry point. Ratchet this up as those gaps close.
-  MIN_COVERAGE: '58'
+  # Minimum line coverage (%) for the whole .NET solution, excluding generated EF Core migrations
+  # (each new migration adds hundreds of untestable lines and would drag the gate down). Floor is
+  # set just below the current 79.2% so the gate can only move up. What remains uncovered is
+  # mostly Infrastructure's external HTTP integrations and the Agent entry point.
+  MIN_COVERAGE: '78'
 
 jobs:
   backend:
@@ -59,7 +59,7 @@ jobs:
           reportgenerator \
             -reports:'./TestResults/**/coverage.cobertura.xml' \
             -targetdir:./coveragereport \
-            -reporttypes:'Html;MarkdownSummaryGithub;Cobertura'
+            -reporttypes:'Html;MarkdownSummaryGithub;Cobertura'             -classfilters:'-DeveloperOverwatch.Infrastructure.Persistence.Migrations.*'
 
       - name: Publish coverage summary
         if: always()

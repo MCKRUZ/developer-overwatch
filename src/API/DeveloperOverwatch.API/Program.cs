@@ -1,3 +1,5 @@
+extern alias AzureIdentityAlias;
+
 using System.Reflection;
 using System.Threading.RateLimiting;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
@@ -9,6 +11,7 @@ using DeveloperOverwatch.Application.Services;
 using DeveloperOverwatch.Domain.Interfaces;
 using DeveloperOverwatch.Infrastructure;
 using DeveloperOverwatch.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -25,10 +28,19 @@ var dbProvider = builder.Configuration.GetValue("Database:Provider", "sqlite");
 var appInsightsCs = builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
 if (!string.IsNullOrEmpty(appInsightsCs))
 {
+    // Managed-identity auth for ingestion: the connection string's InstrumentationKey identifies
+    // the resource, but the Credential below is what actually authenticates the ingestion call
+    // (requires the Monitoring Metrics Publisher role on the container app's identity). Falls back
+    // to ikey-only auth locally, where no user-assigned identity/AZURE_CLIENT_ID is present.
+    var miClientId = builder.Configuration["AZURE_CLIENT_ID"];
     builder.Services.AddOpenTelemetry()
         .UseAzureMonitor(options =>
         {
             options.ConnectionString = appInsightsCs;
+            if (!string.IsNullOrEmpty(miClientId))
+            {
+                options.Credential = new AzureIdentityAlias::Azure.Identity.ManagedIdentityCredential(miClientId);
+            }
         })
         .WithTracing(tracing => tracing.AddSource(ApplicationTelemetry.ActivitySourceName));
 }
@@ -160,7 +172,9 @@ builder.Services.AddAuthentication(options =>
     {
         if (context.Request.Headers.ContainsKey("X-Api-Key"))
             return ApiKeyDefaults.AuthenticationScheme;
-        return JwtBearerDefaults.AuthenticationScheme;
+        return hasOidc
+            ? JwtBearerDefaults.AuthenticationScheme
+            : AnonymousDashboardDefaults.AuthenticationScheme;
     };
 })
 .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
@@ -169,6 +183,8 @@ builder.Services.AddAuthentication(options =>
         var keys = builder.Configuration.GetSection("ApiKeys:Keys").Get<string[]>() ?? [];
         options.ValidKeys = new HashSet<string>(keys, StringComparer.Ordinal);
     })
+.AddScheme<AuthenticationSchemeOptions, AnonymousDashboardAuthenticationHandler>(
+    AnonymousDashboardDefaults.AuthenticationScheme, _ => { })
 .AddJwtBearer(options =>
 {
     if (hasOidc)
@@ -189,7 +205,8 @@ builder.Services.AddAuthentication(options =>
     }
     else
     {
-        // OIDC not configured — reject all Bearer tokens
+        // OIDC not configured — reject all Bearer tokens (AnonymousDashboard scheme handles
+        // dashboard requests instead, per the ForwardDefaultSelector above).
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -223,10 +240,7 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
-    if (string.Equals(dbProvider, "sqlserver", StringComparison.OrdinalIgnoreCase))
-        await db.Database.MigrateAsync();
-    else
-        await db.Database.EnsureCreatedAsync();
+    await DatabaseInitializer.InitializeAsync(db);
 }
 
 app.UseMiddleware<GlobalExceptionMiddleware>();

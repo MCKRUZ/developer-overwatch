@@ -10,6 +10,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 public class OverwatchWebApplicationFactory : WebApplicationFactory<Program>, IDisposable
@@ -36,12 +37,12 @@ public class OverwatchWebApplicationFactory : WebApplicationFactory<Program>, ID
 
         builder.ConfigureServices(services =>
         {
-            var descriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(DbContextOptions<OverwatchDbContext>));
-            if (descriptor is not null)
-                services.Remove(descriptor);
-
-            services.AddDbContext<OverwatchDbContext>(options =>
+            // Same registration as production SQLite, pointed at an in-memory database, so startup
+            // runs the real SQLite migrations.
+            services.RemoveAll<DbContextOptions<OverwatchDbContext>>();
+            services.RemoveAll<DbContextOptions<SqliteOverwatchDbContext>>();
+            services.RemoveAll<OverwatchDbContext>();
+            services.AddDbContext<OverwatchDbContext, SqliteOverwatchDbContext>(options =>
                 options.UseSqlite(_connection));
         });
     }

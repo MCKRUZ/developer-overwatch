@@ -13,25 +13,31 @@ public sealed class GetTeamAnalyticsQueryHandler
     private readonly IPullRequestReviewRepository _prRepository;
     private readonly IGovernanceViolationRepository _violationRepository;
     private readonly ICommitSessionLinkRepository _commitLinkRepository;
+    private readonly ICostThresholdProvider _costThreshold;
 
     public GetTeamAnalyticsQueryHandler(
         ISessionRepository sessionRepository,
         IPullRequestReviewRepository prRepository,
         IGovernanceViolationRepository violationRepository,
-        ICommitSessionLinkRepository commitLinkRepository)
+        ICommitSessionLinkRepository commitLinkRepository,
+        ICostThresholdProvider costThreshold)
     {
         _sessionRepository = sessionRepository;
         _prRepository = prRepository;
         _violationRepository = violationRepository;
         _commitLinkRepository = commitLinkRepository;
+        _costThreshold = costThreshold;
     }
 
     public async Task<Result<TeamAnalytics>> Handle(GetTeamAnalyticsQuery request, CancellationToken cancellationToken)
     {
-        var sessions = await _sessionRepository.GetAllAsync(ct: cancellationToken);
+        var sessions = await _sessionRepository.GetAllAsync(
+            developerEmail: request.Developer, ct: cancellationToken);
         var prs = await _prRepository.GetAllAsync(ct: cancellationToken);
         var violations = await _violationRepository.GetAllAsync(cancellationToken);
         var commitLinks = await _commitLinkRepository.GetAllAsync(cancellationToken);
+        var usageRows = await _sessionRepository.GetTurnUsageRowsForDateRangeAsync(
+            request.From, request.To, request.Developer, cancellationToken);
 
         var oneWeekAgo = DateTime.UtcNow.AddDays(-7);
 
@@ -49,6 +55,19 @@ public sealed class GetTeamAnalyticsQueryHandler
             .ToList()
             .AsReadOnly();
 
+        var dailyCostTrend = usageRows
+            .GroupBy(r => DateOnly.FromDateTime(r.Timestamp))
+            .OrderBy(g => g.Key)
+            .Select(g => new DailyCostUsage(
+                g.Key,
+                g.Sum(r => r.InputTokens ?? 0),
+                g.Sum(r => r.OutputTokens ?? 0),
+                g.Sum(r => r.CacheCreationInputTokens ?? 0),
+                g.Sum(r => r.CacheReadInputTokens ?? 0),
+                g.Sum(r => r.EstimatedCostUsd ?? 0m)))
+            .ToList()
+            .AsReadOnly();
+
         var analytics = new TeamAnalytics(
             TotalSessions: sessions.Count,
             SessionsThisWeek: sessions.Count(s => s.StartedAt >= oneWeekAgo),
@@ -58,7 +77,9 @@ public sealed class GetTeamAnalyticsQueryHandler
             NeedsChangesPullRequests: prs.Count(p => p.Status == ReviewStatus.NeedsChanges),
             TotalViolations: violations.Count,
             ViolationsThisWeek: violations.Count(v => v.CreatedAt >= oneWeekAgo),
-            Developers: developers);
+            Developers: developers,
+            DailyCostTrend: dailyCostTrend,
+            DailyCostThresholdUsd: _costThreshold.DailyThresholdUsd);
 
         return Result<TeamAnalytics>.Success(analytics);
     }

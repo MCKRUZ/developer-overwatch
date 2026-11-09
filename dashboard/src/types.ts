@@ -1,16 +1,49 @@
-export interface Session {
+export interface SessionListItem {
   id: string;
   developerEmail: string;
   developerName?: string;
   repoPath?: string;
-  status: "Active" | "Completed" | "Failed";
+  title?: string;
+  status: "Active" | "Completed" | "Failed" | "Stale";
+  startedAt: string;
+  endedAt?: string;
+  createdAt: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationInputTokens: number;
+  totalCacheReadInputTokens: number;
+  estimatedCostUsd: number;
+  violationCount: number;
+  dailyUsage: Record<string, DailyTokenCost>;
+}
+
+export interface DailyTokenCost {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface SessionDetail {
+  id: string;
+  developerEmail: string;
+  developerName?: string;
+  repoPath?: string;
+  title?: string;
+  status: "Active" | "Completed" | "Failed" | "Stale";
   startedAt: string;
   endedAt?: string;
   summaryJson?: string;
   createdAt: string;
-  conversationTurns: ConversationTurn[];
-  toolExecutions: ToolExecution[];
-  fileChanges: FileChange[];
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationInputTokens: number;
+  totalCacheReadInputTokens: number;
+  estimatedCostUsd: number;
+  conversationTurnCount: number;
+  toolExecutionCount: number;
+  fileChangeCount: number;
   governanceViolations: GovernanceViolation[];
   architectAnnotations: ArchitectAnnotation[];
 }
@@ -22,6 +55,13 @@ export interface ConversationTurn {
   role: string;
   content?: string;
   tokenCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  model?: string;
+  estimatedCostUsd?: number;
+  containsRedactedSecret?: boolean;
   timestamp: string;
   isDecision: boolean;
 }
@@ -35,7 +75,6 @@ export interface ToolExecution {
   outputSummary?: string;
   durationMs?: number;
   timestamp: string;
-  fileChanges: FileChange[];
 }
 
 export interface FileChange {
@@ -49,6 +88,34 @@ export interface FileChange {
   changeType?: "Created" | "Modified" | "Deleted";
 }
 
+export interface SessionTimelinePage {
+  conversationTurns: ConversationTurn[];
+  toolExecutions: ToolExecution[];
+  fileChanges: FileChange[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
+export interface DailyUsage {
+  date: string;
+  turnCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface ModelUsage {
+  model: string;
+  turnCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  estimatedCostUsd: number;
+}
+
 export interface GovernanceViolation {
   id: string;
   sessionId: string;
@@ -56,6 +123,8 @@ export interface GovernanceViolation {
   severity: "Info" | "Warning" | "Error" | "Critical";
   message: string;
   contextJson?: string;
+  conversationTurnId?: string;
+  toolExecutionId?: string;
   resolved: boolean;
   resolvedBy?: string;
   resolutionReason?: string;
@@ -104,6 +173,15 @@ export interface LinkedSession {
   sessionEndedAt?: string;
 }
 
+export interface DailyCostUsage {
+  date: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  estimatedCostUsd: number;
+}
+
 export interface TeamAnalytics {
   totalSessions: number;
   sessionsThisWeek: number;
@@ -114,6 +192,8 @@ export interface TeamAnalytics {
   totalViolations: number;
   violationsThisWeek: number;
   developers: DeveloperMetrics[];
+  dailyCostTrend: DailyCostUsage[];
+  dailyCostThresholdUsd: number;
 }
 
 export interface DeveloperMetrics {

@@ -14,11 +14,16 @@ public class GetTeamAnalyticsTests
     private readonly IPullRequestReviewRepository _prRepo = Substitute.For<IPullRequestReviewRepository>();
     private readonly IGovernanceViolationRepository _violationRepo = Substitute.For<IGovernanceViolationRepository>();
     private readonly ICommitSessionLinkRepository _commitRepo = Substitute.For<ICommitSessionLinkRepository>();
+    private readonly ICostThresholdProvider _costThreshold = Substitute.For<ICostThresholdProvider>();
     private readonly GetTeamAnalyticsQueryHandler _handler;
 
     public GetTeamAnalyticsTests()
     {
-        _handler = new GetTeamAnalyticsQueryHandler(_sessionRepo, _prRepo, _violationRepo, _commitRepo);
+        _sessionRepo.GetTurnUsageRowsForDateRangeAsync(
+            Arg.Any<DateTime?>(), Arg.Any<DateTime?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TurnUsageRow>());
+        _costThreshold.DailyThresholdUsd.Returns(50.00m);
+        _handler = new GetTeamAnalyticsQueryHandler(_sessionRepo, _prRepo, _violationRepo, _commitRepo, _costThreshold);
     }
 
     [Fact]
@@ -72,6 +77,37 @@ public class GetTeamAnalyticsTests
     }
 
     [Fact]
+    public async Task Handle_ComputesDailyCostTrendAndExposesThreshold()
+    {
+        _sessionRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<Session>().AsReadOnly());
+        _prRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<PullRequestReview>().AsReadOnly());
+        _violationRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<GovernanceViolation>().AsReadOnly());
+        _commitRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<CommitSessionLink>().AsReadOnly());
+
+        var day1 = new DateTime(2026, 9, 23, 8, 0, 0, DateTimeKind.Utc);
+        var day2 = new DateTime(2026, 9, 24, 8, 0, 0, DateTimeKind.Utc);
+        _sessionRepo.GetTurnUsageRowsForDateRangeAsync(
+            Arg.Any<DateTime?>(), Arg.Any<DateTime?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TurnUsageRow>
+            {
+                new(day1, "claude-sonnet-5", 100, 50, 0, 0, 1.00m),
+                new(day1, "claude-sonnet-5", 100, 50, 0, 0, 1.00m),
+                new(day2, "claude-opus", 100, 50, 0, 0, 5.00m),
+            });
+        _costThreshold.DailyThresholdUsd.Returns(3.00m);
+
+        var result = await _handler.Handle(new GetTeamAnalyticsQuery(), CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        var analytics = result.Value!;
+        analytics.DailyCostThresholdUsd.Should().Be(3.00m);
+        analytics.DailyCostTrend.Should().HaveCount(2);
+        analytics.DailyCostTrend[0].Date.Should().Be(DateOnly.FromDateTime(day1));
+        analytics.DailyCostTrend[0].EstimatedCostUsd.Should().Be(2.00m);
+        analytics.DailyCostTrend[1].EstimatedCostUsd.Should().Be(5.00m);
+    }
+
+    [Fact]
     public async Task Handle_NoData_ReturnsZeroCounts()
     {
         _sessionRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<Session>().AsReadOnly());
@@ -110,5 +146,24 @@ public class GetTeamAnalyticsTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.SessionsThisWeek.Should().Be(1);
         result.Value.ViolationsThisWeek.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_WithDeveloperFilter_ForwardsToSessionAndUsageRowQueries()
+    {
+        _sessionRepo.GetAllAsync(developerEmail: "alice@test.com", ct: Arg.Any<CancellationToken>())
+            .Returns(new List<Session>().AsReadOnly());
+        _prRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<PullRequestReview>().AsReadOnly());
+        _violationRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<GovernanceViolation>().AsReadOnly());
+        _commitRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<CommitSessionLink>().AsReadOnly());
+
+        var result = await _handler.Handle(
+            new GetTeamAnalyticsQuery(Developer: "alice@test.com"), CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        await _sessionRepo.Received(1).GetAllAsync(
+            developerEmail: "alice@test.com", ct: Arg.Any<CancellationToken>());
+        await _sessionRepo.Received(1).GetTurnUsageRowsForDateRangeAsync(
+            null, null, "alice@test.com", Arg.Any<CancellationToken>());
     }
 }

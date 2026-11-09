@@ -12,6 +12,7 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
         builder.Property(s => s.DeveloperEmail).IsRequired();
         builder.Property(s => s.Status).HasConversion<string>().IsRequired();
         builder.Property(s => s.StartedAt).IsRequired();
+        builder.Property(s => s.EstimatedCostUsd).HasPrecision(18, 6);
         builder.HasIndex(s => s.DeveloperEmail);
         builder.HasIndex(s => s.Status);
     }

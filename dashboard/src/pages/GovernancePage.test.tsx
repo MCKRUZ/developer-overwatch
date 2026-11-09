@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, userEvent } from "../test/render";
 import GovernancePage from "./GovernancePage";
 import { api } from "../api";
-import { buildSession, buildGovernanceViolation } from "../test/factories";
+import { buildSessionListItem, buildGovernanceViolation } from "../test/factories";
 
 vi.mock("../api", () => ({
   api: {
@@ -31,8 +31,8 @@ describe("GovernancePage", () => {
 
   it("renders violation list from multiple sessions", async () => {
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001", developerEmail: "alice@test.com" }),
-      buildSession({ id: "sess-002", developerEmail: "bob@test.com" }),
+      buildSessionListItem({ id: "sess-001", developerEmail: "alice@test.com" }),
+      buildSessionListItem({ id: "sess-002", developerEmail: "bob@test.com" }),
     ]);
     mockApi.governance.violations
       .mockResolvedValueOnce([
@@ -55,7 +55,7 @@ describe("GovernancePage", () => {
   it("filters by severity", async () => {
     const user = userEvent.setup();
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({ id: "v1", ruleId: "rule-warn", severity: "Warning", message: "A warning" }),
@@ -79,7 +79,7 @@ describe("GovernancePage", () => {
   it("filters by resolved status", async () => {
     const user = userEvent.setup();
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({ id: "v1", ruleId: "resolved-rule", resolved: true, resolvedBy: "admin@test.com", resolutionReason: "Fixed" }),
@@ -103,7 +103,7 @@ describe("GovernancePage", () => {
   it("expands violation to show details and resolve button", async () => {
     const user = userEvent.setup();
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({
@@ -132,7 +132,7 @@ describe("GovernancePage", () => {
   it("shows resolve form when Resolve button clicked", async () => {
     const user = userEvent.setup();
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({ id: "v1", ruleId: "to-resolve", resolved: false }),
@@ -159,7 +159,7 @@ describe("GovernancePage", () => {
   it("submits resolve form and updates violation", async () => {
     const user = userEvent.setup();
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({ id: "v1", ruleId: "fix-me", resolved: false }),
@@ -190,7 +190,7 @@ describe("GovernancePage", () => {
 
   it("handles empty state", async () => {
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([]);
 
@@ -223,7 +223,7 @@ describe("GovernancePage", () => {
 
   it("displays severity metric cards with correct counts", async () => {
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({ id: "v1", severity: "Critical" }),
@@ -249,7 +249,7 @@ describe("GovernancePage", () => {
   it("shows resolved violation details in expanded view", async () => {
     const user = userEvent.setup();
     mockApi.sessions.list.mockResolvedValue([
-      buildSession({ id: "sess-001" }),
+      buildSessionListItem({ id: "sess-001" }),
     ]);
     mockApi.governance.violations.mockResolvedValue([
       buildGovernanceViolation({

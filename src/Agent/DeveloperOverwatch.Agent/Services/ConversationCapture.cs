@@ -1,13 +1,43 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace DeveloperOverwatch.Agent.Services;
 
-public sealed record CapturedTurn(string Role, string Content, DateTime? Timestamp);
+/// <summary>One conversation turn read from a transcript.</summary>
+/// <param name="SourceId">Globally stable id for what this turn was read from — the API message
+/// id for a model response, the line uuid for a user prompt. The same transcript content always
+/// yields the same SourceId, including when a resumed or forked session copies earlier lines into
+/// a new transcript, so the server can recognise a resend and count it once.</param>
+/// <param name="Content">Conversational text, or null for a response that only called tools or
+/// only thought — those still carry token usage and must be counted.</param>
+public sealed record CapturedTurn(
+    string SourceId,
+    string Role,
+    string? Content,
+    DateTime? Timestamp,
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheCreationInputTokens = null,
+    int? CacheReadInputTokens = null,
+    string? Model = null);
+
+public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines);
 
 public interface IConversationCapture
 {
-    Task<IReadOnlyList<CapturedTurn>> CaptureAsync(string? repoPath, CancellationToken ct);
+    /// <summary>
+    /// Parses a Claude Code transcript JSONL file, returning only turns found after
+    /// <paramref name="fromLineIndex"/> (0-based line count already processed by the caller),
+    /// plus the line count the caller should store as its next cursor.
+    /// </summary>
+    /// <param name="asSubagent">True for a subagent's own transcript: only model responses are
+    /// returned, with role "subagent", since the prompt and tool results belong to the parent.</param>
+    Task<ConversationCaptureResult> CaptureFromFileAsync(
+        string transcriptPath, int fromLineIndex, bool asSubagent = false, CancellationToken ct = default);
+
+    /// <summary>Paths of the subagent transcripts Claude Code writes beside a session transcript
+    /// (<c>&lt;session-id&gt;/subagents/agent-*.jsonl</c>), in a stable order.</summary>
+    IReadOnlyList<string> FindSubagentTranscripts(string transcriptPath);
+
     string? FindProjectDir(string repoPath);
 }
 
@@ -25,33 +55,75 @@ public sealed class ConversationCapture : IConversationCapture
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<CapturedTurn>> CaptureAsync(string? repoPath, CancellationToken ct)
+    public async Task<ConversationCaptureResult> CaptureFromFileAsync(
+        string transcriptPath, int fromLineIndex, bool asSubagent = false, CancellationToken ct = default)
     {
         try
         {
-            var searchDir = ResolveSearchDirectory(repoPath);
-            if (searchDir is null)
+            if (!File.Exists(transcriptPath))
             {
-                _logger.LogDebug("No Claude projects directory found");
-                return [];
+                _logger.LogDebug("Transcript file not found: {Path}", transcriptPath);
+                return new ConversationCaptureResult([], fromLineIndex);
             }
 
-            var conversationFile = FindMostRecentConversation(searchDir);
-            if (conversationFile is null)
+            var fileName = Path.GetFileNameWithoutExtension(transcriptPath);
+            var builder = new TurnBuilder(asSubagent);
+            var lineIndex = 0;
+            var lastLineFailedToParse = false;
+
+            using var stream = new FileStream(
+                transcriptPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+
+            while (await reader.ReadLineAsync(ct) is { } line)
             {
-                _logger.LogDebug("No conversation files found in {Dir}", searchDir);
-                return [];
+                if (lineIndex >= fromLineIndex && !string.IsNullOrWhiteSpace(line))
+                    lastLineFailedToParse = !builder.TryAdd(line, $"{fileName}:line:{lineIndex}");
+
+                lineIndex++;
             }
 
-            return await ParseConversationFileAsync(conversationFile, ct);
+            // Claude Code may still be writing the transcript. A final line that does not parse
+            // is most likely half-written, so leave the cursor on it to re-read it next time.
+            var nextCursor = lastLineFailedToParse ? lineIndex - 1 : lineIndex;
+            return new ConversationCaptureResult(builder.Build(), Math.Max(nextCursor, fromLineIndex));
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Conversation capture failed — returning empty");
+            _logger.LogWarning(ex, "Conversation capture failed for {Path} — returning empty", transcriptPath);
+            return new ConversationCaptureResult([], fromLineIndex);
+        }
+    }
+
+    public IReadOnlyList<string> FindSubagentTranscripts(string transcriptPath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(transcriptPath);
+            if (dir is null)
+                return [];
+
+            var subagentsDir = Path.Combine(dir, Path.GetFileNameWithoutExtension(transcriptPath), "subagents");
+            if (!Directory.Exists(subagentsDir))
+                return [];
+
+            return Directory.GetFiles(subagentsDir, "*.jsonl")
+                .Order(StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to list subagent transcripts for {Path}", transcriptPath);
             return [];
         }
     }
 
+    /// <summary>
+    /// Best-effort fallback for locating a project's transcript directory when no explicit
+    /// transcript_path was supplied. Claude Code names project directories by taking the
+    /// absolute repo path and replacing ':', '\', '/', and '.' with '-' (e.g.
+    /// "C:\Users\me\repo" -> "C--Users-me-repo").
+    /// </summary>
     public string? FindProjectDir(string repoPath)
     {
         try
@@ -59,15 +131,9 @@ public sealed class ConversationCapture : IConversationCapture
             if (!Directory.Exists(ClaudeProjectsDir))
                 return null;
 
-            var normalized = NormalizePath(repoPath);
-
-            foreach (var dir in Directory.EnumerateDirectories(ClaudeProjectsDir))
-            {
-                if (MatchesProjectDir(dir, normalized))
-                    return dir;
-            }
-
-            return null;
+            var encoded = EncodeProjectDirName(repoPath);
+            var candidate = Path.Combine(ClaudeProjectsDir, encoded);
+            return Directory.Exists(candidate) ? candidate : null;
         }
         catch (Exception ex)
         {
@@ -76,179 +142,17 @@ public sealed class ConversationCapture : IConversationCapture
         }
     }
 
-    private string? ResolveSearchDirectory(string? repoPath)
+    private static string EncodeProjectDirName(string repoPath)
     {
-        if (!Directory.Exists(ClaudeProjectsDir))
-            return null;
+        var full = Path.GetFullPath(repoPath).TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        if (repoPath is not null)
+        var chars = full.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
         {
-            var projectDir = FindProjectDir(repoPath);
-            if (projectDir is not null)
-                return projectDir;
+            if (chars[i] is ':' or '\\' or '/' or '.')
+                chars[i] = '-';
         }
-
-        return ClaudeProjectsDir;
-    }
-
-    private static FileInfo? FindMostRecentConversation(string directory)
-    {
-        var dir = new DirectoryInfo(directory);
-        if (!dir.Exists)
-            return null;
-
-        return dir.EnumerateFiles("*.jsonl", SearchOption.AllDirectories)
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .FirstOrDefault();
-    }
-
-    private async Task<IReadOnlyList<CapturedTurn>> ParseConversationFileAsync(
-        FileInfo file, CancellationToken ct)
-    {
-        var turns = new List<CapturedTurn>();
-
-        using var reader = new StreamReader(file.FullName);
-        while (await reader.ReadLineAsync(ct) is { } line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            var turn = TryParseTurn(line);
-            if (turn is not null)
-                turns.Add(turn);
-        }
-
-        _logger.LogDebug("Parsed {Count} turns from {File}", turns.Count, file.Name);
-        return turns;
-    }
-
-    private CapturedTurn? TryParseTurn(string line)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("role", out var roleProp))
-                return null;
-
-            var role = roleProp.GetString();
-            if (string.IsNullOrEmpty(role))
-                return null;
-
-            var content = ExtractContent(root);
-            if (string.IsNullOrEmpty(content))
-                return null;
-
-            DateTime? timestamp = null;
-            if (root.TryGetProperty("timestamp", out var tsProp))
-                timestamp = TryParseTimestamp(tsProp);
-
-            return new CapturedTurn(role, content, timestamp);
-        }
-        catch (JsonException)
-        {
-            _logger.LogDebug("Skipping malformed JSONL line");
-            return null;
-        }
-    }
-
-    private static string? ExtractContent(JsonElement root)
-    {
-        if (!root.TryGetProperty("content", out var contentProp))
-            return null;
-
-        return contentProp.ValueKind switch
-        {
-            JsonValueKind.String => contentProp.GetString(),
-            JsonValueKind.Array => ConcatenateContentParts(contentProp),
-            _ => null
-        };
-    }
-
-    private static string? ConcatenateContentParts(JsonElement array)
-    {
-        var parts = new List<string>();
-
-        foreach (var element in array.EnumerateArray())
-        {
-            var text = element.ValueKind switch
-            {
-                JsonValueKind.String => element.GetString(),
-                JsonValueKind.Object when element.TryGetProperty("text", out var textProp)
-                    => textProp.GetString(),
-                _ => null
-            };
-
-            if (!string.IsNullOrEmpty(text))
-                parts.Add(text);
-        }
-
-        return parts.Count > 0 ? string.Join("\n", parts) : null;
-    }
-
-    private static DateTime? TryParseTimestamp(JsonElement prop)
-    {
-        try
-        {
-            return prop.ValueKind switch
-            {
-                JsonValueKind.String when DateTime.TryParse(prop.GetString(), out var dt) => dt,
-                JsonValueKind.Number => DateTimeOffset.FromUnixTimeMilliseconds(prop.GetInt64()).UtcDateTime,
-                _ => null
-            };
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static bool MatchesProjectDir(string dir, string normalizedRepoPath)
-    {
-        // Claude Code project dirs use a hash of the repo path as the directory name.
-        // Check for a config/metadata file inside that references the repo path.
-        try
-        {
-            var configCandidates = new[] { "config.json", ".project", "project.json" };
-
-            foreach (var candidate in configCandidates)
-            {
-                var configPath = Path.Combine(dir, candidate);
-                if (!File.Exists(configPath))
-                    continue;
-
-                var configContent = File.ReadAllText(configPath);
-                if (configContent.Contains(normalizedRepoPath, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-
-            // Fallback: directory name itself might encode the path (dash-separated segments)
-            var dirName = Path.GetFileName(dir);
-            if (dirName is not null)
-            {
-                var pathSegments = normalizedRepoPath.Split(
-                    new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
-                    StringSplitOptions.RemoveEmptyEntries);
-
-                if (pathSegments.Length >= 2)
-                {
-                    var lastTwo = string.Join("-", pathSegments[^2..]);
-                    if (dirName.Contains(lastTwo, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-            }
-        }
-        catch
-        {
-            // Best effort — if we can't read configs, this dir is a miss
-        }
-
-        return false;
-    }
-
-    private static string NormalizePath(string path)
-    {
-        return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return new string(chars);
     }
 }

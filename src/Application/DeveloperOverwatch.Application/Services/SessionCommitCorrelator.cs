@@ -31,7 +31,7 @@ public sealed class SessionCommitCorrelator
             return [];
 
         var commitFileSet = new HashSet<string>(commitFiles, StringComparer.OrdinalIgnoreCase);
-        var sessions = await _sessionRepo.GetAllAsync(null, repo, ct);
+        var sessions = await _sessionRepo.GetAllAsync(repo: repo, ct: ct);
 
         var windowStart = commitTime - window;
         var candidates = sessions

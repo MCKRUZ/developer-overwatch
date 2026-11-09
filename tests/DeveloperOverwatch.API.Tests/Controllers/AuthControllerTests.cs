@@ -30,13 +30,19 @@ public class AuthControllerTests : IClassFixture<OverwatchWebApplicationFactory>
     }
 
     [Fact]
-    public async Task GetCurrentUser_NoApiKey_Returns401()
+    public async Task GetCurrentUser_NoApiKeyNoOidcConfigured_ReturnsAnonymousIdentity()
     {
+        // With no OIDC configured (the test host's default), dashboard-facing endpoints fall
+        // back to an anonymous identity rather than 401 — matching README's documented
+        // "no OIDC = dashboard runs without authentication" behavior.
         var client = _factory.CreateClient();
 
         var response = await client.GetAsync("/api/auth/me");
 
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        doc.RootElement.GetProperty("authMethod").GetString().Should().Be("anonymous");
     }
 
     [Fact]

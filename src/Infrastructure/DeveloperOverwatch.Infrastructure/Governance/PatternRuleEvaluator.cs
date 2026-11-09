@@ -93,8 +93,10 @@ public sealed class PatternRuleEvaluator
                 var match = regex.Match(fileChange.DiffText);
                 if (match.Success)
                 {
-                    violations.Add(CreateViolation(policy, session.Id,
-                        $"Pattern '{match.Value}' found in {fileChange.FilePath}"));
+                    var violation = CreateViolation(policy, session.Id,
+                        $"Pattern '{match.Value}' found in {fileChange.FilePath}");
+                    violation.ToolExecutionId = fileChange.ToolExecutionId;
+                    violations.Add(violation);
                 }
             }
         }
@@ -113,8 +115,10 @@ public sealed class PatternRuleEvaluator
                 var match = regex.Match(turn.Content);
                 if (match.Success)
                 {
-                    violations.Add(CreateViolation(policy, session.Id,
-                        $"Pattern '{match.Value}' found in conversation turn {turn.TurnIndex}"));
+                    var violation = CreateViolation(policy, session.Id,
+                        $"Pattern '{match.Value}' found in conversation turn {turn.TurnIndex}");
+                    violation.ConversationTurnId = turn.Id;
+                    violations.Add(violation);
                 }
             }
         }

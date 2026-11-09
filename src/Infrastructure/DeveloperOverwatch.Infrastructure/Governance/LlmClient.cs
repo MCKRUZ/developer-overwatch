@@ -1,7 +1,10 @@
 namespace DeveloperOverwatch.Infrastructure.Governance;
 
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -12,9 +15,12 @@ public interface ILlmClient
 
 public sealed class ClaudeLlmClient : ILlmClient
 {
+    private static readonly string[] CognitiveServicesScope = ["https://cognitiveservices.azure.com/.default"];
+
     private readonly HttpClient _httpClient;
     private readonly GovernanceConfig _config;
     private readonly ILogger<ClaudeLlmClient> _logger;
+    private readonly TokenCredential? _credential;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -34,8 +40,20 @@ public sealed class ClaudeLlmClient : ILlmClient
         if (!string.IsNullOrEmpty(_config.LlmApiUrl))
             _httpClient.BaseAddress = new Uri(_config.LlmApiUrl);
 
-        if (!string.IsNullOrEmpty(_config.LlmApiKey))
+        // Claude models served through Azure AI Foundry don't use Anthropic-issued API keys —
+        // auth is an Azure AD bearer token, acquired fresh per request below (tokens expire;
+        // TokenCredential caches internally so this is cheap, unlike the static x-api-key header
+        // which is set once here and never changes).
+        if (_config.UseManagedIdentityAuth)
+        {
+            _credential = string.IsNullOrEmpty(_config.ManagedIdentityClientId)
+                ? new DefaultAzureCredential()
+                : new ManagedIdentityCredential(_config.ManagedIdentityClientId);
+        }
+        else if (!string.IsNullOrEmpty(_config.LlmApiKey))
+        {
             _httpClient.DefaultRequestHeaders.Add("x-api-key", _config.LlmApiKey);
+        }
 
         _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
         _httpClient.Timeout = TimeSpan.FromSeconds(_config.LlmTimeoutSeconds);
@@ -43,7 +61,8 @@ public sealed class ClaudeLlmClient : ILlmClient
 
     public async Task<string?> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(_config.LlmApiUrl) || string.IsNullOrEmpty(_config.LlmApiKey))
+        var isConfigured = _credential is not null || !string.IsNullOrEmpty(_config.LlmApiKey);
+        if (string.IsNullOrEmpty(_config.LlmApiUrl) || !isConfigured)
         {
             _logger.LogDebug("LLM not configured");
             return null;
@@ -60,8 +79,18 @@ public sealed class ClaudeLlmClient : ILlmClient
         try
         {
             var json = JsonSerializer.Serialize(request, JsonOptions);
-            using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync("v1/messages", content, ct);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "v1/messages")
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            };
+
+            if (_credential is not null)
+            {
+                var token = await _credential.GetTokenAsync(new TokenRequestContext(CognitiveServicesScope), ct);
+                httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            }
+
+            using var response = await _httpClient.SendAsync(httpRequest, ct);
 
             response.EnsureSuccessStatusCode();
 

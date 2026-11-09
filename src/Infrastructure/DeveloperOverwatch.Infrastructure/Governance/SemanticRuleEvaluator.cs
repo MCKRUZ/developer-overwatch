@@ -228,7 +228,9 @@ public sealed class SemanticRuleEvaluator
 
     private static void AppendConversation(StringBuilder sb, Session session)
     {
-        var turns = session.ConversationTurns;
+        // Responses that only called tools carry token usage but no text; they would just use up
+        // the turn budget below without telling the reviewer anything.
+        var turns = session.ConversationTurns.Where(t => !string.IsNullOrEmpty(t.Content)).ToList();
         if (turns.Count == 0)
             return;
 
@@ -240,17 +242,10 @@ public sealed class SemanticRuleEvaluator
             var turn = turns[i];
             sb.Append('[').Append(turn.Role).Append("]: ");
 
-            if (turn.Content is not null)
-            {
-                var truncated = turn.Content.Length > MaxCharsPerTurn
-                    ? turn.Content[..MaxCharsPerTurn] + "...[truncated]"
-                    : turn.Content;
-                sb.AppendLine(truncated);
-            }
-            else
-            {
-                sb.AppendLine("[no content]");
-            }
+            var content = turn.Content!;
+            sb.AppendLine(content.Length > MaxCharsPerTurn
+                ? content[..MaxCharsPerTurn] + "...[truncated]"
+                : content);
         }
 
         if (turns.Count > MaxConversationTurns)

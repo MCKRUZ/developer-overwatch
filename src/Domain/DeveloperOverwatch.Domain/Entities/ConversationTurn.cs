@@ -8,6 +8,13 @@ public class ConversationTurn
     public string Role { get; set; } = string.Empty;
     public string? Content { get; set; }
     public int? TokenCount { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public int? CacheCreationInputTokens { get; set; }
+    public int? CacheReadInputTokens { get; set; }
+    public string? Model { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
+    public bool ContainsRedactedSecret { get; set; }
     public DateTime Timestamp { get; set; }
     public bool IsDecision { get; set; }
 

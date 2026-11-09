@@ -25,14 +25,23 @@ public sealed class PolicyLoader
 
     public IReadOnlyList<GovernancePolicy> LoadPolicies()
     {
-        if (!Directory.Exists(_config.PoliciesPath))
+        // A relative path resolves against the process's current working directory, which
+        // depends on how the app was launched (repo root vs project dir vs container
+        // WORKDIR) — not where the app's own files live. Resolving against the running
+        // assembly's directory instead makes this deployment-invariant, as long as the
+        // policies directory ships alongside the build/publish output (see the API csproj).
+        var resolvedPath = Path.IsPathRooted(_config.PoliciesPath)
+            ? _config.PoliciesPath
+            : Path.Combine(AppContext.BaseDirectory, _config.PoliciesPath);
+
+        if (!Directory.Exists(resolvedPath))
         {
-            _logger.LogDebug("Policies directory {Path} not found, returning empty", _config.PoliciesPath);
+            _logger.LogWarning("Policies directory {Path} not found, returning empty", resolvedPath);
             return [];
         }
 
-        var files = Directory.GetFiles(_config.PoliciesPath, "*.yaml")
-            .Concat(Directory.GetFiles(_config.PoliciesPath, "*.yml"))
+        var files = Directory.GetFiles(resolvedPath, "*.yaml")
+            .Concat(Directory.GetFiles(resolvedPath, "*.yml"))
             .ToArray();
 
         if (files.Length == 0)
@@ -103,7 +112,7 @@ public sealed class PolicyLoader
             }
         }
 
-        _logger.LogInformation("Loaded {Count} governance policies from {Dir}", policies.Count, _config.PoliciesPath);
+        _logger.LogInformation("Loaded {Count} governance policies from {Dir}", policies.Count, resolvedPath);
         return policies;
     }
 
