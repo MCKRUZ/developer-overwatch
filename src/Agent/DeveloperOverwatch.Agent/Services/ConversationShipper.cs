@@ -37,13 +37,19 @@ internal sealed class ConversationShipper
     /// <summary>Records the usage and sends nothing. With no cutoff (Local mode) the live cursors move to the
     /// end. A Pilot marker from before enrolment moves each cursor only up to its first turn from after
     /// enrolment, so a later marker still sends that turn and the ones after it.</summary>
-    public async Task RecordLocallyAsync(string sessionId, QueuedEvent marker, CancellationToken ct)
+    /// <param name="wholeTranscript">Move the cursors to the end whatever the cutoff: the session itself
+    /// began before enrolment, so none of these turns is ever sent.</param>
+    public async Task RecordLocallyAsync(
+        string sessionId, QueuedEvent marker, CancellationToken ct, bool wholeTranscript = false)
     {
         if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
             return;
 
         foreach (var transcript in captured.Transcripts)
-            await AdvanceAsync(transcript, FirstEnrolledLine(transcript) ?? transcript.Result.TotalLines, ct);
+        {
+            var stop = wholeTranscript ? null : FirstEnrolledLine(transcript);
+            await AdvanceAsync(transcript, stop ?? transcript.Result.TotalLines, ct);
+        }
     }
 
     /// <summary>An undated turn is not one: with a cutoff it is never sent, so the cursor may pass it.</summary>

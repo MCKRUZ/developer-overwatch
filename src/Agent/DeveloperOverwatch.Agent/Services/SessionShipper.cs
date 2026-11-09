@@ -9,7 +9,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// gather and go in one POST before each start or end, and once at the end of the walk. A request the
 /// server refuses as a whole is split until each item has its own answer (see <see cref="HalvingPoster"/>):
 /// an item rejected alone is dead, and one too large even alone is held, never dead. Once a start is
-/// refused, or the server no longer knows the session, its events are dropped up to its next start. The
+/// refused, or the server no longer knows the session, its events are dropped up to its next start. A
+/// session whose start was handled locally keeps its items here, unsent, until a later start ships. The
 /// first transient failure holds the rest of the session until the next poll.</summary>
 internal sealed class SessionShipper
 {
@@ -41,8 +42,9 @@ internal sealed class SessionShipper
         _logger = logger;
     }
 
-    /// <summary>Sends nothing anywhere. The session's project and its usage are kept in queue.db, and every
-    /// event is marked shipped, meaning handled, so the queue drains.</summary>
+    /// <summary>Sends nothing anywhere. The session's project and its usage are kept in queue.db. Starts are
+    /// marked Local, so the session's later items stay here too; every other event is marked shipped,
+    /// meaning handled, so the queue drains.</summary>
     public async Task HandleLocallyAsync(string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
     {
         foreach (var evt in events)
@@ -53,7 +55,9 @@ internal sealed class SessionShipper
                 await _conversations.RecordLocallyAsync(sessionId, evt, ct);
         }
 
-        await _queue.MarkShippedAsync(events.Select(e => e.Id).ToList(), ct);
+        var starts = events.Where(e => e.EventType == EventType.SessionStart).ToList();
+        await _queue.MarkLocalAsync(starts.Select(e => e.Id).ToList(), ct);
+        await _queue.MarkShippedAsync(events.Except(starts).Select(e => e.Id).ToList(), ct);
     }
 
     /// <returns>True when something was transient, so the caller backs off.</returns>
@@ -82,11 +86,22 @@ internal sealed class SessionShipper
 
             if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Dead)
                 await SweepAsync(sessionId, run, StartNeverArrived, ct);
+            else if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Local)
+                await KeepLocalAsync(sessionId, run, evt, ct);
             else if (!await StepAsync(sessionId, run, evt, ct))
                 return;
         }
 
         await FlushSignalsAsync(sessionId, run, ct);
+    }
+
+    /// <summary>An item of a session that began before enrolment, queued after it: handled here like the
+    /// session's earlier items. Its turns' cursors go to the end, so a later resume does not send them.</summary>
+    private async Task KeepLocalAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
+    {
+        if (evt.EventType == EventType.ConversationTurn)
+            await _conversations.RecordLocallyAsync(sessionId, evt, ct, wholeTranscript: true);
+        await run.MarkShippedAsync([evt], ct);
     }
 
     /// <returns>False when the session must stop for this poll.</returns>
@@ -228,7 +243,8 @@ internal sealed class SessionShipper
 
         public int At { get; set; }
 
-        /// <summary>What the latest start settled. Dead drops the session's items up to its next start.</summary>
+        /// <summary>What the latest start settled. Dead drops the session's items up to its next start; Local
+        /// handles them here.</summary>
         public StartState Gate { get; set; } = gate;
 
         /// <summary>Activity and tool failures gathered since the last signals POST, with the tool and turn

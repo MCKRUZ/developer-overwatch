@@ -22,9 +22,15 @@ public interface IEventQueue
     /// <summary>Never dequeued again: the server does not know the session. Purged like shipped events.</summary>
     Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
 
+    /// <summary>Starts handled on this machine (before enrolment, or in Local mode). Kept as long as
+    /// unshipped events, so the session's later items stay here after shipped rows are purged.</summary>
+    Task MarkLocalAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
+
     Task IncrementRetryAsync(string id, CancellationToken ct = default);
     Task<int> GetUnshippedCountAsync(CancellationToken ct = default);
     Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default);
+
+    /// <summary>Events this machine never sent: pending ones it could not, and Local starts it must not.</summary>
     Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default);
 }
 
@@ -39,7 +45,11 @@ public enum StartState
     Shipped,
 
     /// <summary>Every settled start was dead-marked: the session is not on the server.</summary>
-    Dead
+    Dead,
+
+    /// <summary>The session began before enrolment, or in Local mode, and no start since has shipped. Its
+    /// items are handled on this machine and never sent.</summary>
+    Local
 }
 
 public sealed class EventQueue : IEventQueue, IDisposable
@@ -151,7 +161,8 @@ public sealed class EventQueue : IEventQueue, IDisposable
     }
 
     /// <summary>A resumed session queues another start, so a shipped start anywhere means the session
-    /// is on the server and wins over a dead one. Pending starts are left out: a batch holds the oldest
+    /// is on the server and wins over a Local or dead one; a Local start wins over a dead one, so nothing of
+    /// a session that began before enrolment is sent until a later start ships. Pending starts are left out: a batch holds the oldest
     /// prefix of each session's pending events, so every pending start of a session older than its events in
     /// a batch is in that batch.</summary>
     public Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default)
@@ -170,6 +181,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
         }
 
         var state = states.Contains(Shipped) ? StartState.Shipped
+            : states.Contains(Local) ? StartState.Local
             : states.Contains(Dead) ? StartState.Dead
             : StartState.Unknown;
         return Task.FromResult(state);
@@ -179,11 +191,16 @@ public sealed class EventQueue : IEventQueue, IDisposable
     private const int Pending = 0;
     private const int Shipped = 1;
     private const int Dead = 2;
+    private const int Local = 3;
 
     public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Shipped);
 
     public Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Dead);
 
+    public Task MarkLocalAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Local);
+
+    /// <summary>A shipped start also releases its session's Local starts to the shipped purge, in the same
+    /// transaction: the session is opted in, and must not close again once the shipped start is purged.</summary>
     private Task SetStateAsync(IReadOnlyList<string> ids, int state)
     {
         if (ids.Count == 0)
@@ -206,10 +223,28 @@ public sealed class EventQueue : IEventQueue, IDisposable
                 cmd.ExecuteNonQuery();
             }
 
+            if (state == Shipped)
+                ReleaseLocalStarts(transaction, ids);
+
             transaction.Commit();
         }
 
         return Task.CompletedTask;
+    }
+
+    private void ReleaseLocalStarts(SqliteTransaction transaction, IReadOnlyList<string> shippedIds)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = $"""
+            UPDATE events SET shipped = {Shipped}
+            WHERE shipped = {Local} AND session_id IN (
+                SELECT session_id FROM events
+                WHERE event_type = $eventType AND id IN (SELECT value FROM json_each($ids)))
+            """;
+        cmd.Parameters.AddWithValue("$eventType", nameof(EventType.SessionStart));
+        cmd.Parameters.AddWithValue("$ids", JsonSerializer.Serialize(shippedIds));
+        cmd.ExecuteNonQuery();
     }
 
     public Task IncrementRetryAsync(string id, CancellationToken ct = default)
@@ -240,7 +275,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
         PurgeAsync($"shipped IN ({Shipped}, {Dead})", olderThan);
 
     public Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
-        PurgeAsync($"shipped = {Pending}", olderThan);
+        PurgeAsync($"shipped IN ({Pending}, {Local})", olderThan);
 
     /// <param name="stateFilter">Built only from this class's state constants, never from input.</param>
     private Task PurgeAsync(string stateFilter, TimeSpan olderThan)

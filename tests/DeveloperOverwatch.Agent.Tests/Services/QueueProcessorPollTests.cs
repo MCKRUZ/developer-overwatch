@@ -325,7 +325,7 @@ public sealed class QueueProcessorPollTests : IDisposable
         return doc.RootElement.TryGetProperty("conversationTurns", out var turns) ? turns.GetArrayLength() : 0;
     }
 
-    private sealed class RecordingHandler : HttpMessageHandler
+    internal sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly ConcurrentQueue<string> _bodies = new();
 
