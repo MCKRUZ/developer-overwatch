@@ -9,6 +9,21 @@ public class UsageWindowTests
     private static readonly DateTime T0 = new(2026, 11, 9, 8, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public void Current_HistoryBeyondWindowLength_ChainsFromEarlierBlock()
+    {
+        var now = T0.AddHours(12);
+        DateTime[] activity = [now.AddHours(-6), now.AddMinutes(-270), now.AddMinutes(-30)];
+
+        // The block opened at now-6h ends at now-1h, swallowing now-4.5h; now-0.5h opens the current block.
+        UsageWindow.Current(activity, now)
+            .Should().Be(new UsageWindowResult(now.AddMinutes(-30), now.AddMinutes(270)));
+
+        // Pre-filtering to the last 5h loses the now-6h anchor and wrongly starts the block at now-4.5h.
+        UsageWindow.Current(activity.Where(t => t >= now.AddHours(-5)), now)
+            .Should().Be(new UsageWindowResult(now.AddMinutes(-270), now.AddMinutes(30)));
+    }
+
+    [Fact]
     public void Current_NoActivity_ReturnsNull()
     {
         UsageWindow.Current([], T0).Should().BeNull();

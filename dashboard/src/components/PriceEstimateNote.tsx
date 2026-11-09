@@ -3,14 +3,18 @@ import { api } from "../api";
 
 const LABEL = "API-equivalent estimate";
 
-// One fetch per page load: every note on screen shares this promise.
+// One successful fetch per page load: every note on screen shares this promise.
+// A failure (offline, or a 401 before the auth token is ready) is not cached, so the next mount retries.
 let pricingAsOf: Promise<string | null> | null = null;
 
 function loadPricingAsOf(): Promise<string | null> {
   pricingAsOf ??= api.pricing
     .get()
     .then((info) => info.asOf)
-    .catch(() => null);
+    .catch(() => {
+      pricingAsOf = null;
+      return null;
+    });
   return pricingAsOf;
 }
 

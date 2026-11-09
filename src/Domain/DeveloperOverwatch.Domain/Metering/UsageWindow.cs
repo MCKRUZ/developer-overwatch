@@ -15,6 +15,12 @@ public static class UsageWindow
     /// Returns the estimated window containing <paramref name="nowUtc"/>, or <c>null</c> when no window is open
     /// (no activity yet, or the latest window has already reset). Activity after <paramref name="nowUtc"/> is ignored;
     /// activity exactly at <paramref name="nowUtc"/> counts. Input need not be sorted.
+    /// <para>
+    /// Windows chain from earlier history, so <paramref name="activityUtc"/> must reach back at least to the last gap
+    /// of <paramref name="length"/> or more (for example pass the last 24 hours, or everything since the period start).
+    /// Filtering to only the last <paramref name="length"/> gives wrong windows: with activity at now-6h, now-4.5h and
+    /// now-0.5h the current window starts at now-0.5h, but the last 5 hours alone would start it at now-4.5h.
+    /// </para>
     /// </summary>
     /// <param name="activityUtc">UTC timestamps of usage activity.</param>
     /// <param name="nowUtc">The moment to evaluate; passed in so the function never reads a clock.</param>

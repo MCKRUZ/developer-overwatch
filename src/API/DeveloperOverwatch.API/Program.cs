@@ -238,7 +238,12 @@ if (app.Environment.IsDevelopment())
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
+    // Both tables are built by singleton factories that throw on bad config, and the container does not
+    // cache a factory exception: resolve them here so bad config stops startup instead of failing every ingest.
+    scope.ServiceProvider.GetRequiredService<ITokenPricingCalculator>();
+    scope.ServiceProvider.GetRequiredService<IModelContextWindowProvider>();
+
+    var db =scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
     await DatabaseInitializer.InitializeAsync(db);
     await scope.ServiceProvider.GetRequiredService<TurnRepricer>().RepriceAsync();
 }

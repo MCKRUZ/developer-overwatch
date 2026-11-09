@@ -36,6 +36,23 @@ describe("PriceEstimateNote", () => {
     expect(screen.queryByText(/prices as of/)).not.toBeInTheDocument();
   });
 
+  it("retries on a later mount after a failed fetch instead of caching the failure", async () => {
+    vi.mocked(api.pricing.get)
+      .mockRejectedValueOnce(new Error("401 before token ready"))
+      .mockResolvedValueOnce({ asOf: "2026-11-09" });
+
+    const first = render(<PriceEstimateNote />);
+    expect(await screen.findByText("API-equivalent estimate")).toBeInTheDocument();
+    first.unmount();
+
+    render(<PriceEstimateNote />);
+
+    expect(
+      await screen.findByText("API-equivalent estimate (prices as of 2026-11-09)"),
+    ).toBeInTheDocument();
+    expect(api.pricing.get).toHaveBeenCalledTimes(2);
+  });
+
   it("fetches pricing once across multiple mounts", async () => {
     vi.mocked(api.pricing.get).mockResolvedValue({ asOf: "2026-11-09" });
 
