@@ -5,6 +5,7 @@ using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Hubs;
 using DeveloperOverwatch.API.Middleware;
 using DeveloperOverwatch.Application;
+using DeveloperOverwatch.Application.Services;
 using DeveloperOverwatch.Domain.Interfaces;
 using DeveloperOverwatch.Infrastructure;
 using DeveloperOverwatch.Infrastructure.Persistence;
@@ -92,7 +93,8 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 builder.Services.AddSignalR();
-builder.Services.AddScoped<IOverwatchNotifier, SignalROverwatchNotifier>();
+builder.Services.AddKeyedScoped<IOverwatchNotifier, SignalROverwatchNotifier>(
+    CompositeOverwatchNotifier.ChannelKey);
 
 builder.Services.AddCors(options =>
 {
