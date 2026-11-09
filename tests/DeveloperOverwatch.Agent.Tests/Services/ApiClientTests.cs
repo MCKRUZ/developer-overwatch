@@ -113,7 +113,60 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
 
-        result.Should().Be(ApiResult.Rejected);
+        result.Status.Should().Be(PostStatus.Rejected);
+        result.Reason.Should().Contain("At most 500 tool failures");
+    }
+
+    [Fact]
+    public async Task SendSessionEvents_Results_GiveEachItemItsOwnOutcome()
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, """
+            {"eventsIngested":1,"results":{"accepted":["a"],"duplicate":["d"],"rejected":[{"id":"r","reason":"role is required"}]}}
+            """);
+
+        var result = await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
+
+        result.OutcomeOf("a").Should().Be(ItemOutcome.Accepted);
+        result.OutcomeOf("d").Should().Be(ItemOutcome.Duplicate);
+        result.OutcomeOf("r").Should().Be(ItemOutcome.Rejected);
+        result.RejectionReason("r").Should().Be("role is required");
+        result.OutcomeOf("missing").Should().BeNull("an id the server did not list stays pending");
+    }
+
+    [Fact]
+    public async Task SendSessionEvents_OldServerWithoutResults_CountsEveryItemAccepted()
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, """{"eventsIngested":3}""");
+
+        var result = await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
+
+        result.OutcomeOf("any").Should().Be(ItemOutcome.Accepted);
+    }
+
+    [Theory]
+    [InlineData("accepted")]
+    [InlineData("duplicate")]
+    public async Task SendSessionEnd_AcceptedOrDuplicate_IsDefinitive(string outcome)
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, $$"""{"sessionId":"s-1","outcome":"{{outcome}}"}""");
+
+        var result = await _sut.SendSessionEndAsync("s-1", "{}", CancellationToken.None);
+
+        result.Status.Should().Be(PostStatus.Ok);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.RequestEntityTooLarge)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task SendSessionEvents_RetryableStatus_IsTransient(HttpStatusCode status)
+    {
+        _handler.Handler = _ => Respond(status, "");
+
+        var result = await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
+
+        result.Status.Should().Be(PostStatus.Transient);
     }
 
     private static HttpResponseMessage Respond(HttpStatusCode status, string body) =>

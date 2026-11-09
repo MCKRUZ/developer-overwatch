@@ -5,17 +5,6 @@ using Microsoft.Extensions.Logging;
 
 namespace DeveloperOverwatch.Agent.Services;
 
-/// <summary>How a POST to the server ended. <see cref="NotFound"/> means the server said it does not know
-/// the session, and <see cref="Rejected"/> that it refused the payload (400); a retry can fix neither.
-/// <see cref="Failed"/> is everything else, retried later.</summary>
-public enum ApiResult
-{
-    Success,
-    Failed,
-    NotFound,
-    Rejected
-}
-
 public interface IApiClient
 {
     Task<ApiResult> SendSessionStartAsync(string payloadJson, CancellationToken ct);
@@ -25,6 +14,9 @@ public interface IApiClient
 
 public sealed class ApiClient : IApiClient
 {
+    private const string SessionNotFoundCode = "session_not_found";
+    private const int MaxReasonLength = 500;
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<ApiClient> _logger;
 
@@ -49,21 +41,18 @@ public sealed class ApiClient : IApiClient
         {
             using var content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
             using var response = await _httpClient.PostAsync(path, content, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
 
             if (response.IsSuccessStatusCode)
-                return ApiResult.Success;
-
-            var body = await response.Content.ReadAsStringAsync(ct);
+                return new ApiResult(PostStatus.Ok, ParseItemResults(body));
+            // The caller logs the rejection once, with what it was about to drop.
             if (response.StatusCode == HttpStatusCode.BadRequest)
-            {
-                _logger.LogWarning("POST {Path} was rejected (400): {Body}", path, Truncate(body));
-                return ApiResult.Rejected;
-            }
+                return new ApiResult(PostStatus.Rejected, Reason: FieldLimits.Clamp(body, MaxReasonLength));
+            if (response.StatusCode == HttpStatusCode.NotFound && NamesSessionNotFound(body))
+                return ApiResult.NotFound;
 
             _logger.LogWarning("POST {Path} returned {StatusCode}", path, (int)response.StatusCode);
-            return response.StatusCode == HttpStatusCode.NotFound && NamesSessionNotFound(body)
-                ? ApiResult.NotFound
-                : ApiResult.Failed;
+            return ApiResult.Failed;
         }
         catch (HttpRequestException ex)
         {
@@ -77,6 +66,47 @@ public sealed class ApiClient : IApiClient
         }
     }
 
+    /// <summary>The per-item outcomes in an <c>/events</c> response. Null when the body carries no
+    /// <c>results</c> object: a start or end, or a server older than per-item results.</summary>
+    private static ItemResults? ParseItemResults(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("results", out var results)
+                || results.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var rejected = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var item in ArrayItems(results, "rejected"))
+            {
+                if (item.ValueKind == JsonValueKind.Object && StringProperty(item, "id") is { } id)
+                    rejected[id] = StringProperty(item, "reason") ?? "rejected";
+            }
+
+            return new ItemResults(Ids(results, "accepted"), Ids(results, "duplicate"), rejected);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static HashSet<string> Ids(JsonElement results, string name) =>
+        ArrayItems(results, name)
+            .Where(e => e.ValueKind == JsonValueKind.String)
+            .Select(e => e.GetString()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+    private static IEnumerable<JsonElement> ArrayItems(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out var array) && array.ValueKind == JsonValueKind.Array
+            ? array.EnumerateArray().ToList()
+            : [];
+
+    private static string? StringProperty(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
     /// <summary>Only the server's own session-not-found answer counts. A 404 from a wrong base path or
     /// a proxy must stay retryable, or the session's queued events would be dropped.</summary>
     private static bool NamesSessionNotFound(string body)
@@ -85,17 +115,11 @@ public sealed class ApiClient : IApiClient
         {
             using var doc = JsonDocument.Parse(body);
             return doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("code", out var code)
-                && code.ValueKind == JsonValueKind.String
-                && code.GetString() == SessionNotFoundCode;
+                && StringProperty(doc.RootElement, "code") == SessionNotFoundCode;
         }
         catch (JsonException)
         {
             return false;
         }
     }
-
-    private const string SessionNotFoundCode = "session_not_found";
-
-    private static string Truncate(string body) => body.Length <= 500 ? body : body[..500] + "…";
 }

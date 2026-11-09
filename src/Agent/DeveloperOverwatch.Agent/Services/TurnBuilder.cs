@@ -14,14 +14,18 @@ internal sealed class TurnBuilder
     private readonly List<PendingTurn> _turns = [];
     private readonly Dictionary<string, PendingTurn> _responsesBySourceId = new(StringComparer.Ordinal);
 
+    // The line being added: a turn starts on the line that creates it.
+    private int _lineIndex;
+
     public TurnBuilder(bool asSubagent)
     {
         _asSubagent = asSubagent;
     }
 
     /// <summary>Adds one transcript line. Returns false only when the line is not valid JSON.</summary>
-    public bool TryAdd(string line, string fallbackSourceId)
+    public bool TryAdd(string line, int lineIndex, string fallbackSourceId)
     {
+        _lineIndex = lineIndex;
         JsonDocument doc;
         try
         {
@@ -69,7 +73,8 @@ internal sealed class TurnBuilder
             t.CacheCreationInputTokens,
             t.CacheReadInputTokens,
             t.Model,
-            t.GitBranch)).ToList();
+            t.GitBranch,
+            StartLine: t.StartLine)).ToList();
 
     private void AddResponseLine(JsonElement message, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
@@ -77,7 +82,7 @@ internal sealed class TurnBuilder
 
         if (!_responsesBySourceId.TryGetValue(sourceId, out var turn))
         {
-            turn = new PendingTurn(sourceId, _asSubagent ? "subagent" : "assistant", timestamp);
+            turn = new PendingTurn(sourceId, _asSubagent ? "subagent" : "assistant", timestamp) { StartLine = _lineIndex };
             _responsesBySourceId[sourceId] = turn;
             _turns.Add(turn);
         }
@@ -107,7 +112,7 @@ internal sealed class TurnBuilder
             return;
 
         var sourceId = GetString(root, "uuid") is { Length: > 0 } uuid ? $"uuid:{uuid}" : fallbackSourceId;
-        var turn = new PendingTurn(sourceId, role, timestamp) { GitBranch = gitBranch };
+        var turn = new PendingTurn(sourceId, role, timestamp) { GitBranch = gitBranch, StartLine = _lineIndex };
         turn.Texts.AddRange(texts);
         _turns.Add(turn);
     }
@@ -161,6 +166,7 @@ internal sealed class TurnBuilder
     private sealed class PendingTurn(string sourceId, string role, DateTime? timestamp)
     {
         public string SourceId { get; } = sourceId;
+        public int StartLine { get; init; }
         public string Role { get; } = role;
         public DateTime? Timestamp { get; } = timestamp;
         public List<string> Texts { get; } = [];

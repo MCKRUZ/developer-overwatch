@@ -143,7 +143,7 @@ public sealed class QueueProcessorSessionSignalsTests
             Event(EventType.ToolFailed, $"{{\"toolName\":\"Bash\",\"at\":\"{T2:o}\"}}", T2));
 
         _sentPayloads.Should().NotContain(p => p.Contains("toolFailures"),
-            "the whole group is retried, so sending failures now would count them twice");
+            "a transient failure holds the rest of the session until the next poll");
         await _queue.DidNotReceive().MarkShippedAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
     }
 

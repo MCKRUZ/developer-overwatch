@@ -36,11 +36,6 @@ internal sealed record ConversationMarker(string TranscriptPath, bool UsageOnly,
 /// <summary>Builds the <c>/events</c> payload that carries captured conversation turns.</summary>
 internal static class ConversationPayload
 {
-    private const int MaxTurnContentLength = 4096;
-
-    // The server rejects longer values, and a rejected batch would be retried forever.
-    private const int MaxLabelLength = 255;
-
     /// <param name="usageOnly">Ship no conversation text: content is null and no secret is flagged.</param>
     public static string Build(
         string sessionId, string? sessionTitle, IReadOnlyList<CapturedTurn> turns, IPrivacyRedactor redactor, bool usageOnly) =>
@@ -53,15 +48,16 @@ internal static class ConversationPayload
                 id = StableTurnId.From(t.SourceId),
                 turnIndex = i,
                 role = t.Role,
-                content = usageOnly ? null : Clamp(t.Content, MaxTurnContentLength),
+                content = usageOnly ? null : FieldLimits.Clamp(t.Content, FieldLimits.TurnContent),
                 tokenCount = TotalTokens(t) is var total && total > 0 ? total : (int?)null,
                 inputTokens = t.InputTokens,
                 outputTokens = t.OutputTokens,
                 cacheCreationInputTokens = t.CacheCreationInputTokens,
                 cacheReadInputTokens = t.CacheReadInputTokens,
                 model = t.Model,
-                gitBranch = Clamp(t.GitBranch, MaxLabelLength),
-                subagentName = Clamp(t.SubagentName, MaxLabelLength),
+                // The server rejects longer names, and the turn would be dropped.
+                gitBranch = FieldLimits.Clamp(t.GitBranch, FieldLimits.Name),
+                subagentName = FieldLimits.Clamp(t.SubagentName, FieldLimits.Name),
                 // Computed from the RAW (pre-redaction) content — by the time this payload is
                 // redacted, the secret itself is gone, so this flag is the only signal the server
                 // ever gets that one was present.
@@ -100,9 +96,6 @@ internal static class ConversationPayload
             return null;
         }
     }
-
-    private static string? Clamp(string? value, int max) =>
-        value is { Length: var length } && length > max ? value[..max] : value;
 
     // Cache reads and writes are tokens the model processed too — usually most of them.
     private static int TotalTokens(CapturedTurn t) =>

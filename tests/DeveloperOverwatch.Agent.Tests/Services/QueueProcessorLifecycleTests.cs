@@ -142,10 +142,10 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
         _api.ReceivedCalls().Should().BeEmpty();
     }
 
-    // The end committed but the signals POST timed out; the redelivered end succeeds (the server treats
-    // it as a no-op), so the group still ships and its tool failures are not lost.
+    // The end ships last, once everything else from the poll is definitive. The signals POST timed out,
+    // so the end waits for the next poll, and the tool failure is not lost.
     [Fact]
-    public async Task Pilot_RedeliveredEndAfterSignalsTimedOut_GroupShipsWithItsToolFailures()
+    public async Task Pilot_SignalsTimedOut_EndWaitsForThem_AndBothShipNextPoll()
     {
         _api.SendSessionEndAsync("s1", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
         var signalPayloads = new List<string>();
@@ -157,7 +157,7 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
 
         await RunAsync(CreateSut(AgentMode.Pilot, Fixed(AgentMode.Pilot)), millis: 4200);
 
-        await _api.Received(2).SendSessionEndAsync("s1", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _api.Received(1).SendSessionEndAsync("s1", Arg.Any<string>(), Arg.Any<CancellationToken>());
         signalPayloads.Should().HaveCount(2).And.AllSatisfy(p => p.Should().Contain("Bash"));
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
         (await RowCountAsync()).Should().Be(2, "shipped, not purged as dead");
@@ -174,7 +174,8 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
 
         await RunAsync(CreateSut(AgentMode.Pilot, Fixed(AgentMode.Pilot)));
 
-        await _api.Received(1).SendSessionEventsAsync("bad", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        // Each POST stands alone: the tool execution's and the activity signals' are both rejected.
+        await _api.Received(2).SendSessionEventsAsync("bad", Arg.Any<string>(), Arg.Any<CancellationToken>());
         await _api.Received().SendSessionEventsAsync("good", Arg.Any<string>(), Arg.Any<CancellationToken>());
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }

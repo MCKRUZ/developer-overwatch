@@ -9,11 +9,9 @@ namespace DeveloperOverwatch.Agent.Services;
 /// ToolExecution means tools are running (active), and the Stop marker (ConversationTurn) means the
 /// turn ended and the user has the ball (idle). The server keeps the newest state, so order and
 /// duplicates do not matter here. Each tool failure carries its queued event's id, which the server
-/// requires; it still ships last, and only when everything before it in the group succeeded.</summary>
+/// requires, and is marked by its own outcome.</summary>
 internal static class SessionSignals
 {
-    private const int MaxToolNameLength = 255;
-
     private static readonly HashSet<string> States = ["active", "waiting", "idle"];
 
     public static bool IsSignalEvent(EventType type) =>
@@ -66,7 +64,7 @@ internal static class SessionSignals
             || n.GetString() is not { Length: > 0 } name)
             return null;
 
-        return new ToolFailure(evt.Id, name.Length > MaxToolNameLength ? name[..MaxToolNameLength] : name, ReadAt(p, evt));
+        return new ToolFailure(evt.Id, FieldLimits.Clamp(name, FieldLimits.Name), ReadAt(p, evt));
     }
 
     private static JsonElement? ReadPayload(QueuedEvent evt)

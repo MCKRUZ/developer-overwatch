@@ -21,7 +21,8 @@ public sealed record CapturedTurn(
     int? CacheReadInputTokens = null,
     string? Model = null,
     string? GitBranch = null,
-    string? SubagentName = null);
+    string? SubagentName = null,
+    int StartLine = 0);
 
 /// <param name="ParseErrors">Lines read that were not valid JSON.</param>
 public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines, int ParseErrors = 0);
@@ -84,7 +85,7 @@ public sealed class ConversationCapture : IConversationCapture
             {
                 if (lineIndex >= fromLineIndex && !string.IsNullOrWhiteSpace(line))
                 {
-                    lastLineFailedToParse = !builder.TryAdd(line, $"{fileName}:line:{lineIndex}");
+                    lastLineFailedToParse = !builder.TryAdd(line, lineIndex, $"{fileName}:line:{lineIndex}");
                     if (lastLineFailedToParse)
                         parseErrors++;
                 }

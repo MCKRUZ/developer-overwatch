@@ -8,6 +8,9 @@ public interface IEventQueue
     Task InitializeAsync(CancellationToken ct = default);
     Task EnqueueAsync(QueuedEvent @event, CancellationToken ct = default);
     Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default);
+
+    /// <summary>Whether the session's start reached the server, as far as this queue knows.</summary>
+    Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default);
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
 
     /// <summary>Never dequeued again: the server does not know the session. Purged like shipped events.</summary>
@@ -17,6 +20,23 @@ public interface IEventQueue
     Task<int> GetUnshippedCountAsync(CancellationToken ct = default);
     Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default);
     Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default);
+}
+
+/// <summary>What the queue says about a session's start. <see cref="Unknown"/> is the default.</summary>
+public enum StartState
+{
+    /// <summary>No start for the session is queued (purged after shipping, or never queued). Its items
+    /// ship, and the server answers session_not_found if it lacks the session.</summary>
+    Unknown,
+
+    /// <summary>A start was shipped: the session is on the server.</summary>
+    Shipped,
+
+    /// <summary>No start shipped yet and one is pending: the session's items wait behind it.</summary>
+    Pending,
+
+    /// <summary>Every start was dead-marked: the session will never reach the server.</summary>
+    Dead
 }
 
 public sealed class EventQueue : IEventQueue, IDisposable
@@ -110,6 +130,30 @@ public sealed class EventQueue : IEventQueue, IDisposable
         }
 
         return Task.FromResult<IReadOnlyList<QueuedEvent>>(results);
+    }
+
+    /// <summary>A resumed session queues another start, so a shipped start anywhere means the session
+    /// is on the server and wins over a pending one. Otherwise a pending start holds the session.</summary>
+    public Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default)
+    {
+        var states = new HashSet<int>();
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "SELECT DISTINCT shipped FROM events WHERE session_id = $sessionId AND event_type = $eventType";
+            cmd.Parameters.AddWithValue("$sessionId", sessionId);
+            cmd.Parameters.AddWithValue("$eventType", nameof(EventType.SessionStart));
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                states.Add(reader.GetInt32(0));
+        }
+
+        var state = states.Contains(Shipped) ? StartState.Shipped
+            : states.Contains(Pending) ? StartState.Pending
+            : states.Contains(Dead) ? StartState.Dead
+            : StartState.Unknown;
+        return Task.FromResult(state);
     }
 
     // Values of the `shipped` column. Only Pending is ever dequeued.

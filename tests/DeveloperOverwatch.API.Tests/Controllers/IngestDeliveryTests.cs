@@ -150,19 +150,19 @@ public class IngestDeliveryTests : IClassFixture<OverwatchWebApplicationFactory>
     }
 
     [Theory]
-    [InlineData("conversationTurns")]
-    [InlineData("toolExecutions")]
-    [InlineData("fileChanges")]
-    [InlineData("toolFailures")]
-    [InlineData("activityEvents")]
-    public async Task Events_MoreThan500ItemsInAList_Returns400(string list)
+    [InlineData("conversationTurns", 5001)]
+    [InlineData("toolExecutions", 5001)]
+    [InlineData("fileChanges", 5001)]
+    [InlineData("toolFailures", 501)]
+    [InlineData("activityEvents", 501)]
+    public async Task Events_MoreItemsInAListThanItsCap_Returns400(string list, int count)
     {
         var sessionId = NewId();
         await PostOk("/api/sessions/start", StartBody(sessionId, NewId()));
         var body = new Dictionary<string, object>
         {
             ["sessionId"] = sessionId,
-            [list] = Enumerable.Range(0, 501).Select(_ => Item(list)).ToList()
+            [list] = Enumerable.Range(0, count).Select(_ => Item(list)).ToList()
         };
 
         var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", body);

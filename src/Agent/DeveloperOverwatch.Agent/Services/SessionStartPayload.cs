@@ -10,8 +10,6 @@ namespace DeveloperOverwatch.Agent.Services;
 internal static class SessionStartPayload
 {
     public const string AgentName = "claude-code";
-    private const int MaxMachineNameLength = 255;
-    private const int MaxProjectKeyLength = 512;
 
     /// <summary>The session's project key, exactly as the server receives it. Kept locally too,
     /// so usage recorded on the machine groups by the same project.</summary>
@@ -22,13 +20,17 @@ internal static class SessionStartPayload
     {
         var repoPath = ReadRepoPath(rawPayload);
         var remoteUrl = repoPath is null ? null : await gitRemote.GetOriginUrlAsync(repoPath, ct);
-        return Truncate(ProjectKey.From(remoteUrl, repoPath), MaxProjectKeyLength);
+        return FieldLimits.Clamp(ProjectKey.From(remoteUrl, repoPath), FieldLimits.ProjectKey);
     }
 
+    /// <summary>Also normalizes what the server would otherwise reject outright: an invalid email
+    /// becomes <see cref="FieldLimits.UnknownEmail"/>. Runs on the redacted payload, since redaction
+    /// may rewrite the email.</summary>
     /// <param name="redactedPayload">The payload that will be sent; returned unchanged when it is
     /// not a JSON object, because a session start must never be dropped.</param>
     /// <param name="projectKey">From <see cref="ResolveProjectKeyAsync"/>.</param>
-    public static string Enrich(string redactedPayload, string? projectKey)
+    /// <param name="eventId">The queued start's id, which lets the server report a redelivery as a duplicate.</param>
+    public static string Enrich(string redactedPayload, string? projectKey, string eventId)
     {
         JsonObject? body;
         try
@@ -44,8 +46,10 @@ internal static class SessionStartPayload
             return redactedPayload;
 
         body["agent"] = AgentName;
-        body["machineName"] = Truncate(Environment.MachineName, MaxMachineNameLength);
-        body["projectKey"] = projectKey;
+        body["machineName"] = FieldLimits.Clamp(Environment.MachineName, FieldLimits.MachineName);
+        body["projectKey"] = FieldLimits.Clamp(projectKey, FieldLimits.ProjectKey);
+        body["developerEmail"] = FieldLimits.Email(AgentPayload.StringValue(body, "developerEmail"));
+        body["eventId"] = eventId;
         return body.ToJsonString();
     }
 
@@ -66,7 +70,4 @@ internal static class SessionStartPayload
             return null;
         }
     }
-
-    private static string? Truncate(string? value, int max) =>
-        value is not null && value.Length > max ? value[..max] : value;
 }
