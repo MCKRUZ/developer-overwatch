@@ -49,6 +49,8 @@ public sealed class BackfillCommandTests : IDisposable
         _queue.InitializeAsync().GetAwaiter().GetResult();
 
         _git.GetOriginUrlAsync(_cwdA, Arg.Any<CancellationToken>()).Returns(RemoteA);
+        _git.GetTopLevelAsync(_cwdA, Arg.Any<CancellationToken>()).Returns(_cwdA);
+        _git.GetTopLevelAsync(_cwdB, Arg.Any<CancellationToken>()).Returns(_cwdB);
         _git.GetConfigValueAsync(Arg.Any<string?>(), "user.email", Arg.Any<CancellationToken>()).Returns("dev@example.com");
         WriteFixture();
     }
@@ -111,21 +113,33 @@ public sealed class BackfillCommandTests : IDisposable
 
         output.Should().MatchRegex(@"Queued for shipping\s+2");
         var events = (await _queue.DequeueBatchAsync(100)).Where(e => e.SessionId == MappedId).ToList();
-        events.Select(e => e.EventType).Should().Equal(EventType.SessionStart, EventType.ConversationTurn);
+        events.Select(e => e.EventType).Should().Equal(EventType.SessionStart, EventType.ConversationTurn, EventType.SessionEnd);
+        events.Select(e => e.CreatedAt).Should().Equal([Now, Now.AddTicks(1), Now.AddTicks(2)],
+            "start, marker, end must dequeue in that order whatever their rowids");
 
         using var start = JsonDocument.Parse(events[0].PayloadJson);
+        start.RootElement.GetProperty("isBackfill").GetBoolean().Should().BeTrue(
+            "the server must only fill in a session it has, never reopen an ended one");
         start.RootElement.GetProperty("sessionId").GetString().Should().Be(MappedId);
         start.RootElement.GetProperty("developerEmail").GetString().Should().Be("dev@example.com");
         start.RootElement.GetProperty("repoPath").GetString().Should().Be(_cwdA);
         start.RootElement.GetProperty("startedAt").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-40));
 
         using var marker = JsonDocument.Parse(events[1].PayloadJson);
-        marker.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("sessionId", "transcriptPath", "at");
+        marker.RootElement.EnumerateObject().Select(p => p.Name).Should()
+            .Equal("sessionId", "transcriptPath", "at", "usageOnly", "from");
         marker.RootElement.GetProperty("sessionId").GetString().Should().Be(MappedId);
         marker.RootElement.GetProperty("transcriptPath").GetString().Should().Be(_transcriptA);
         marker.RootElement.GetProperty("at").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-1),
             "the marker means idle, and the session went idle at its last transcript line, not at backfill time");
-        events[1].CreatedAt.Should().Be(Now, "queue order and retention must treat the backfilled events as new");
+        marker.RootElement.GetProperty("usageOnly").GetBoolean().Should().BeTrue("backfill never ships conversation text");
+        marker.RootElement.GetProperty("from").GetDateTime().ToUniversalTime().Should()
+            .BeAfter(Now.AddDays(-40)).And.BeOnOrBefore(Now.AddDays(-2), "only the --days window ships");
+
+        using var end = JsonDocument.Parse(events[2].PayloadJson);
+        end.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("sessionId", "endedAt");
+        end.RootElement.GetProperty("sessionId").GetString().Should().Be(MappedId);
+        end.RootElement.GetProperty("endedAt").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-1));
     }
 
     [Fact]
@@ -135,7 +149,7 @@ public sealed class BackfillCommandTests : IDisposable
         await RunAsync(AgentMode.Pilot);
 
         var events = await _queue.DequeueBatchAsync(100);
-        events.Should().HaveCount(4, "a second run before shipping queues no duplicates");
+        events.Should().HaveCount(6, "a second run before shipping queues no duplicates");
         var idsB = events.Where(e => e.PayloadJson.Contains(SessionB, StringComparison.Ordinal)
                                      || IsSessionStartFor(e, _cwdB))
             .Select(e => e.SessionId).Distinct().ToList();
@@ -149,16 +163,37 @@ public sealed class BackfillCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Pilot_SessionAlreadyCapturedLive_IsNotQueued_ButUsageIsStillRecorded()
+    public async Task Pilot_SessionWithALiveCursor_IsStillQueued_AndTheCursorIsUntouched()
     {
+        // A cursor can come from local mode, which shipped nothing. The server skips turn ids it already
+        // stores, so overlap with live capture is safe.
         WriteMapping(SessionA, MappedId);
-        await new ConversationCursorStore(_overwatch).SetAsync(MappedId, 3, CancellationToken.None);
+        var cursors = new ConversationCursorStore(_overwatch);
+        await cursors.SetAsync(MappedId, 3, CancellationToken.None);
 
         var (_, output) = await RunAsync(AgentMode.Pilot);
 
-        output.Should().MatchRegex(@"Queued for shipping\s+1");
-        (await _queue.DequeueBatchAsync(100)).Should().NotContain(e => e.SessionId == MappedId);
+        output.Should().MatchRegex(@"Queued for shipping\s+2");
+        (await _queue.DequeueBatchAsync(100)).Where(e => e.SessionId == MappedId).Should().HaveCount(3);
+        (await cursors.GetAsync(MappedId, CancellationToken.None)).Should().Be(3);
         (await AllRowsAsync()).Should().HaveCount(4);
+    }
+
+    // A transcript can start in a folder outside any repository, such as Documents. Like the live hook,
+    // backfill then sends no repository and no project key, rather than the raw folder.
+    [Fact]
+    public async Task Pilot_CwdOutsideAnyRepository_SendsNoRepoPathOrProjectKey()
+    {
+        _git.GetTopLevelAsync(_cwdB, Arg.Any<CancellationToken>()).Returns((string?)null);
+
+        await RunAsync(AgentMode.Pilot);
+
+        var starts = (await _queue.DequeueBatchAsync(100)).Where(e => e.EventType == EventType.SessionStart)
+            .Select(e => JsonDocument.Parse(e.PayloadJson).RootElement.GetProperty("repoPath")).ToList();
+        starts.Select(r => r.ValueKind == JsonValueKind.Null ? null : r.GetString()).Should().BeEquivalentTo([_cwdA, null]);
+        var rows = await AllRowsAsync();
+        rows.Count(r => r.ProjectKey is null).Should().Be(1, "session B's one response has no project");
+        rows.Count(r => r.ProjectKey == ProjectKey.From(RemoteA, _cwdA)).Should().Be(3);
     }
 
     [Theory]

@@ -33,7 +33,7 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionStartAsync("{}", CancellationToken.None);
 
-        result.Should().BeTrue();
+        result.Should().Be(ApiResult.Success);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionStartAsync("{}", CancellationToken.None);
 
-        result.Should().BeFalse();
+        result.Should().Be(ApiResult.Failed);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionEventsAsync("session-1", "{}", CancellationToken.None);
 
-        result.Should().BeTrue();
+        result.Should().Be(ApiResult.Success);
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionEndAsync("session-1", "{}", CancellationToken.None);
 
-        result.Should().BeTrue();
+        result.Should().Be(ApiResult.Success);
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionStartAsync("{}", CancellationToken.None);
 
-        result.Should().BeFalse();
+        result.Should().Be(ApiResult.Failed);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public class ApiClientTests : IDisposable
 
         var result = await _sut.SendSessionStartAsync("{}", CancellationToken.None);
 
-        result.Should().BeFalse();
+        result.Should().Be(ApiResult.Failed);
     }
 
     private sealed class TestHttpMessageHandler : HttpMessageHandler

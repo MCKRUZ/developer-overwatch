@@ -180,11 +180,29 @@ public sealed class IngestSessionEventsCommandHandler
         totalEvents += await ApplyToolFailuresAsync(session, request.ToolFailures, cancellationToken);
 
         if (totalEvents > 0)
-            session.LastActivityAt = DateTime.UtcNow;
+            session.LastActivityAt = LatestActivity(session.LastActivityAt, request);
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return Result<int>.Success(totalEvents);
+    }
+
+    // The latest moment the batch describes, never earlier than what is stored, so backfilled history
+    // does not make an old session look active now. Capped at now, so a fast client clock cannot push it
+    // into the future. A batch with no timestamps counts as activity on arrival.
+    private static DateTime LatestActivity(DateTime? stored, IngestSessionEventsCommand request)
+    {
+        var stamps = request.ConversationTurns.Select(t => t.Timestamp)
+            .Concat(request.ToolExecutions.Select(t => t.Timestamp))
+            .Concat(request.ActivityEvents.Select(a => a.At))
+            .Select(t => t.Kind == DateTimeKind.Local ? t.ToUniversalTime() : t)
+            .ToList();
+        var now = DateTime.UtcNow;
+        if (stamps.Count == 0)
+            return now;
+
+        var latest = stamps.Max() is var max && max > now ? now : max;
+        return stored is { } s && s > latest ? s : latest;
     }
 
     private static long? ContextTokensOf(ConversationTurnDto t) =>

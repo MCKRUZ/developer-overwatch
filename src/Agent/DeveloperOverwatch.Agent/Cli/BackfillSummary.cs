@@ -4,6 +4,7 @@ namespace DeveloperOverwatch.Agent.Cli;
 internal sealed record BackfillSummary(
     int FilesScanned,
     int FilesTooOld,
+    int FilesUnreadable,
     int Sessions,
     int ResponsesAdded,
     int ResponsesAlreadyPresent,

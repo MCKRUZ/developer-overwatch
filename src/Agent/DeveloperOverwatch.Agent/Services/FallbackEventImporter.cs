@@ -89,15 +89,23 @@ public static class FallbackEventImporter
                 : DateTimeOffset.MinValue;
     }
 
+    private const int MaxLineLength = 1024 * 1024;
+
     private static async Task ImportClaimedAsync(string claimedPath, IEventQueue queue, ILogger logger)
     {
         try
         {
-            var lines = await File.ReadAllLinesAsync(claimedPath);
             var imported = 0;
 
-            foreach (var line in lines)
+            // Streamed, so a huge file never sits in memory at once. No hook writes a line this long.
+            foreach (var line in File.ReadLines(claimedPath))
             {
+                if (line.Length > MaxLineLength)
+                {
+                    logger.LogWarning("Skipped a {Length}-character line in fallback file {Path}", line.Length, claimedPath);
+                    continue;
+                }
+
                 if (string.IsNullOrWhiteSpace(line) || TryParse(line, logger) is not { } evt)
                     continue;
 

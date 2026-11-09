@@ -60,6 +60,29 @@ public class IngestSessionEventsTests
             Arg.Any<CancellationToken>());
     }
 
+    // Backfilled history must not make an old session look active right now.
+    [Fact]
+    public async Task Handle_OldTimestamps_SetLastActivityAtToTheLatestEventNotNow()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var old = new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc);
+        var session = new Session { Id = sessionId, Status = SessionStatus.Active, LastActivityAt = old.AddDays(-1) };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations);
+
+        await handler.Handle(new IngestSessionEventsCommand
+        {
+            SessionId = sessionId,
+            ToolExecutions =
+            [
+                new ToolExecutionDto { Id = "t-1", ToolName = "Edit", InputParams = "{}", DurationMs = 1, Timestamp = old },
+                new ToolExecutionDto { Id = "t-2", ToolName = "Read", InputParams = "{}", DurationMs = 1, Timestamp = old.AddMinutes(5) }
+            ]
+        }, CancellationToken.None);
+
+        session.LastActivityAt.Should().Be(old.AddMinutes(5));
+    }
+
     [Fact]
     public async Task Handle_SessionNotFound_ReturnsFail()
     {

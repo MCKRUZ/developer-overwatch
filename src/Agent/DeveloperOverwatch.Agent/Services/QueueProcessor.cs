@@ -1,6 +1,5 @@
 namespace DeveloperOverwatch.Agent.Services;
 
-using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -22,6 +21,8 @@ public sealed class QueueProcessor : BackgroundService
     private readonly IGitReader _gitRemote;
     private readonly IUsageStore _usageStore;
     private readonly AgentConfig _config;
+    private readonly IAgentModeSource _modeSource;
+    private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<QueueProcessor> _logger;
 
     private int _consecutiveFailures;
@@ -36,6 +37,8 @@ public sealed class QueueProcessor : BackgroundService
         IGitReader gitRemote,
         IUsageStore usageStore,
         AgentConfig config,
+        IAgentModeSource modeSource,
+        IHostApplicationLifetime lifetime,
         ILogger<QueueProcessor> logger)
     {
         _queue = queue;
@@ -47,6 +50,8 @@ public sealed class QueueProcessor : BackgroundService
         _gitRemote = gitRemote;
         _usageStore = usageStore;
         _config = config;
+        _modeSource = modeSource;
+        _lifetime = lifetime;
         _logger = logger;
     }
 
@@ -54,6 +59,10 @@ public sealed class QueueProcessor : BackgroundService
     {
         await _queue.InitializeAsync();
         await _usageStore.InitializeAsync();
+        // Session starts that local mode held back ship first, now that the machine is enrolled.
+        if (_config.Mode == AgentMode.Pilot)
+            await _queue.ReleaseHeldAsync();
+
         _logger.LogInformation("Queue processor started in {Mode} mode, polling every {Interval}s",
             _config.Mode, _config.PollIntervalSeconds);
 
@@ -61,6 +70,12 @@ public sealed class QueueProcessor : BackgroundService
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
+            if (ModeChanged())
+            {
+                _lifetime.StopApplication();
+                break;
+            }
+
             try
             {
                 await ImportFallbackEventsAsync();
@@ -78,6 +93,30 @@ public sealed class QueueProcessor : BackgroundService
         }
     }
 
+    /// <summary>The mode is read fresh before every poll: a machine switched to Local must stop shipping
+    /// now, not at the next logon. Any change stops the agent; the session-start hook starts it again
+    /// with the new config. A config that cannot be read counts as Local.</summary>
+    private bool ModeChanged()
+    {
+        AgentMode current;
+        try
+        {
+            current = _modeSource.CurrentMode();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read the agent mode, treating it as Local");
+            current = AgentMode.Local;
+        }
+
+        if (current == _config.Mode)
+            return false;
+
+        _logger.LogWarning("Agent mode changed from {Old} to {New}; stopping so a restart picks up the new config",
+            _config.Mode, current);
+        return true;
+    }
+
     private async Task ProcessBatchAsync(CancellationToken ct)
     {
         var batch = await _queue.DequeueBatchAsync(_config.BatchSize);
@@ -86,43 +125,53 @@ public sealed class QueueProcessor : BackgroundService
 
         _logger.LogDebug("Processing batch of {Count} events", batch.Count);
 
-        var grouped = batch.GroupBy(e => e.SessionId);
-
-        foreach (var sessionGroup in grouped)
+        var anyFailed = false;
+        foreach (var sessionGroup in batch.GroupBy(e => e.SessionId))
         {
             var sessionId = sessionGroup.Key;
             var events = sessionGroup.ToList();
 
             if (_config.Mode == AgentMode.Local)
             {
-                await RecordSessionEventsLocallyAsync(sessionId, events, ct);
-                await _queue.MarkShippedAsync(events.Select(e => e.Id).ToList());
+                await HandleLocallyAsync(sessionId, events, ct);
                 continue;
             }
 
-            var shipped = await ShipSessionEventsAsync(sessionId, events, ct);
-
-            if (shipped)
+            switch (await ShipSessionEventsAsync(sessionId, events, ct))
             {
-                await _queue.MarkShippedAsync(events.Select(e => e.Id).ToList());
-                _consecutiveFailures = 0;
+                case ApiResult.Success:
+                    await _queue.MarkShippedAsync(Ids(events));
+                    _consecutiveFailures = 0;
+                    break;
+                case ApiResult.NotFound:
+                    // A retry can never succeed, so the group is never dequeued again.
+                    _logger.LogWarning("Server does not know session {SessionId}; dropping its {Count} queued events",
+                        sessionId, events.Count);
+                    await _queue.MarkDeadAsync(Ids(events));
+                    break;
+                default:
+                    anyFailed = true;
+                    foreach (var evt in events)
+                        await _queue.IncrementRetryAsync(evt.Id);
+                    await CheckGitFallbackAsync(sessionId, ct);
+                    break;
             }
-            else
-            {
-                _consecutiveFailures++;
-                foreach (var evt in events)
-                    await _queue.IncrementRetryAsync(evt.Id);
+        }
 
-                await CheckGitFallbackAsync(sessionId, ct);
-                await ApplyBackoffAsync(ct);
-            }
+        // Once per poll, so one failing session never delays the others in the batch.
+        if (anyFailed)
+        {
+            _consecutiveFailures++;
+            await ApplyBackoffAsync(ct);
         }
     }
 
+    private static List<string> Ids(IEnumerable<QueuedEvent> events) => events.Select(e => e.Id).ToList();
+
     /// <summary>Local mode sends nothing anywhere. The session's project and its usage are kept in
-    /// queue.db; the caller then marks the events shipped, meaning handled, so the queue drains.</summary>
-    private async Task RecordSessionEventsLocallyAsync(
-        string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
+    /// queue.db. Session starts are then held, so that after enrolment the server learns of the
+    /// session first; everything else is marked shipped, meaning handled, so the queue drains.</summary>
+    private async Task HandleLocallyAsync(string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
     {
         foreach (var evt in events)
         {
@@ -132,40 +181,48 @@ public sealed class QueueProcessor : BackgroundService
                      && await CaptureAndRecordUsageAsync(sessionId, evt, ct) is { } captured)
                 await AdvanceCursorsAsync(captured.Captures, ct);
         }
+
+        var starts = events.Where(e => e.EventType == EventType.SessionStart).ToList();
+        if (starts.Count > 0)
+            await _queue.MarkHeldAsync(Ids(starts));
+        await _queue.MarkShippedAsync(Ids(events.Except(starts)));
     }
 
-    private async Task<bool> ShipSessionEventsAsync(
+    private async Task<ApiResult> ShipSessionEventsAsync(
         string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
     {
         foreach (var evt in events)
         {
             var redacted = _redactor.Redact(evt.PayloadJson);
 
-            var success = evt.EventType switch
+            var result = evt.EventType switch
             {
                 EventType.SessionStart => await ShipSessionStartAsync(sessionId, evt, redacted, ct),
                 EventType.SessionEnd => await _api.SendSessionEndAsync(sessionId, redacted, ct),
                 EventType.ConversationTurn => await CaptureAndShipConversationAsync(sessionId, evt, ct),
                 // Shipped together below, after everything else in the group.
-                EventType.ActivityChanged or EventType.ToolFailed => true,
+                EventType.ActivityChanged or EventType.ToolFailed => ApiResult.Success,
                 _ => await _api.SendSessionEventsAsync(sessionId, redacted, ct)
             };
 
-            if (!success)
-                return false;
+            if (result != ApiResult.Success)
+                return result;
         }
 
-        // Last, so a failure earlier in the group never resends tool failures, which the server
-        // cannot deduplicate. The payload holds only states, tool names and times: nothing to redact.
-        return SessionSignals.BuildPayload(sessionId, events) is not { } signals
-               || await _api.SendSessionEventsAsync(sessionId, signals, ct);
+        // Last, so a failure earlier in the group never resends tool failures. The payload holds only
+        // states, tool names, ids and times: nothing to redact.
+        return SessionSignals.BuildPayload(sessionId, events) is { } signals
+            ? await _api.SendSessionEventsAsync(sessionId, signals, ct)
+            : ApiResult.Success;
     }
 
-    private async Task<bool> ShipSessionStartAsync(
+    private async Task<ApiResult> ShipSessionStartAsync(
         string sessionId, QueuedEvent evt, string redacted, CancellationToken ct)
     {
         var projectKey = await RecordSessionProjectAsync(sessionId, evt, ct);
-        return await _api.SendSessionStartAsync(SessionStartPayload.Enrich(redacted, projectKey), ct);
+        var result = await _api.SendSessionStartAsync(SessionStartPayload.Enrich(redacted, projectKey), ct);
+        // A start names no existing session, so a 404 there is a server fault worth retrying.
+        return result == ApiResult.NotFound ? ApiResult.Failed : result;
     }
 
     private async Task<string?> RecordSessionProjectAsync(string sessionId, QueuedEvent evt, CancellationToken ct)
@@ -175,32 +232,34 @@ public sealed class QueueProcessor : BackgroundService
         return projectKey;
     }
 
-    private const int MaxTurnContentLength = 4096;
-
-    private async Task<bool> CaptureAndShipConversationAsync(
+    private async Task<ApiResult> CaptureAndShipConversationAsync(
         string sessionId, QueuedEvent evt, CancellationToken ct)
     {
         if (await CaptureAndRecordUsageAsync(sessionId, evt, ct) is not { } captured)
-            return true;
+            return ApiResult.Success;
 
         if (captured.Turns.Count > 0)
         {
-            var sessionTitle = await ResolveSessionTitleAsync(captured.TranscriptPath, ct);
-            var payload = BuildConversationPayload(sessionId, sessionTitle, captured.Turns);
-            if (!await _api.SendSessionEventsAsync(sessionId, _redactor.Redact(payload), ct))
-                return false;
+            var sessionTitle = await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, ct);
+            var payload = ConversationPayload.Build(
+                sessionId, sessionTitle, captured.Turns, _redactor, captured.Marker.UsageOnly);
+            var result = await _api.SendSessionEventsAsync(sessionId, _redactor.Redact(payload), ct);
+            if (result != ApiResult.Success)
+                return result;
         }
 
         // Cursors move only after the server has the turns. If a later cursor write fails, the
         // resend carries the same stable turn ids and the server skips what it already stored.
         await AdvanceCursorsAsync(captured.Captures, ct);
-        return true;
+        return ApiResult.Success;
     }
 
     private sealed record TranscriptCapture(string CursorKey, ConversationCaptureResult Result);
 
+    /// <param name="Captures">The live cursors to advance once the turns are stored; none for a
+    /// usage-only marker.</param>
     private sealed record CapturedConversation(
-        string TranscriptPath, IReadOnlyList<TranscriptCapture> Captures, IReadOnlyList<CapturedTurn> Turns);
+        ConversationMarker Marker, IReadOnlyList<TranscriptCapture> Captures, IReadOnlyList<CapturedTurn> Turns);
 
     /// <summary>Captures the new turns and records their usage on this machine before anything is
     /// sent, so a failed send never loses it; re-capture after a failure is deduplicated by the
@@ -208,34 +267,23 @@ public sealed class QueueProcessor : BackgroundService
     private async Task<CapturedConversation?> CaptureAndRecordUsageAsync(
         string sessionId, QueuedEvent evt, CancellationToken ct)
     {
-        var transcriptPath = ReadTranscriptPath(evt.PayloadJson);
-        if (string.IsNullOrEmpty(transcriptPath))
+        if (ConversationMarker.Parse(evt.PayloadJson) is not { } marker)
+        {
+            _logger.LogDebug("ConversationTurn marker names no transcript, skipping");
             return null;
+        }
 
-        var captures = await CaptureTranscriptsAsync(sessionId, transcriptPath, ct);
+        var captures = await CaptureTranscriptsAsync(sessionId, marker, ct);
         // The server numbers turns in arrival order, so interleave subagent work with the parent
         // conversation by time. OrderBy is stable: same-timestamp turns keep transcript order.
         var turns = captures
             .SelectMany(c => c.Result.Turns)
+            .Where(t => marker.From is not { } from || (t.Timestamp is { } ts && ToUtc(ts) >= from))
             .OrderBy(t => t.Timestamp ?? DateTime.MaxValue)
             .ToList();
 
         await _usageStore.RecordTurnsAsync(sessionId, turns, ct);
-        return new CapturedConversation(transcriptPath, captures, turns);
-    }
-
-    private string? ReadTranscriptPath(string payloadJson)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            return doc.RootElement.TryGetProperty("transcriptPath", out var tp) ? tp.GetString() : null;
-        }
-        catch (JsonException)
-        {
-            _logger.LogDebug("Malformed ConversationTurn marker payload, skipping");
-            return null;
-        }
+        return new CapturedConversation(marker, marker.UsageOnly ? [] : captures, turns);
     }
 
     private async Task AdvanceCursorsAsync(IEnumerable<TranscriptCapture> captures, CancellationToken ct)
@@ -246,93 +294,30 @@ public sealed class QueueProcessor : BackgroundService
 
     /// <summary>Reads the session transcript plus every subagent transcript beside it. A subagent's
     /// real usage — with its input/output/cache split and its own model — is only in its own file;
-    /// the parent's completion notice reports just the subagent's final context size.</summary>
+    /// the parent's completion notice reports just the subagent's final context size. A usage-only
+    /// marker reads every file from line 0 with a throwaway cursor: the live cursors belong to live
+    /// capture, which it must neither skip nor move.</summary>
     private async Task<List<TranscriptCapture>> CaptureTranscriptsAsync(
-        string sessionId, string transcriptPath, CancellationToken ct)
+        string sessionId, ConversationMarker marker, CancellationToken ct)
     {
-        var mainCursor = await _cursorStore.GetAsync(sessionId, ct);
-        var captures = new List<TranscriptCapture>
+        async Task<TranscriptCapture> CaptureAsync(string cursorKey, string path, bool asSubagent)
         {
-            new(sessionId, await _conversationCapture.CaptureFromFileAsync(transcriptPath, mainCursor, false, ct))
-        };
+            var cursor = marker.UsageOnly ? 0 : await _cursorStore.GetAsync(cursorKey, ct);
+            return new(cursorKey, await _conversationCapture.CaptureFromFileAsync(path, cursor, asSubagent, ct));
+        }
 
-        foreach (var subagentPath in _conversationCapture.FindSubagentTranscripts(transcriptPath))
+        var captures = new List<TranscriptCapture> { await CaptureAsync(sessionId, marker.TranscriptPath, false) };
+        foreach (var subagentPath in _conversationCapture.FindSubagentTranscripts(marker.TranscriptPath))
         {
             var cursorKey = $"{sessionId}/{Path.GetFileNameWithoutExtension(subagentPath)}";
-            var cursor = await _cursorStore.GetAsync(cursorKey, ct);
-            captures.Add(new(cursorKey, await _conversationCapture.CaptureFromFileAsync(subagentPath, cursor, true, ct)));
+            captures.Add(await CaptureAsync(cursorKey, subagentPath, true));
         }
 
         return captures;
     }
 
-    private string BuildConversationPayload(string sessionId, string? sessionTitle, IReadOnlyList<CapturedTurn> turns) =>
-        JsonSerializer.Serialize(new
-        {
-            sessionId,
-            sessionTitle,
-            conversationTurns = turns.Select((t, i) => new
-            {
-                id = StableTurnId.From(t.SourceId),
-                turnIndex = i,
-                role = t.Role,
-                content = t.Content is { Length: > MaxTurnContentLength } longText ? longText[..MaxTurnContentLength] : t.Content,
-                tokenCount = TotalTokens(t) is var total && total > 0 ? total : (int?)null,
-                inputTokens = t.InputTokens,
-                outputTokens = t.OutputTokens,
-                cacheCreationInputTokens = t.CacheCreationInputTokens,
-                cacheReadInputTokens = t.CacheReadInputTokens,
-                model = t.Model,
-                gitBranch = ClampLabel(t.GitBranch),
-                subagentName = ClampLabel(t.SubagentName),
-                // Computed from the RAW (pre-redaction) content — by the time this payload is
-                // redacted, the secret itself is gone, so this flag is the only signal the server
-                // ever gets that one was present.
-                containsRedactedSecret = t.Content is not null && _redactor.ContainsSensitive(t.Content),
-                timestamp = (t.Timestamp ?? DateTime.UtcNow).ToString("o"),
-                isDecision = false
-            }),
-            toolExecutions = Array.Empty<object>(),
-            fileChanges = Array.Empty<object>()
-        });
-
-    // The server rejects longer values, and a rejected batch would be retried forever.
-    private const int MaxLabelLength = 255;
-
-    private static string? ClampLabel(string? value) =>
-        value is { Length: > MaxLabelLength } ? value[..MaxLabelLength] : value;
-
-    // Cache reads and writes are tokens the model processed too — usually most of them.
-    private static int TotalTokens(CapturedTurn t) =>
-        (t.InputTokens ?? 0) + (t.OutputTokens ?? 0) + (t.CacheCreationInputTokens ?? 0) + (t.CacheReadInputTokens ?? 0);
-
-    // Claude Code stores a `/rename`d session title in a sidecar file next to the transcript
-    // (<projects-dir>/<encoded-repo>/<session-id>/custom-title.json), not in the transcript
-    // itself — read it fresh on every capture so a mid-session rename shows up on the dashboard
-    // instead of the raw session GUID.
-    private static async Task<string?> ResolveSessionTitleAsync(string transcriptPath, CancellationToken ct)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(transcriptPath);
-            if (dir is null)
-                return null;
-
-            var sessionFolder = Path.GetFileNameWithoutExtension(transcriptPath);
-            var titlePath = Path.Combine(dir, sessionFolder, "custom-title.json");
-            if (!File.Exists(titlePath))
-                return null;
-
-            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(titlePath, ct));
-            return doc.RootElement.TryGetProperty("customTitle", out var titleProp)
-                ? titleProp.GetString()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
+    private static DateTime ToUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
 
     private async Task CheckGitFallbackAsync(string sessionId, CancellationToken ct)
     {
@@ -350,7 +335,7 @@ public sealed class QueueProcessor : BackgroundService
             unshipped, _config.GitFallbackThreshold);
 
         var allUnshipped = await _queue.DequeueBatchAsync(unshipped);
-        var repoPath = await GetRepoPathForSessionAsync(sessionId);
+        var repoPath = await SessionMappings.FindRepoPathAsync(_config.OverwatchDir, sessionId);
 
         if (repoPath is not null)
         {
@@ -358,7 +343,7 @@ public sealed class QueueProcessor : BackgroundService
             if (written)
             {
                 await _gitFallback.AddGitTrailerAsync(sessionId, repoPath, ct);
-                await _queue.MarkShippedAsync(allUnshipped.Select(e => e.Id).ToList());
+                await _queue.MarkShippedAsync(Ids(allUnshipped));
             }
         }
     }
@@ -380,37 +365,4 @@ public sealed class QueueProcessor : BackgroundService
 
     private Task ImportFallbackEventsAsync() =>
         FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger, TimeProvider.System);
-
-    /// <summary>
-    /// Looks up the repo path for a given (our) session ID by scanning the per-Claude-session
-    /// mapping files under ~/.overwatch/sessions/ (written by overwatch-session-start.ps1) —
-    /// there's no direct sessionId -> file lookup since those files are keyed by Claude Code's
-    /// own session_id, not ours.
-    /// </summary>
-    private async Task<string?> GetRepoPathForSessionAsync(string sessionId)
-    {
-        try
-        {
-            var sessionsDir = Path.Combine(_config.OverwatchDir, "sessions");
-            if (!Directory.Exists(sessionsDir))
-                return null;
-
-            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.json"))
-            {
-                var json = await File.ReadAllTextAsync(file);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("ourSessionId", out var idProp) &&
-                    idProp.GetString() == sessionId &&
-                    doc.RootElement.TryGetProperty("repoPath", out var repoProp))
-                {
-                    return repoProp.GetString();
-                }
-            }
-        }
-        catch
-        {
-            // best effort
-        }
-        return null;
-    }
 }

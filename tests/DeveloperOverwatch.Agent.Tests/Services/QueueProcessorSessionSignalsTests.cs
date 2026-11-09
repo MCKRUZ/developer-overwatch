@@ -23,7 +23,7 @@ public sealed class QueueProcessorSessionSignalsTests
     public QueueProcessorSessionSignalsTests()
     {
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => { _sentPayloads.Add(ci.ArgAt<string>(1)); return true; });
+            .Returns(ci => { _sentPayloads.Add(ci.ArgAt<string>(1)); return ApiResult.Success; });
     }
 
     private QueueProcessor CreateSut(AgentMode mode)
@@ -41,7 +41,8 @@ public sealed class QueueProcessorSessionSignalsTests
         return new QueueProcessor(
             _queue, _api, redactor, Substitute.For<IGitFallbackWriter>(), Substitute.For<IConversationCapture>(),
             Substitute.For<IConversationCursorStore>(), Substitute.For<IGitReader>(),
-            Substitute.For<IUsageStore>(), config, Substitute.For<ILogger<QueueProcessor>>());
+            Substitute.For<IUsageStore>(), config, QueueProcessorLifecycleTests.Fixed(mode),
+            Substitute.For<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), Substitute.For<ILogger<QueueProcessor>>());
     }
 
     private static QueuedEvent Event(EventType type, string payload, DateTime createdAt) => new()
@@ -107,6 +108,17 @@ public sealed class QueueProcessorSessionSignalsTests
         SignalsPayload().GetProperty("toolFailures").GetArrayLength().Should().Be(0);
     }
 
+    // The server rejects a tool failure without an id, and uses it to drop a resent failure.
+    [Fact]
+    public async Task Pilot_ToolFailed_CarriesTheQueuedEventId()
+    {
+        var failed = Event(EventType.ToolFailed, $"{{\"toolName\":\"Bash\",\"at\":\"{T1:o}\"}}", T1);
+
+        await RunOneTickAsync(AgentMode.Pilot, failed);
+
+        SignalsPayload().GetProperty("toolFailures")[0].GetProperty("id").GetString().Should().Be(failed.Id);
+    }
+
     [Fact]
     public async Task Pilot_StopMarkerCarryingAt_IsIdleAtThatTime()
     {
@@ -120,7 +132,11 @@ public sealed class QueueProcessorSessionSignalsTests
     public async Task Pilot_EarlierEventInGroupFails_ToolFailuresNotSentAndNothingShipped()
     {
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => { _sentPayloads.Add(ci.ArgAt<string>(1)); return !ci.ArgAt<string>(1).Contains("\"tool\""); });
+            .Returns(ci =>
+            {
+                _sentPayloads.Add(ci.ArgAt<string>(1));
+                return ci.ArgAt<string>(1).Contains("\"tool\"") ? ApiResult.Failed : ApiResult.Success;
+            });
 
         await RunOneTickAsync(AgentMode.Pilot,
             Event(EventType.ToolExecution, "{\"tool\":\"read\"}", T1),

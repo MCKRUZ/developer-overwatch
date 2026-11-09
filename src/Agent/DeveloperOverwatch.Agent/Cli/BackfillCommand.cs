@@ -65,6 +65,7 @@ public static class BackfillCommand
         output.WriteLine();
         output.WriteLine(Row("Transcripts scanned", summary.FilesScanned.ToString(Invariant)));
         output.WriteLine(Row("Skipped, too old", summary.FilesTooOld.ToString(Invariant)));
+        output.WriteLine(Row("Skipped, unreadable", summary.FilesUnreadable.ToString(Invariant)));
         output.WriteLine(Row("Sessions", summary.Sessions.ToString(Invariant)));
         output.WriteLine(Row("Responses recorded", string.Format(Invariant, "{0} new, {1} already present",
             summary.ResponsesAdded, summary.ResponsesAlreadyPresent)));

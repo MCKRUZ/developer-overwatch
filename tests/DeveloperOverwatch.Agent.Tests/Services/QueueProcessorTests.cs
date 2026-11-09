@@ -44,7 +44,8 @@ public sealed class QueueProcessorTests
         var logger = Substitute.For<ILogger<QueueProcessor>>();
         _sut = new QueueProcessor(
             _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _gitRemote,
-            Substitute.For<IUsageStore>(), _config, logger);
+            Substitute.For<IUsageStore>(), _config, QueueProcessorLifecycleTests.Fixed(_config.Mode),
+            Substitute.For<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), logger);
     }
 
     private readonly IGitReader _gitRemote;
@@ -80,7 +81,7 @@ public sealed class QueueProcessorTests
         _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(batch, []);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -118,7 +119,7 @@ public sealed class QueueProcessorTests
         _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(false);
+            .Returns(ApiResult.Failed);
         _queue.GetUnshippedCountAsync(Arg.Any<CancellationToken>())
             .Returns(1);
 
@@ -140,7 +141,7 @@ public sealed class QueueProcessorTests
             .Returns(new List<QueuedEvent> { evt }, []);
         _redactor.Redact(rawPayload).Returns(redactedPayload);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -158,7 +159,7 @@ public sealed class QueueProcessorTests
         _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -175,7 +176,7 @@ public sealed class QueueProcessorTests
         _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _api.SendSessionEndAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -195,7 +196,7 @@ public sealed class QueueProcessorTests
         _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt1, evt2, evt3 }, []);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -249,7 +250,7 @@ public sealed class QueueProcessorTests
                 .Returns(new ConversationCaptureResult(
                     [new CapturedTurn("uuid:u-1", "user", "hello", DateTime.UtcNow)], 1));
             _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-                .Returns(true);
+                .Returns(ApiResult.Success);
 
             await RunOneTickAsync();
 
@@ -282,7 +283,7 @@ public sealed class QueueProcessorTests
                 .Returns(new ConversationCaptureResult(
                     [new CapturedTurn("uuid:u-1", "user", "hello", DateTime.UtcNow)], 1));
             _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-                .Returns(true);
+                .Returns(ApiResult.Success);
 
             await RunOneTickAsync();
 
@@ -326,7 +327,7 @@ public sealed class QueueProcessorTests
                 [new CapturedTurn("msg:msg_S1", "subagent", null, t0.AddSeconds(1), GitBranch: "feat/meter", SubagentName: "Explore")], 3));
         string? payload = null;
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -340,7 +341,7 @@ public sealed class QueueProcessorTests
         _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { CreateEvent(type: EventType.SessionStart, payload: payload) }, []);
         _api.SendSessionStartAsync(Arg.Do<string>(p => _sentStart = p), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
     }
 
     private string? _sentStart;
@@ -413,7 +414,7 @@ public sealed class QueueProcessorTests
                  new CapturedTurn("msg:msg_B", "assistant", "there", DateTime.UtcNow)], 2));
         var payloads = new List<string>();
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payloads.Add(p); }), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -437,7 +438,7 @@ public sealed class QueueProcessorTests
                     InputTokens: 3, OutputTokens: 50, CacheCreationInputTokens: 400, CacheReadInputTokens: 9000)], 1));
         string? payload = null;
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -460,7 +461,7 @@ public sealed class QueueProcessorTests
                 [new CapturedTurn("msg:msg_S1", "subagent", null, DateTime.UtcNow, OutputTokens: 30, Model: "claude-haiku-5-5")], 17));
         string? payload = null;
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 
@@ -482,11 +483,53 @@ public sealed class QueueProcessorTests
         _conversationCapture.CaptureFromFileAsync(subagentPath, Arg.Any<int>(), true, Arg.Any<CancellationToken>())
             .Returns(new ConversationCaptureResult([new CapturedTurn("msg:msg_S1", "subagent", null, DateTime.UtcNow)], 17));
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(false);
+            .Returns(ApiResult.Failed);
 
         await RunOneTickAsync();
 
         await _cursorStore.DidNotReceive().SetAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // Backfill's marker ships usage for its --days window only: never conversation text, and never by
+    // reading or moving the live cursors, which belong to live capture.
+    [Fact]
+    public async Task UsageOnlyMarker_ShipsTurnsSinceFromWithoutContent_AndLeavesLiveCursorsAlone()
+    {
+        const string transcriptPath = "C:/nowhere/backfilled.jsonl";
+        const string subagentPath = "C:/nowhere/backfilled/subagents/agent-a1.jsonl";
+        var from = new DateTime(2026, 11, 2, 0, 0, 0, DateTimeKind.Utc);
+        var marker = CreateEvent(type: EventType.ConversationTurn, payload: JsonSerializer.Serialize(
+            new { transcriptPath, usageOnly = true, from = from.ToString("o") }));
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { marker }, []);
+        _cursorStore.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(5);
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, 0, false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:old", "assistant", "before the window", from.AddDays(-1), InputTokens: 7),
+                 new CapturedTurn("msg:new", "assistant", "my token=abc12345678", from.AddHours(1),
+                     InputTokens: 10, OutputTokens: 2, Model: "claude-opus-5-5", GitBranch: "main")], 9));
+        _conversationCapture.FindSubagentTranscripts(transcriptPath).Returns([subagentPath]);
+        _conversationCapture.CaptureFromFileAsync(subagentPath, 0, true, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:sub", "subagent", "digging", from.AddHours(2), SubagentName: "Explore")], 3));
+        _redactor.ContainsSensitive(Arg.Any<string>()).Returns(true);
+        string? payload = null;
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
+            .Returns(ApiResult.Success);
+
+        await RunOneTickAsync();
+
+        var turns = TurnsIn(payload!);
+        turns.Select(t => t.GetProperty("timestamp").GetDateTime().ToUniversalTime())
+            .Should().Equal(from.AddHours(1), from.AddHours(2));
+        turns.Should().OnlyContain(t => t.GetProperty("content").ValueKind == JsonValueKind.Null
+                                        && !t.GetProperty("containsRedactedSecret").GetBoolean());
+        turns[0].GetProperty("model").GetString().Should().Be("claude-opus-5-5");
+        turns[0].GetProperty("inputTokens").GetInt32().Should().Be(10);
+        turns[0].GetProperty("gitBranch").GetString().Should().Be("main");
+        turns[1].GetProperty("subagentName").GetString().Should().Be("Explore");
+        await _cursorStore.DidNotReceiveWithAnyArgs().GetAsync(default!, default);
+        await _cursorStore.DidNotReceiveWithAnyArgs().SetAsync(default!, default, default);
     }
 
     [Fact]
@@ -509,7 +552,7 @@ public sealed class QueueProcessorTests
                 [new CapturedTurn("msg:msg_S1", "subagent", "digging", t0.AddMinutes(2))], 3));
         string? payload = null;
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(ApiResult.Success);
 
         await RunOneTickAsync();
 

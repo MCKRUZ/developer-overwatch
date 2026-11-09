@@ -95,14 +95,14 @@ public sealed partial class GitFallbackWriter : IGitFallbackWriter
                 return false;
             }
 
-            var commitHash = await RunGitAsync(canonicalRepoPath, "log -1 --format=%H", ct);
+            var commitHash = await RunGitAsync(canonicalRepoPath, ["log", "-1", "--format=%H"], ct);
             if (string.IsNullOrWhiteSpace(commitHash))
             {
                 _logger.LogDebug("No recent commit found in {RepoPath}", canonicalRepoPath);
                 return false;
             }
 
-            var result = await RunGitAsync(canonicalRepoPath, $"notes append -m \"Claude-Session: {sessionId}\" HEAD", ct);
+            var result = await RunGitAsync(canonicalRepoPath, ["notes", "append", "-m", $"Claude-Session: {sessionId}", "HEAD"], ct);
             if (result is null)
                 return false;
 
@@ -138,23 +138,24 @@ public sealed partial class GitFallbackWriter : IGitFallbackWriter
         return true;
     }
 
-    private async Task<string?> RunGitAsync(string repoPath, string arguments, CancellationToken ct)
+    private async Task<string?> RunGitAsync(string repoPath, IReadOnlyList<string> arguments, CancellationToken ct)
     {
         try
         {
-            using var process = new Process
+            // ArgumentList, not a hand-quoted string: a path or session id holding a quote cannot add arguments.
+            var startInfo = new ProcessStartInfo("git")
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    Arguments = $"-C \"{repoPath}\" {arguments}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
+            startInfo.ArgumentList.Add("-C");
+            startInfo.ArgumentList.Add(repoPath);
+            foreach (var argument in arguments)
+                startInfo.ArgumentList.Add(argument);
 
+            using var process = new Process { StartInfo = startInfo };
             process.Start();
 
             var output = await process.StandardOutput.ReadToEndAsync(ct);
@@ -167,7 +168,7 @@ public sealed partial class GitFallbackWriter : IGitFallbackWriter
             if (process.ExitCode != 0)
             {
                 _logger.LogWarning("git {Arguments} failed (exit {ExitCode}): {Error}",
-                    arguments, process.ExitCode, error.Trim());
+                    string.Join(' ', arguments), process.ExitCode, error.Trim());
                 return null;
             }
 

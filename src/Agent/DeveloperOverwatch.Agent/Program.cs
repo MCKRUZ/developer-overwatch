@@ -19,6 +19,7 @@ var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices(services =>
     {
         services.AddSingleton(config);
+        services.AddSingleton<IAgentModeSource>(_ => new ConfigFileModeSource(config.ConfigPath));
         services.AddSingleton<IEventQueue>(_ => new EventQueue(config.QueueDbPath));
         services.AddSingleton<IUsageStore>(_ => new UsageStore(config.QueueDbPath));
         services.AddSingleton<IPrivacyRedactor>(_ => new PrivacyRedactor(config.RedactionPatterns));

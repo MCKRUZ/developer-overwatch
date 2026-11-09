@@ -9,6 +9,17 @@ public interface IEventQueue
     Task EnqueueAsync(QueuedEvent @event, CancellationToken ct = default);
     Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default);
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
+
+    /// <summary>Never dequeued again: the server does not know the session. Purged like shipped events.</summary>
+    Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
+
+    /// <summary>Handled by local mode but kept for the server: not dequeued until
+    /// <see cref="ReleaseHeldAsync"/>, and purged like unshipped events.</summary>
+    Task MarkHeldAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
+
+    /// <summary>Makes every held event dequeueable again; called when the agent starts in pilot mode.</summary>
+    Task ReleaseHeldAsync(CancellationToken ct = default);
+
     Task IncrementRetryAsync(string id, CancellationToken ct = default);
     Task<int> GetUnshippedCountAsync(CancellationToken ct = default);
     Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default);
@@ -108,7 +119,31 @@ public sealed class EventQueue : IEventQueue, IDisposable
         return Task.FromResult<IReadOnlyList<QueuedEvent>>(results);
     }
 
-    public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default)
+    // Values of the `shipped` column. Only Pending is ever dequeued.
+    private const int Pending = 0;
+    private const int Shipped = 1;
+    private const int Dead = 2;
+    private const int Held = 3;
+
+    public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Shipped);
+
+    public Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Dead);
+
+    public Task MarkHeldAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Held);
+
+    public Task ReleaseHeldAsync(CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = $"UPDATE events SET shipped = {Pending} WHERE shipped = {Held}";
+            cmd.ExecuteNonQuery();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task SetStateAsync(IReadOnlyList<string> ids, int state)
     {
         if (ids.Count == 0)
             return Task.CompletedTask;
@@ -119,7 +154,8 @@ public sealed class EventQueue : IEventQueue, IDisposable
 
             using var cmd = _connection.CreateCommand();
             cmd.Transaction = transaction;
-            cmd.CommandText = "UPDATE events SET shipped = 1 WHERE id = $id";
+            cmd.CommandText = "UPDATE events SET shipped = $state WHERE id = $id";
+            cmd.Parameters.AddWithValue("$state", state);
             var param = cmd.Parameters.Add("$id", SqliteType.Text);
             cmd.Prepare();
 
@@ -160,20 +196,21 @@ public sealed class EventQueue : IEventQueue, IDisposable
     }
 
     public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
-        PurgeAsync(shipped: true, olderThan);
+        PurgeAsync(Shipped, Dead, olderThan);
 
     public Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
-        PurgeAsync(shipped: false, olderThan);
+        PurgeAsync(Pending, Held, olderThan);
 
-    private Task PurgeAsync(bool shipped, TimeSpan olderThan)
+    private Task PurgeAsync(int state, int otherState, TimeSpan olderThan)
     {
         var threshold = _time.GetUtcNow().UtcDateTime.Subtract(olderThan).ToString("o");
 
         lock (_lock)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = "DELETE FROM events WHERE shipped = $shipped AND created_at < $threshold";
-            cmd.Parameters.AddWithValue("$shipped", shipped ? 1 : 0);
+            cmd.CommandText = "DELETE FROM events WHERE shipped IN ($state, $otherState) AND created_at < $threshold";
+            cmd.Parameters.AddWithValue("$state", state);
+            cmd.Parameters.AddWithValue("$otherState", otherState);
             cmd.Parameters.AddWithValue("$threshold", threshold);
             cmd.ExecuteNonQuery();
         }

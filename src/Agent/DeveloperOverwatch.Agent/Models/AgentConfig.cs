@@ -28,6 +28,9 @@ public sealed class AgentConfig
     public static string DefaultOverwatchDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".overwatch");
 
+    /// <summary>Never read from config.json: the hooks always write to ~/.overwatch, so an agent pointed
+    /// elsewhere would ignore every hook event. Settable in code, for tests.</summary>
+    [JsonIgnore]
     public string OverwatchDir { get; init; } = DefaultOverwatchDir;
 
     public string QueueDbPath => Path.Combine(OverwatchDir, "queue.db");

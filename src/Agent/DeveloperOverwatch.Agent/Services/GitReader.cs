@@ -14,11 +14,21 @@ public interface IGitReader
     /// <paramref name="repoPath"/>; the global value when that folder is null or gone. Null when unset,
     /// git is missing, or git does not answer in time.</summary>
     Task<string?> GetConfigValueAsync(string? repoPath, string key, CancellationToken ct);
+
+    /// <summary>The root of the repository containing <paramref name="path"/>, as
+    /// <c>git rev-parse --show-toplevel</c> prints it (the form the session-start hook sends). Null when
+    /// the folder is in no repository, git is missing, or git does not answer in time.</summary>
+    Task<string?> GetTopLevelAsync(string path, CancellationToken ct);
 }
 
 public sealed class GitReader : IGitReader
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(3);
+
+    public Task<string?> GetTopLevelAsync(string path, CancellationToken ct) =>
+        Directory.Exists(path)
+            ? RunGitAsync(new[] { "-C", path, "rev-parse", "--show-toplevel" }, ct)
+            : Task.FromResult<string?>(null);
 
     public Task<string?> GetOriginUrlAsync(string repoPath, CancellationToken ct) =>
         RunGitAsync(new[] { "-C", repoPath, "remote", "get-url", "origin" }, ct);

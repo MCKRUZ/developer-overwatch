@@ -8,8 +8,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// tool calls. Activity comes from the hooks' own ActivityChanged events and is also derived: a
 /// ToolExecution means tools are running (active), and the Stop marker (ConversationTurn) means the
 /// turn ended and the user has the ball (idle). The server keeps the newest state, so order and
-/// duplicates do not matter here. Tool failures have no ids, so the caller must send this payload
-/// once per event, which is why it ships last and only when everything before it succeeded.</summary>
+/// duplicates do not matter here. Each tool failure carries its queued event's id, which the server
+/// requires; it still ships last, and only when everything before it in the group succeeded.</summary>
 internal static class SessionSignals
 {
     private const int MaxToolNameLength = 255;
@@ -36,13 +36,14 @@ internal static class SessionSignals
         {
             sessionId,
             activityEvents = activityEvents.Select(a => new { state = a.State, at = Iso(a.At) }),
-            toolFailures = toolFailures.Select(f => new { toolName = f.ToolName, at = Iso(f.At) })
+            toolFailures = toolFailures.Select(f => new { id = f.Id, toolName = f.ToolName, at = Iso(f.At) })
         });
     }
 
     private sealed record ActivityEvent(string State, DateTime At);
 
-    private sealed record ToolFailure(string ToolName, DateTime At);
+    /// <param name="Id">The hook's event GUID, which the server requires and uses to drop a resend.</param>
+    private sealed record ToolFailure(string Id, string ToolName, DateTime At);
 
     private static ActivityEvent? ToActivity(QueuedEvent evt) => evt.EventType switch
     {
@@ -65,7 +66,7 @@ internal static class SessionSignals
             || n.GetString() is not { Length: > 0 } name)
             return null;
 
-        return new ToolFailure(name.Length > MaxToolNameLength ? name[..MaxToolNameLength] : name, ReadAt(p, evt));
+        return new ToolFailure(evt.Id, name.Length > MaxToolNameLength ? name[..MaxToolNameLength] : name, ReadAt(p, evt));
     }
 
     private static JsonElement? ReadPayload(QueuedEvent evt)

@@ -165,8 +165,10 @@ public sealed class UsageCommandTests : IDisposable
     {
         var path = Path.Combine(_dir, "config.json");
         var extra = sections.Length == 0 ? "" : ", " + sections;
-        File.WriteAllText(path, $$"""{ "mode": "Local", "overwatchDir": {{JsonSerializer.Serialize(_dir)}}{{extra}} }""");
-        return AgentConfig.Load(path);
+        File.WriteAllText(path, $$"""{ "mode": "Local"{{extra}} }""");
+        // config.json cannot move the agent's folder, so the test points it at the temp dir in code.
+        var loaded = AgentConfig.Load(path);
+        return new AgentConfig { Mode = loaded.Mode, Pricing = loaded.Pricing, Budget = loaded.Budget, OverwatchDir = _dir };
     }
 
     private async Task<(int Exit, string Report, string Error)> RunAsync(AgentConfig config)

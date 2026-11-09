@@ -8,6 +8,15 @@ namespace DeveloperOverwatch.Agent.Tests.Services;
 // spelling of the same remote must collapse to one key, and no credential may survive.
 public sealed class ProjectKeyTests
 {
+    // A '@' left after normalization is part of a credential (here, a password containing '/'), and the
+    // server rejects any key containing one, so such a key falls back to the folder name or is null.
+    [Theory]
+    [InlineData("https://user:ab/cd@host/x", "C:/repos/widget", "widget")]
+    [InlineData("https://user:ab/cd@host/x", null, null)]
+    [InlineData(null, "C:/repos/john@work", null)]
+    public void From_KeyContainingAt_IsNeverReturned(string? remote, string? repoPath, string? expected) =>
+        ProjectKey.From(remote, repoPath).Should().Be(expected);
+
     [Theory]
     [InlineData("https://github.com/acme/widget.git", "github.com/acme/widget")]
     [InlineData("https://github.com/acme/widget", "github.com/acme/widget")]

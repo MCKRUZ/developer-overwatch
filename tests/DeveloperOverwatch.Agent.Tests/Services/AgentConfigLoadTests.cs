@@ -16,6 +16,16 @@ public sealed class AgentConfigLoadTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { /* best-effort cleanup */ }
     }
 
+    // The hooks always write to ~/.overwatch, so a config that moved the agent elsewhere would make it
+    // ignore every hook event.
+    [Fact]
+    public void Load_OverwatchDirKey_IsIgnored()
+    {
+        File.WriteAllText(ConfigPath, """{"mode":"Pilot","overwatchDir":"C:/somewhere-else"}""");
+
+        AgentConfig.Load(ConfigPath).OverwatchDir.Should().Be(AgentConfig.DefaultOverwatchDir);
+    }
+
     // A machine nobody enrolled has no config file; its usage must stay on the machine.
     [Fact]
     public void Load_NoConfigFile_IsLocal() =>

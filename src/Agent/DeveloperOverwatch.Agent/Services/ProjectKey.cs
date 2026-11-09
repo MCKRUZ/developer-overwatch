@@ -10,7 +10,11 @@ namespace DeveloperOverwatch.Agent.Services;
 public static partial class ProjectKey
 {
     public static string? From(string? remoteUrl, string? repoPath) =>
-        FromRemote(remoteUrl) ?? FolderName(repoPath);
+        WithoutAt(FromRemote(remoteUrl)) ?? WithoutAt(FolderName(repoPath));
+
+    // A '@' that survives normalization is part of a credential (a password containing '/' splits the URL
+    // early), and the server rejects any key containing one.
+    private static string? WithoutAt(string? key) => key is not null && key.Contains('@') ? null : key;
 
     [GeneratedRegex("^[a-z][a-z0-9+.-]*://", RegexOptions.IgnoreCase)]
     private static partial Regex Scheme();

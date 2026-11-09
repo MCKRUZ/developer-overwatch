@@ -69,8 +69,8 @@ public sealed class QueueProcessorUsageTests : IDisposable
     public async Task PilotMode_SendFails_StillRecordsUsageLocally()
     {
         var api = Substitute.For<IApiClient>();
-        api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(true);
-        api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
+        api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
+        api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Failed);
         await SeedSessionAsync();
 
         var sut = CreateSut(AgentMode.Pilot, api);
@@ -99,6 +99,8 @@ public sealed class QueueProcessorUsageTests : IDisposable
                 BatchSize = 500,
                 GitFallbackThreshold = 100
             },
+            QueueProcessorLifecycleTests.Fixed(mode),
+            Substitute.For<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             Substitute.For<ILogger<QueueProcessor>>());
 
     /// <summary>A SessionStart in the queue, and the Stop hook's ConversationTurn marker in the

@@ -14,8 +14,11 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
     // What overwatch-session-start.ps1 sends when git has no user.email.
     private const string UnknownDeveloperEmail = "unknown@localhost";
 
+    private readonly Dictionary<string, RepoInfo> _repos = new(StringComparer.Ordinal);
+
     private int _filesScanned;
     private int _filesTooOld;
+    private int _filesUnreadable;
     private int _sessions;
     private int _added;
     private int _alreadyPresent;
@@ -37,7 +40,7 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
         }
 
         return new BackfillSummary(
-            _filesScanned, _filesTooOld, _sessions, _added, _alreadyPresent, _parseErrors, _queued);
+            _filesScanned, _filesTooOld, _filesUnreadable, _sessions, _added, _alreadyPresent, _parseErrors, _queued);
     }
 
     private async Task ProcessTranscriptAsync(string transcript, CancellationToken ct)
@@ -49,23 +52,59 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
             return;
         }
 
-        _sessions++;
+        try
+        {
+            await ProcessRecentTranscriptAsync(transcript, ct);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A transcript or mapping file this user may not read skips that session, not the whole run.
+            _filesUnreadable++;
+        }
+    }
+
+    private async Task ProcessRecentTranscriptAsync(string transcript, CancellationToken ct)
+    {
         var claudeSessionId = Path.GetFileNameWithoutExtension(transcript);
         var header = await TranscriptHeader.ReadAsync(transcript, ct);
         var session = await BackfillSessionIds.ResolveAsync(config.OverwatchDir, claudeSessionId, ct);
+        var repo = await ResolveRepoAsync(header.Cwd, ct);
 
         // Each usage row copies its project from session_project, so the project goes in first.
-        var projectKey = await SessionStartPayload.ResolveProjectKeyAsync(
-            JsonSerializer.Serialize(new { repoPath = header.Cwd }), services.Git, ct);
-        await services.Usage.SetSessionProjectAsync(session.Id, projectKey, ct);
+        await services.Usage.SetSessionProjectAsync(session.Id, repo.ProjectKey, ct);
 
         var turns = await CaptureInWindowAsync(transcript, ct);
         var recorded = await services.Usage.RecordTurnsAsync(session.Id, turns, ct);
+        _sessions++;
         _added += recorded.Added;
         _alreadyPresent += recorded.AlreadyPresent;
 
         if (Pilot && turns.Count > 0)
-            await QueueForShippingAsync(transcript, claudeSessionId, session, header, ct);
+            await QueueForShippingAsync(transcript, claudeSessionId, session, header, repo, ct);
+    }
+
+    /// <param name="Root">The repository root, as the session-start hook sends it; null for a folder in
+    /// no repository, and then no project key is sent either, as the live hook does.</param>
+    private sealed record RepoInfo(string? Root, string? ProjectKey, string? Email, string? Name);
+
+    /// <summary>Asks git once per working folder per run: many sessions share a folder.</summary>
+    private async Task<RepoInfo> ResolveRepoAsync(string? cwd, CancellationToken ct)
+    {
+        if (_repos.TryGetValue(cwd ?? "", out var cached))
+            return cached;
+
+        var root = cwd is null ? null : await services.Git.GetTopLevelAsync(cwd, ct);
+        var projectKey = root is null
+            ? null
+            : await SessionStartPayload.ResolveProjectKeyAsync(JsonSerializer.Serialize(new { repoPath = root }), services.Git, ct);
+        var info = new RepoInfo(
+            root,
+            projectKey,
+            await services.Git.GetConfigValueAsync(cwd, "user.email", ct),
+            await services.Git.GetConfigValueAsync(cwd, "user.name", ct));
+
+        _repos[cwd ?? ""] = info;
+        return info;
     }
 
     private async Task<List<CapturedTurn>> CaptureInWindowAsync(string transcript, CancellationToken ct)
@@ -85,67 +124,69 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
         return inWindow;
     }
 
-    /// <summary>Queues what the hooks would have: a SessionStart, then a ConversationTurn marker, so the
-    /// processor ships the session through its normal path, cursors and stable turn ids included.</summary>
+    /// <summary>Queues what the hooks would have: a SessionStart, a ConversationTurn marker and a SessionEnd,
+    /// so the processor ships the session through its normal path with stable turn ids. The marker is
+    /// usage-only and starts at the cutoff, so no conversation text and nothing outside --days leaves the
+    /// machine. Live capture may already have shipped some of these turns; the server skips ids it stores.</summary>
     private async Task QueueForShippingAsync(
-        string transcript, string claudeSessionId, BackfillSession session, TranscriptHeader header, CancellationToken ct)
+        string transcript, string claudeSessionId, BackfillSession session, TranscriptHeader header, RepoInfo repo,
+        CancellationToken ct)
     {
-        // A cursor means the running agent already captured this session, so it owns shipping it.
-        if (await services.Cursors.GetAsync(session.Id, ct) > 0)
-            return;
-
         // Lets a later /resume of this Claude session reuse the id rather than start a second session.
         if (!session.Mapped)
-            await BackfillSessionIds.WriteMappingAsync(config.OverwatchDir, claudeSessionId, session.Id, header.Cwd, ct);
+            await BackfillSessionIds.WriteMappingAsync(config.OverwatchDir, claudeSessionId, session.Id, repo.Root, ct);
 
-        var start = await BuildSessionStartAsync(transcript, session.Id, header, ct);
-        // The payload overwatch-stop.ps1 queues, plus when the session was last active. The processor
-        // reads a Stop marker as "idle", dated by "at" when present; without it the session would go idle
-        // as of this backfill. CreatedAt stays now, so queue order and retention treat it as new.
-        var lastActiveAt = await TranscriptHeader.ReadLastTimestampAsync(transcript, ct)
-            ?? File.GetLastWriteTimeUtc(transcript);
+        var lastActiveAt = Iso(await TranscriptHeader.ReadLastTimestampAsync(transcript, ct)
+                               ?? File.GetLastWriteTimeUtc(transcript));
+        // The processor reads the marker as "idle", dated by "at": when the session was last active.
         var marker = JsonSerializer.Serialize(new
         {
             sessionId = session.Id,
             transcriptPath = transcript,
-            at = lastActiveAt.ToString("o", CultureInfo.InvariantCulture),
+            at = lastActiveAt,
+            usageOnly = true,
+            from = Iso(cutoffUtc),
         });
+        // The payload overwatch-session-end.ps1 queues, dated when the session was last active.
+        var end = JsonSerializer.Serialize(new { sessionId = session.Id, endedAt = lastActiveAt });
 
-        await services.Queue.EnqueueAsync(Event($"start:{claudeSessionId}", session.Id, EventType.SessionStart, start), ct);
-        await services.Queue.EnqueueAsync(Event($"turns:{claudeSessionId}", session.Id, EventType.ConversationTurn, marker), ct);
+        await services.Queue.EnqueueAsync(
+            Event($"start:{claudeSessionId}", session.Id, EventType.SessionStart, BuildSessionStart(transcript, session.Id, header, repo), 0), ct);
+        await services.Queue.EnqueueAsync(Event($"turns:{claudeSessionId}", session.Id, EventType.ConversationTurn, marker, 1), ct);
+        await services.Queue.EnqueueAsync(Event($"end:{claudeSessionId}", session.Id, EventType.SessionEnd, end, 2), ct);
         _queued++;
     }
 
     /// <summary>The payload overwatch-session-start.ps1 queues, with the repository and start time read
-    /// from the transcript rather than the live shell.</summary>
-    private async Task<string> BuildSessionStartAsync(
-        string transcript, string sessionId, TranscriptHeader header, CancellationToken ct)
-    {
-        var email = await services.Git.GetConfigValueAsync(header.Cwd, "user.email", ct);
-        var name = await services.Git.GetConfigValueAsync(header.Cwd, "user.name", ct);
-        var startedAt = header.StartedAt ?? File.GetLastWriteTimeUtc(transcript);
-
-        return JsonSerializer.Serialize(new
+    /// from the transcript rather than the live shell. <c>isBackfill</c> tells the server to fill in only
+    /// what it is missing and never reopen a session that has ended.</summary>
+    private static string BuildSessionStart(string transcript, string sessionId, TranscriptHeader header, RepoInfo repo) =>
+        JsonSerializer.Serialize(new
         {
             sessionId,
-            developerEmail = email ?? UnknownDeveloperEmail,
-            developerName = name,
-            repoPath = header.Cwd,
+            developerEmail = repo.Email ?? UnknownDeveloperEmail,
+            developerName = repo.Name,
+            repoPath = repo.Root,
             title = TranscriptHeader.ReadCustomTitle(transcript),
-            startedAt = startedAt.ToString("o", CultureInfo.InvariantCulture),
+            startedAt = Iso(header.StartedAt ?? File.GetLastWriteTimeUtc(transcript)),
+            isBackfill = true,
         });
-    }
 
     /// <summary>Ids derive from the Claude session, so running backfill again before the processor has
-    /// shipped the first copy queues nothing new (the queue ignores a duplicate id).</summary>
-    private QueuedEvent Event(string kind, string sessionId, EventType type, string payload) => new()
+    /// shipped the first copy queues nothing new (the queue ignores a duplicate id). CreatedAt is now, so
+    /// retention treats the events as new, and <paramref name="order"/> ticks later, so start, marker and
+    /// end dequeue in that order whatever their rowids.</summary>
+    private QueuedEvent Event(string kind, string sessionId, EventType type, string payload, int order) => new()
     {
         Id = StableTurnId.From($"overwatch:backfill:{kind}"),
         SessionId = sessionId,
         EventType = type,
         PayloadJson = payload,
-        CreatedAt = nowUtc,
+        CreatedAt = nowUtc.AddTicks(order),
     };
+
+    private static string Iso(DateTime value) =>
+        DateTime.SpecifyKind(ToUtc(value), DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture);
 
     private static DateTime ToUtc(DateTime value) =>
         value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
