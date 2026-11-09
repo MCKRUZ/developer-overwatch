@@ -11,6 +11,22 @@ public sealed record IngestSessionEventsCommand : IRequest<Result<int>>
     public IReadOnlyList<ConversationTurnDto> ConversationTurns { get; init; } = [];
     public IReadOnlyList<ToolExecutionDto> ToolExecutions { get; init; } = [];
     public IReadOnlyList<FileChangeDto> FileChanges { get; init; } = [];
+    public IReadOnlyList<ActivityEventDto> ActivityEvents { get; init; } = [];
+    public IReadOnlyList<ToolFailureDto> ToolFailures { get; init; } = [];
+}
+
+public sealed record ActivityEventDto
+{
+    public required ActivityState State { get; init; }
+    public required DateTime At { get; init; }
+}
+
+/// <summary>A failed tool call. No id and no error text: the Agent ships each failure once
+/// (cursor-tracked), and the server only counts it and remembers the latest tool name.</summary>
+public sealed record ToolFailureDto
+{
+    public required string ToolName { get; init; }
+    public required DateTime At { get; init; }
 }
 
 public sealed record ConversationTurnDto
@@ -28,6 +44,8 @@ public sealed record ConversationTurnDto
     public bool ContainsRedactedSecret { get; init; }
     public required DateTime Timestamp { get; init; }
     public bool IsDecision { get; init; }
+    public string? GitBranch { get; init; }
+    public string? SubagentName { get; init; }
 }
 
 public sealed record ToolExecutionDto

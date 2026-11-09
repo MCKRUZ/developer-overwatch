@@ -32,6 +32,8 @@ public sealed class IngestSessionStartCommandHandler
             existing.LastActivityAt = DateTime.UtcNow;
             if (!string.IsNullOrWhiteSpace(request.Title))
                 existing.Title = request.Title;
+            existing.MachineName ??= request.MachineName;
+            existing.ProjectKey ??= request.ProjectKey;
             await _repository.UpdateAsync(existing, cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             return Result<string>.Success(existing.Id);
@@ -46,7 +48,10 @@ public sealed class IngestSessionStartCommandHandler
             Title = request.Title,
             Status = SessionStatus.Active,
             StartedAt = request.StartedAt,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            Agent = string.IsNullOrWhiteSpace(request.Agent) ? Session.DefaultAgent : request.Agent,
+            MachineName = request.MachineName,
+            ProjectKey = request.ProjectKey
         };
 
         await _repository.AddAsync(session, cancellationToken);

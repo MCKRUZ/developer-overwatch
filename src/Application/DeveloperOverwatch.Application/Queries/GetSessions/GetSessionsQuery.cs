@@ -27,7 +27,16 @@ public sealed record SessionListItem(
     long TotalCacheReadInputTokens,
     decimal EstimatedCostUsd,
     int ViolationCount,
-    IReadOnlyDictionary<string, DailyTokenCost> DailyUsage);
+    IReadOnlyDictionary<string, DailyTokenCost> DailyUsage,
+    string Agent,
+    string? MachineName,
+    string? ProjectKey,
+    long? PeakContextTokens,
+    ActivityState? ActivityState,
+    DateTime? ActivityStateAt,
+    int ToolErrorCount,
+    string? LastToolErrorName,
+    DateTime? LastToolErrorAt);
 
 /// <summary>Token/cost totals for one calendar day (ISO "yyyy-MM-dd" key in the owning
 /// dictionary) — lets the sessions list show "what did this session cost today/on this day"

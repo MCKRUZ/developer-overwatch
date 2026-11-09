@@ -84,6 +84,10 @@ public sealed class IngestSessionEventsCommandHandler
                 session.TotalCacheReadInputTokens += t.CacheReadInputTokens ?? 0;
                 session.EstimatedCostUsd += cost;
 
+                var contextTokens = ContextTokensOf(t);
+                if (contextTokens is long context && (session.PeakContextTokens is null || context > session.PeakContextTokens))
+                    session.PeakContextTokens = context;
+
                 // The Agent is the only place that ever sees the raw secret — by the time this
                 // turn's content reaches here it's already redacted, so the server can't
                 // re-detect it. Trust the Agent's flag and create the violation directly instead
@@ -119,7 +123,10 @@ public sealed class IngestSessionEventsCommandHandler
                     PricesAsOf = _pricing.PricesAsOf,
                     ContainsRedactedSecret = t.ContainsRedactedSecret,
                     Timestamp = t.Timestamp,
-                    IsDecision = t.IsDecision
+                    IsDecision = t.IsDecision,
+                    GitBranch = t.GitBranch,
+                    SubagentName = t.SubagentName,
+                    ContextTokens = contextTokens
                 };
             }).ToList();
             await _repository.AddTurnsAsync(turns, cancellationToken);
@@ -163,11 +170,50 @@ public sealed class IngestSessionEventsCommandHandler
             totalEvents += newFileChanges.Count;
         }
 
+        totalEvents += ApplyActivity(session, request.ActivityEvents);
+        totalEvents += ApplyToolFailures(session, request.ToolFailures);
+
         if (totalEvents > 0)
             session.LastActivityAt = DateTime.UtcNow;
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return Result<int>.Success(totalEvents);
+    }
+
+    private static long? ContextTokensOf(ConversationTurnDto t) =>
+        t.InputTokens is null && t.CacheReadInputTokens is null && t.CacheCreationInputTokens is null
+            ? null
+            : (long)(t.InputTokens ?? 0) + (t.CacheReadInputTokens ?? 0) + (t.CacheCreationInputTokens ?? 0);
+
+    // Batches can arrive out of order (retries), so only a state newer than the stored one wins.
+    private static int ApplyActivity(Session session, IReadOnlyList<ActivityEventDto> events)
+    {
+        if (events.Count == 0)
+            return 0;
+
+        var latest = events.MaxBy(e => e.At)!;
+        if (session.ActivityStateAt is not null && latest.At <= session.ActivityStateAt)
+            return 0;
+
+        session.ActivityState = latest.State;
+        session.ActivityStateAt = latest.At;
+        return 1;
+    }
+
+    private static int ApplyToolFailures(Session session, IReadOnlyList<ToolFailureDto> failures)
+    {
+        if (failures.Count == 0)
+            return 0;
+
+        session.ToolErrorCount += failures.Count;
+        var latest = failures.MaxBy(f => f.At)!;
+        if (session.LastToolErrorAt is null || latest.At >= session.LastToolErrorAt)
+        {
+            session.LastToolErrorName = latest.ToolName;
+            session.LastToolErrorAt = latest.At;
+        }
+
+        return failures.Count;
     }
 }

@@ -34,4 +34,13 @@ public sealed record SessionDetail(
     int ToolExecutionCount,
     int FileChangeCount,
     IReadOnlyList<GovernanceViolation> GovernanceViolations,
-    IReadOnlyList<ArchitectAnnotation> ArchitectAnnotations);
+    IReadOnlyList<ArchitectAnnotation> ArchitectAnnotations,
+    string Agent,
+    string? MachineName,
+    string? ProjectKey,
+    long? PeakContextTokens,
+    ActivityState? ActivityState,
+    DateTime? ActivityStateAt,
+    int ToolErrorCount,
+    string? LastToolErrorName,
+    DateTime? LastToolErrorAt);

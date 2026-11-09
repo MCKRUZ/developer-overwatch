@@ -15,7 +15,18 @@ export interface SessionListItem {
   estimatedCostUsd: number;
   violationCount: number;
   dailyUsage: Record<string, DailyTokenCost>;
+  agent?: string;
+  machineName?: string;
+  projectKey?: string;
+  peakContextTokens?: number;
+  activityState?: ActivityState;
+  activityStateAt?: string;
+  toolErrorCount?: number;
+  lastToolErrorName?: string;
+  lastToolErrorAt?: string;
 }
+
+export type ActivityState = "Active" | "Waiting" | "Idle";
 
 export interface DailyTokenCost {
   inputTokens: number;
@@ -46,6 +57,15 @@ export interface SessionDetail {
   fileChangeCount: number;
   governanceViolations: GovernanceViolation[];
   architectAnnotations: ArchitectAnnotation[];
+  agent?: string;
+  machineName?: string;
+  projectKey?: string;
+  peakContextTokens?: number;
+  activityState?: ActivityState;
+  activityStateAt?: string;
+  toolErrorCount?: number;
+  lastToolErrorName?: string;
+  lastToolErrorAt?: string;
 }
 
 export interface ConversationTurn {

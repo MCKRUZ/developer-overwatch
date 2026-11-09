@@ -156,6 +156,55 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
     }
 
     [Fact]
+    public async Task StartAndEvents_WithCaptureFields_GetSessionReturnsThem()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var now = DateTime.UtcNow;
+
+        var startResponse = await _client.PostAsJsonAsync("/api/sessions/start", new
+        {
+            sessionId,
+            developerEmail = "capture@team.dev",
+            startedAt = now,
+            agent = "claude-code",
+            machineName = "build-box-7",
+            projectKey = "github.com/mckruz/overwatch"
+        });
+        startResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var eventsResponse = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", new
+        {
+            sessionId,
+            conversationTurns = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid().ToString(),
+                    role = "assistant",
+                    inputTokens = 10,
+                    cacheReadInputTokens = 4000,
+                    cacheCreationInputTokens = 90,
+                    gitBranch = "feat/meter",
+                    subagentName = "explorer",
+                    timestamp = now
+                }
+            },
+            activityEvents = new[] { new { state = "waiting", at = now } },
+            toolFailures = new[] { new { toolName = "Bash", at = now } }
+        });
+        eventsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await (await _client.GetAsync($"/api/sessions/{sessionId}")).Content.ReadAsStringAsync();
+        body.Should().Contain("\"agent\":\"claude-code\"");
+        body.Should().Contain("\"machineName\":\"build-box-7\"");
+        body.Should().Contain("\"projectKey\":\"github.com/mckruz/overwatch\"");
+        body.Should().Contain("\"peakContextTokens\":4100");
+        body.Should().Contain("\"activityState\":\"Waiting\"");
+        body.Should().Contain("\"toolErrorCount\":1");
+        body.Should().Contain("\"lastToolErrorName\":\"Bash\"");
+    }
+
+    [Fact]
     public async Task StartSession_MissingEmail_Returns400()
     {
         var cmd = new { SessionId = Guid.NewGuid().ToString(), DeveloperEmail = "", StartedAt = DateTime.UtcNow };

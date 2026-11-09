@@ -24,6 +24,20 @@ public sealed class IngestSessionEventsCommandValidator : AbstractValidator<Inge
         {
             turn.RuleFor(t => t.Id).NotEmpty();
             turn.RuleFor(t => t.Role).NotEmpty();
+            turn.RuleFor(t => t.GitBranch).MaximumLength(255);
+            turn.RuleFor(t => t.SubagentName).MaximumLength(255);
+        });
+
+        RuleForEach(x => x.ActivityEvents).ChildRules(activity =>
+        {
+            activity.RuleFor(a => a.State).IsInEnum();
+            activity.RuleFor(a => a.At).NotEmpty();
+        });
+
+        RuleForEach(x => x.ToolFailures).ChildRules(failure =>
+        {
+            failure.RuleFor(f => f.ToolName).NotEmpty().MaximumLength(255);
+            failure.RuleFor(f => f.At).NotEmpty();
         });
     }
 }

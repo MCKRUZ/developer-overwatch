@@ -11,4 +11,9 @@ public sealed record IngestSessionStartCommand : IRequest<Result<string>>
     public string? RepoPath { get; init; }
     public string? Title { get; init; }
     public required DateTime StartedAt { get; init; }
+
+    /// <summary>Which coding agent ran the session; "claude-code" when absent.</summary>
+    public string? Agent { get; init; }
+    public string? MachineName { get; init; }
+    public string? ProjectKey { get; init; }
 }
