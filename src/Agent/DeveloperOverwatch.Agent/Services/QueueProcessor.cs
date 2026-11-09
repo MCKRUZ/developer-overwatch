@@ -6,6 +6,9 @@ using Microsoft.Extensions.Logging;
 
 public sealed class QueueProcessor : BackgroundService
 {
+    /// <summary>About a minute at the default 5 s poll: long enough to ride out a half-saved file.</summary>
+    internal const int UnreadableConfigWarningPolls = 12;
+
     private static readonly TimeSpan ShippedRetention = TimeSpan.FromHours(24);
 
     // Events a machine never managed to ship are kept this long and no longer. Local usage is kept at
@@ -21,6 +24,7 @@ public sealed class QueueProcessor : BackgroundService
     private readonly SessionShipper _sessions;
 
     private int _consecutiveFailures;
+    private int _unreadableConfigPolls;
 
     public QueueProcessor(
         IEventQueue queue,
@@ -42,8 +46,16 @@ public sealed class QueueProcessor : BackgroundService
         _lifetime = lifetime;
         _logger = logger;
 
-        var conversations = new ConversationShipper(api, redactor, conversationCapture, cursorStore, usageStore, logger);
+        var conversations = new ConversationShipper(
+            api, redactor, conversationCapture, cursorStore, usageStore, logger, config.PilotSince);
         _sessions = new SessionShipper(queue, api, redactor, gitRemote, usageStore, conversations, logger);
+    }
+
+    internal enum PollResult
+    {
+        Continue,
+        BackOff,
+        Stop
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -58,22 +70,13 @@ public sealed class QueueProcessor : BackgroundService
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            var mode = ReadMode();
-            if (mode is null)
-                continue;
-            if (mode != _config.Mode)
-            {
-                _logger.LogWarning("Agent mode changed from {Old} to {New}; stopping so a restart picks up the new config",
-                    _config.Mode, mode);
-                _lifetime.StopApplication();
-                break;
-            }
-
             try
             {
-                await ImportFallbackEventsAsync();
-                await ProcessBatchAsync(stoppingToken);
-                await PurgeOldEventsAsync();
+                var result = await PollOnceAsync(stoppingToken);
+                if (result == PollResult.Stop)
+                    break;
+                if (result == PollResult.BackOff)
+                    await ApplyBackoffAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -86,31 +89,73 @@ public sealed class QueueProcessor : BackgroundService
         }
     }
 
+    /// <summary>One poll: checks the mode, imports the hooks' fallback file, delivers one batch and purges.
+    /// Exceptions propagate to the caller.</summary>
+    internal async Task<PollResult> PollOnceAsync(CancellationToken ct)
+    {
+        var mode = ReadMode();
+        if (mode is null)
+            return PollResult.Continue;
+        if (mode != _config.Mode)
+        {
+            _logger.LogWarning("Agent mode changed from {Old} to {New}; stopping so a restart picks up the new config",
+                _config.Mode, mode);
+            _lifetime.StopApplication();
+            return PollResult.Stop;
+        }
+
+        await FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger, TimeProvider.System);
+        var anyTransient = await ProcessBatchAsync(ct);
+        await PurgeOldEventsAsync();
+
+        // Once per poll, so one failing session never delays the others in the batch.
+        if (!anyTransient)
+        {
+            _consecutiveFailures = 0;
+            return PollResult.Continue;
+        }
+
+        _consecutiveFailures++;
+        return PollResult.BackOff;
+    }
+
     /// <summary>The mode is read fresh before every poll: a machine switched to Local must stop shipping
     /// now, not at the next logon. A change stops the agent; the session-start hook starts it again with
     /// the new config. Null when the config cannot be read right now (locked, half-saved): that poll ships
-    /// nothing, but the agent keeps running, since the file does not say the mode changed.</summary>
+    /// nothing, but the agent keeps running, since the file does not say the mode changed. A config that
+    /// stays unreadable is warned about once per outage.</summary>
     private AgentMode? ReadMode()
     {
+        AgentMode? mode = null;
         try
         {
-            if (_modeSource.CurrentMode() is { } mode)
-                return mode;
-            _logger.LogDebug("Could not parse the agent config; skipping this poll");
+            mode = _modeSource.CurrentMode();
+            if (mode is null)
+                _logger.LogDebug("Could not parse the agent config; skipping this poll");
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not read the agent mode; skipping this poll");
         }
 
+        if (mode is not null)
+        {
+            _unreadableConfigPolls = 0;
+            return mode;
+        }
+
+        if (++_unreadableConfigPolls == UnreadableConfigWarningPolls)
+            _logger.LogWarning("The agent config at {Path} has been unreadable for {Count} polls in a row; nothing ships until it can be read",
+                _config.ConfigPath, UnreadableConfigWarningPolls);
         return null;
     }
 
-    private async Task ProcessBatchAsync(CancellationToken ct)
+    /// <returns>True when something was transient, so the caller backs off.</returns>
+    private async Task<bool> ProcessBatchAsync(CancellationToken ct)
     {
         var batch = await _queue.DequeueBatchAsync(_config.BatchSize);
         if (batch.Count == 0)
-            return;
+            return false;
 
         _logger.LogDebug("Processing batch of {Count} events", batch.Count);
 
@@ -129,21 +174,18 @@ public sealed class QueueProcessor : BackgroundService
                 anyTransient = true;
         }
 
-        // Once per poll, so one failing session never delays the others in the batch.
-        if (!anyTransient)
-        {
-            _consecutiveFailures = 0;
-            return;
-        }
-
-        _consecutiveFailures++;
-        await ApplyBackoffAsync(ct);
+        return anyTransient;
     }
 
     /// <summary>The one place that decides, per event, whether it is handled on this machine or shipped.
-    /// Local mode handles every event here and sends nothing: Pilot capture starts at enrolment, and
-    /// Local-era data leaves the machine only through an explicit usage-only backfill.</summary>
-    private bool HandlesLocally(QueuedEvent evt) => _config.Mode == AgentMode.Local;
+    /// Local mode handles every event here and sends nothing. In Pilot, an event queued before enrolment
+    /// (<see cref="AgentConfig.PilotSince"/>) is handled here too, so Local-era data never ships; it leaves
+    /// the machine only through an explicit usage-only backfill. No PilotSince means no cutoff.</summary>
+    private bool HandlesLocally(QueuedEvent evt) =>
+        _config.Mode == AgentMode.Local || (_config.PilotSince is { } since && ToUtc(evt.CreatedAt) < since);
+
+    private static DateTime ToUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
 
     private async Task ApplyBackoffAsync(CancellationToken ct)
     {
@@ -159,7 +201,4 @@ public sealed class QueueProcessor : BackgroundService
         await _queue.PurgeUnshippedAsync(LocalRetention);
         await _usageStore.PurgeAsync(LocalRetention);
     }
-
-    private Task ImportFallbackEventsAsync() =>
-        FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger, TimeProvider.System);
 }

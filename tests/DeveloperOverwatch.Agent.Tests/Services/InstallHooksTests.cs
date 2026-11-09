@@ -303,6 +303,39 @@ public sealed class InstallHooksTests : IDisposable
         File.Exists(SettingsPath).Should().BeFalse("nothing after the failed write runs");
     }
 
+    // pilotSince is the enrolment cutoff: the agent never ships an event queued before it.
+    [Fact]
+    public void PilotSince_FreshPilotAndLocalToPilotWriteIt_PilotRerunKeepsIt_LocalRemovesIt()
+    {
+        if (Install("-Pilot", "-ApiUrl", ApiUrl) is not { } fresh) return;
+        fresh.ExitCode.Should().Be(0, fresh.Stderr);
+        var written = ReadJson(ConfigPath)["pilotSince"]!.GetValue<string>();
+        AgentConfig.Load(ConfigPath).PilotSince.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(2));
+
+        Install("-Pilot")!.ExitCode.Should().Be(0);
+        ReadJson(ConfigPath)["pilotSince"]!.GetValue<string>().Should().Be(written, "a re-run is not a new enrolment");
+
+        Install("-Local")!.ExitCode.Should().Be(0);
+        ReadJson(ConfigPath).ContainsKey("pilotSince").Should().BeFalse();
+
+        Install("-Pilot", "-ApiUrl", ApiUrl)!.ExitCode.Should().Be(0);
+        ReadJson(ConfigPath).ContainsKey("pilotSince").Should().BeTrue("Local to Pilot is a new enrolment");
+    }
+
+    // An install from before the cutoff existed keeps its whole queue: no pilotSince is invented for it.
+    [Fact]
+    public void PilotSince_LegacyPilotConfigRerun_StaysAbsent_AndTheRetiredFallbackKeyIsRemoved()
+    {
+        WriteFile(ConfigPath, $$"""{"apiUrl":"{{ApiUrl}}","gitFallbackThreshold":100}""");
+
+        if (Install("-Pilot") is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        var config = ReadJson(ConfigPath);
+        config.ContainsKey("pilotSince").Should().BeFalse();
+        config.ContainsKey("gitFallbackThreshold").Should().BeFalse();
+    }
+
     /// <summary>Always passes -NoStart and -NoProcessControl: without them the script registers a real
     /// scheduled task, and stops and starts the real agent.</summary>
     private PwshResult? Install(params string[] args) =>

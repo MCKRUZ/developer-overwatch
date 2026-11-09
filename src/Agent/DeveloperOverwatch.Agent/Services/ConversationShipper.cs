@@ -17,11 +17,15 @@ internal sealed class ConversationShipper
     private readonly IConversationCursorStore _cursorStore;
     private readonly IUsageStore _usageStore;
     private readonly ILogger _logger;
+    private readonly DateTime? _pilotSince;
 
+    /// <param name="pilotSince">Turns from before Pilot enrolment are recorded here but never sent, even
+    /// when a marker queued after enrolment captures them (a session resumed across enrolment).</param>
     public ConversationShipper(
         IApiClient api, IPrivacyRedactor redactor, IConversationCapture capture,
-        IConversationCursorStore cursorStore, IUsageStore usageStore, ILogger logger)
+        IConversationCursorStore cursorStore, IUsageStore usageStore, ILogger logger, DateTime? pilotSince = null)
     {
+        _pilotSince = pilotSince;
         _api = api;
         _redactor = redactor;
         _capture = capture;
@@ -48,29 +52,42 @@ internal sealed class ConversationShipper
             return EventOutcome.Done;
 
         var answered = new HashSet<string>(StringComparer.Ordinal);
-        if (captured.Turns.Count > 0)
-        {
-            var title = await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, ct);
-            foreach (var chunk in captured.Turns.Chunk(MaxTurnsPerPost))
-            {
-                var payload = ConversationPayload.Build(
-                    sessionId, title, chunk.Select(t => t.Turn).ToList(), _redactor, captured.Marker.UsageOnly);
-                var result = await _api.SendSessionEventsAsync(sessionId, _redactor.Redact(payload), ct);
-                if (result.Status == PostStatus.Transient)
-                    return EventOutcome.Transient;
-                if (result.Status == PostStatus.SessionNotFound)
-                    return EventOutcome.SessionGone;
-
-                RecordAnswers(sessionId, chunk, result, answered);
-                await AdvanceCursorsAsync(captured, answered, ct);
-            }
-        }
-        else
+        var turns = captured.Turns;
+        if (turns.Count == 0)
         {
             await AdvanceCursorsAsync(captured, answered, ct);
+            return EventOutcome.Done;
         }
 
-        return captured.Turns.All(t => answered.Contains(t.Id)) ? EventOutcome.Done : EventOutcome.Pending;
+        var title = await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, ct);
+        var size = MaxTurnsPerPost;
+        for (var index = 0; index < turns.Count;)
+        {
+            var chunk = turns.Skip(index).Take(size).ToArray();
+            var payload = ConversationPayload.Build(
+                sessionId, title, chunk.Select(t => t.Turn).ToList(), _redactor, captured.Marker.UsageOnly);
+            var result = await _api.SendSessionEventsAsync(sessionId, _redactor.Redact(payload), ct);
+            // Over the size limit: send the same turns again in halves. A single turn that is still too
+            // large can never fit, so RecordAnswers rejects it and the cursor moves past it.
+            if (result.Status == PostStatus.TooLarge && chunk.Length > 1)
+            {
+                size = Math.Max(1, chunk.Length / 2);
+                continue;
+            }
+            if (result.Status == PostStatus.Transient)
+                return EventOutcome.Transient;
+            if (result.Status == PostStatus.SessionNotFound)
+                return EventOutcome.SessionGone;
+
+            RecordAnswers(sessionId, chunk, result, answered);
+            await AdvanceCursorsAsync(captured, answered, ct);
+            index += chunk.Length;
+            // One oversized turn must not make the rest of the marker ship a turn per POST.
+            if (result.Status == PostStatus.TooLarge)
+                size = MaxTurnsPerPost;
+        }
+
+        return turns.All(t => answered.Contains(t.Id)) ? EventOutcome.Done : EventOutcome.Pending;
     }
 
     /// <summary>Adds each turn the server answered for. Rejected turns count too: they would never
@@ -80,7 +97,9 @@ internal sealed class ConversationShipper
         var rejected = new List<string>();
         foreach (var turn in chunk)
         {
-            var outcome = result.Status == PostStatus.Rejected ? ItemOutcome.Rejected : result.OutcomeOf(turn.Id);
+            var outcome = result.Status is PostStatus.Rejected or PostStatus.TooLarge
+                ? ItemOutcome.Rejected
+                : result.OutcomeOf(turn.Id);
             if (outcome is null)
                 continue;
             answered.Add(turn.Id);
@@ -143,7 +162,11 @@ internal sealed class ConversationShipper
             .ToList();
 
         await _usageStore.RecordTurnsAsync(sessionId, turns.Select(t => t.Turn).ToList(), ct);
-        return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, turns);
+        // Left out of Turns, a pre-enrolment turn is never sent, and the cursor moves past it like an answered one.
+        var shippable = turns
+            .Where(t => _pilotSince is not { } since || t.Turn.Timestamp is not { } ts || ToUtc(ts) >= since)
+            .ToList();
+        return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, shippable);
     }
 
     /// <summary>Reads the session transcript plus every subagent transcript beside it. A subagent's

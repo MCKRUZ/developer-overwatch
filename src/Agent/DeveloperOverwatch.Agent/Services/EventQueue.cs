@@ -119,7 +119,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
                 SELECT rowid, id, session_id, event_type, payload_json, created_at, retry_count, shipped
                 FROM events
                 WHERE shipped = 0
-                ORDER BY created_at
+                ORDER BY (event_type = 'SessionStart') DESC, created_at, rowid
                 LIMIT $batchSize
                 """;
             cmd.Parameters.AddWithValue("$batchSize", batchSize);

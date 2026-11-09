@@ -48,6 +48,8 @@ public sealed class ApiClient : IApiClient
             // The caller logs the rejection once, with what it was about to drop.
             if (response.StatusCode == HttpStatusCode.BadRequest)
                 return new ApiResult(PostStatus.Rejected, Reason: FieldLimits.Clamp(body, MaxReasonLength));
+            if (response.StatusCode == HttpStatusCode.RequestEntityTooLarge)
+                return new ApiResult(PostStatus.TooLarge, Reason: "request too large (413)");
             if (response.StatusCode == HttpStatusCode.NotFound && NamesSessionNotFound(body))
                 return ApiResult.NotFound;
 

@@ -20,6 +20,10 @@
     <ProjectReference Include="..\..\Domain\DeveloperOverwatch.Domain\DeveloperOverwatch.Domain.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Tests drive QueueProcessor one poll at a time, without the timer or the backoff delay. -->
+    <InternalsVisibleTo Include="DeveloperOverwatch.Agent.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <None Remove="Resources\default-prices.json" />
     <EmbeddedResource Include="Resources\default-prices.json" LogicalName="DeveloperOverwatch.Agent.default-prices.json" />
   </ItemGroup>

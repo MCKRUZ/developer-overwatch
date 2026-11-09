@@ -14,6 +14,15 @@ public sealed class AgentConfig
     /// <summary>Clamped to 1..500: the server takes at most 500 items per list, and 0 never drains.</summary>
     public int BatchSize { get => _batchSize; init => _batchSize = Math.Clamp(value, 1, 500); }
     private readonly int _batchSize = 50;
+
+    /// <summary>When this machine enrolled in Pilot (UTC), written by the installer. An event queued before it
+    /// is handled locally and never sent. Absent on installs from before the cutoff existed: no cutoff.</summary>
+    public DateTime? PilotSince
+    {
+        get => _pilotSince;
+        init => _pilotSince = value is { Kind: DateTimeKind.Local } local ? local.ToUniversalTime() : value;
+    }
+    private readonly DateTime? _pilotSince;
     public IReadOnlyList<string> RedactionPatterns { get; init; } = DefaultRedactionPatterns;
     public bool PrivateSession { get; init; }
 

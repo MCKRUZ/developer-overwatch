@@ -13,7 +13,11 @@ public enum PostStatus
     /// <summary>404 with code <c>session_not_found</c>: the session is not on the server and never will be.</summary>
     SessionNotFound,
 
-    /// <summary>Anything else (network error, timeout, 5xx, 401/403, a 404 without the code, 413): retried later.</summary>
+    /// <summary>413: the request is over the server's size limit. A POST of one item can never fit, so that
+    /// item is rejected; a chunk of turns is split and sent again.</summary>
+    TooLarge,
+
+    /// <summary>Anything else (network error, timeout, 5xx, 401/403, a 404 without the code): retried later.</summary>
     Transient
 }
 

@@ -167,9 +167,11 @@ internal sealed class SessionShipper
         var signalEvents = events.Where(e => SessionSignals.IsSignalEvent(e.EventType)).ToList();
         var result = await _api.SendSessionEventsAsync(sessionId, payload, ct);
         var whole = OutcomeOf(sessionId, result, [], signalEvents.Count);
-        // Activity carries no id and is accepted with the POST; a tool failure has its own outcome.
+        // Activity carries no id and is accepted with the POST; in a 200, a tool failure has its own outcome.
         var each = signalEvents
-            .Select(e => (e, e.EventType == EventType.ToolFailed ? OutcomeOf(sessionId, result, [e.Id], 0) : whole))
+            .Select(e => (e, e.EventType == EventType.ToolFailed && result.Status == PostStatus.Ok
+                ? OutcomeOf(sessionId, result, [e.Id], 0)
+                : whole))
             .ToList();
         return await ApplyAsync(sessionId, run, whole, each, ct);
     }
@@ -189,9 +191,16 @@ internal sealed class SessionShipper
                     _logger.LogWarning("Server rejected a request for session {SessionId}; dropping its {Count} events: {Reason}",
                         sessionId, eventsInPost, result.Reason);
                 return EventOutcome.Dead;
+            // One event in the POST: it can never fit, so it alone is dropped.
+            case PostStatus.TooLarge when eventsInPost == 1:
+                _logger.LogWarning("Server refused an event of session {SessionId} as too large; dropping it: {Reason}",
+                    sessionId, result.Reason);
+                return EventOutcome.Dead;
+            case PostStatus.TooLarge:
+                return EventOutcome.Transient;
         }
 
-        var outcomes = itemIds.Select(id => (Id: id, Outcome: result.OutcomeOf(id))).ToList();
+        var outcomes =itemIds.Select(id => (Id: id, Outcome: result.OutcomeOf(id))).ToList();
         if (outcomes.Any(o => o.Outcome is null))
             return EventOutcome.Pending;
         if (outcomes.FirstOrDefault(o => o.Outcome == ItemOutcome.Rejected) is not { Id: { } rejectedId })

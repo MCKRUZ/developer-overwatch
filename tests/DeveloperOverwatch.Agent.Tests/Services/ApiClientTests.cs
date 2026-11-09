@@ -158,7 +158,6 @@ public class ApiClientTests : IDisposable
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
-    [InlineData(HttpStatusCode.RequestEntityTooLarge)]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
     public async Task SendSessionEvents_RetryableStatus_IsTransient(HttpStatusCode status)
     {

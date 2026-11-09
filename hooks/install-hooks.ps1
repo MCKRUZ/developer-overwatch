@@ -236,6 +236,15 @@ $stoppedAgent = $false
 if ($restartNeeded -and -not $NoProcessControl) { $stoppedAgent = Stop-OwnAgent }
 
 $config["mode"] = $mode
+# Pilot capture starts at enrolment: the agent never ships an event queued before pilotSince. A re-run
+# keeps the original time, and a legacy pilot config without one keeps having no cutoff.
+if ($mode -eq "pilot") {
+    if ($oldMode -ne "pilot") {
+        $config["pilotSince"] = [DateTime]::UtcNow.ToString("o", [Globalization.CultureInfo]::InvariantCulture)
+    }
+} else {
+    $config.Remove("pilotSince")
+}
 foreach ($key in $configDefaults.Keys) {
     if (-not $config.Contains($key)) { $config[$key] = $configDefaults[$key] }
 }
