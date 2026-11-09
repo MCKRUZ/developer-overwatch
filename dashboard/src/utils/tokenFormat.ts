@@ -1,19 +1,25 @@
 import type { DailyTokenCost, SessionListItem } from "../types";
 
-/** All tokens the model processed. Cache reads and writes are included: in Claude Code they are
- * usually most of the volume, so a total without them badly understates real usage. */
-export function formatTotalTokens(usage: {
+interface TokenUsage {
   inputTokens?: number;
   outputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
-}): string {
+}
+
+/** All tokens the model processed. Cache reads and writes are included: in Claude Code they are
+ * usually most of the volume, so a total without them badly understates real usage. */
+export function totalTokens(usage: TokenUsage): number {
   return (
     (usage.inputTokens ?? 0) +
     (usage.outputTokens ?? 0) +
     (usage.cacheCreationInputTokens ?? 0) +
     (usage.cacheReadInputTokens ?? 0)
-  ).toLocaleString();
+  );
+}
+
+export function formatTotalTokens(usage: TokenUsage): string {
+  return totalTokens(usage).toLocaleString();
 }
 
 /** A session's token/cost contribution for one specific calendar day ("yyyy-MM-dd"), not its

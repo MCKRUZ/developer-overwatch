@@ -246,6 +246,27 @@ describe("SessionsPage", () => {
     expect(screen.queryByText("$999.99")).not.toBeInTheDocument();
   });
 
+  it("includes cache tokens in the day-group header total, matching the rows", async () => {
+    const day = { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 850, cacheReadInputTokens: 4000 };
+    mockApi.sessions.list.mockResolvedValue([
+      buildSessionListItem({
+        id: "sess-group-a-0000000",
+        startedAt: "2026-05-27T08:00:00Z",
+        dailyUsage: { "2026-05-27": { ...day, estimatedCostUsd: 1 } },
+      }),
+      buildSessionListItem({
+        id: "sess-group-b-0000000",
+        startedAt: "2026-05-27T09:00:00Z",
+        dailyUsage: { "2026-05-27": { ...day, estimatedCostUsd: 1 } },
+      }),
+    ]);
+    render(<SessionsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 sessions · 10,000 tokens/)).toBeInTheDocument();
+    });
+  });
+
   it("paginates the Active Now section 10 at a time", async () => {
     const user = userEvent.setup();
     const activeSessions = Array.from({ length: 15 }, (_, i) =>

@@ -6,7 +6,7 @@ import StatusBadge from "../components/StatusBadge";
 import ExportButtons from "../components/ExportButtons";
 import { exportCsv } from "../utils/exportCsv";
 import { exportPdf } from "../utils/exportPdf";
-import { formatTotalTokens, formatCost, dailyUsageFor, tokenBreakdownTooltip } from "../utils/tokenFormat";
+import { formatTotalTokens, formatCost, dailyUsageFor, tokenBreakdownTooltip, totalTokens } from "../utils/tokenFormat";
 import { sessionDisplayName } from "../utils/sessionDisplay";
 import { repoDisplayName, osUserFromRepoPath } from "../utils/pathDisplay";
 
@@ -201,7 +201,7 @@ export default function SessionsPage() {
         day,
         items,
         totalCost: dailyTotals.reduce((sum, d) => sum + d.estimatedCostUsd, 0),
-        totalTokens: dailyTotals.reduce((sum, d) => sum + d.inputTokens + d.outputTokens, 0),
+        totalTokens: dailyTotals.reduce((sum, d) => sum + totalTokens(d), 0),
       };
     });
   }, [sorted]);
