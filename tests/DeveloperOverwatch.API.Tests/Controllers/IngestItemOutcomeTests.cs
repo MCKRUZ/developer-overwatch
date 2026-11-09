@@ -59,6 +59,34 @@ public class IngestItemOutcomeTests : IClassFixture<OverwatchWebApplicationFacto
         rejected[0].GetProperty("reason").GetString().Should().Contain(field);
     }
 
+    // The Agent marks an item by the one outcome reported for its id. When a batch carries the same id
+    // twice, one copy invalid and one valid, the valid copy is stored, so the id is accepted and only
+    // accepted, and a child that references it is not rejected with it.
+    [Fact]
+    public async Task Events_SameIdInvalidThenValid_IsReportedOnceAsAccepted()
+    {
+        var sessionId = await StartSession();
+        var (turn, tool) = (NewId(), NewId());
+        var invalidCopy = Item("conversationTurns", turn);
+        invalidCopy["gitBranch"] = new string('b', 300);
+        var toolItem = Item("toolExecutions", tool);
+        toolItem["turnId"] = turn;
+        var body = new Dictionary<string, object>
+        {
+            ["sessionId"] = sessionId,
+            ["conversationTurns"] = new[] { invalidCopy, Item("conversationTurns", turn) },
+            ["toolExecutions"] = new[] { toolItem }
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", body);
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, text);
+        var results = JsonDocument.Parse(text).RootElement.GetProperty("results");
+        results.GetProperty("accepted").EnumerateArray().Select(e => e.GetString()).Should().BeEquivalentTo(turn, tool);
+        results.GetProperty("rejected").EnumerateArray().Should().BeEmpty();
+    }
+
     // An item without an id has nothing to report a rejection under, so the request is refused and
     // the Agent narrows the batch down to that item.
     [Theory]

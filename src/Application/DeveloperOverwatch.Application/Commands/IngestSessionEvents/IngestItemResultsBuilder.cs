@@ -8,11 +8,13 @@ internal sealed class IngestItemResultsBuilder
     private readonly List<string> _duplicate = [];
     private readonly List<RejectedItem> _rejected = [];
     private readonly HashSet<string> _rejectedIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _validIds = new(StringComparer.Ordinal);
 
     public IReadOnlySet<string> RejectedIds => _rejectedIds;
 
-    /// <summary>Reports invalid items as rejected and returns the valid ones, each id once.</summary>
-    public List<T> Valid<T>(IEnumerable<T> items, Func<T, string> idOf, Func<T, string?> reasonRejected)
+    /// <summary>Reports invalid items as rejected and returns the valid ones, each id once. When an id
+    /// arrives both invalid and valid, the valid copy is stored, so the id is not reported rejected.</summary>
+    public IReadOnlyList<T> Valid<T>(IEnumerable<T> items, Func<T, string> idOf, Func<T, string?> reasonRejected)
     {
         var valid = new List<T>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -21,11 +23,14 @@ internal sealed class IngestItemResultsBuilder
             var id = idOf(item) ?? string.Empty;
             if (reasonRejected(item) is { } reason)
             {
-                if (_rejectedIds.Add(id))
+                if (!_validIds.Contains(id) && _rejectedIds.Add(id))
                     _rejected.Add(new RejectedItem(id, reason));
             }
             else if (seen.Add(id))
             {
+                _validIds.Add(id);
+                if (_rejectedIds.Remove(id))
+                    _rejected.RemoveAll(r => r.Id == id);
                 valid.Add(item);
             }
         }
@@ -33,7 +38,7 @@ internal sealed class IngestItemResultsBuilder
     }
 
     /// <summary>Reports already-stored items as duplicate and returns the rest, as accepted.</summary>
-    public List<T> New<T>(IEnumerable<T> valid, Func<T, string> idOf, IReadOnlySet<string> existingIds)
+    public IReadOnlyList<T> New<T>(IEnumerable<T> valid, Func<T, string> idOf, IReadOnlySet<string> existingIds)
     {
         var fresh = new List<T>();
         foreach (var item in valid)
