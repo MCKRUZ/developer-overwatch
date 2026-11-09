@@ -7,14 +7,15 @@ public enum PostStatus
     /// <c>/events</c> POST reports each item's own outcome in <see cref="ApiResult.Items"/>.</summary>
     Ok,
 
-    /// <summary>400: the request itself is invalid, so every item in it is rejected. A retry cannot help.</summary>
+    /// <summary>400: the server refused the request as invalid. That is a verdict on the request, not on each
+    /// item: a request of several items is split and sent again; one item refused alone is rejected.</summary>
     Rejected,
 
     /// <summary>404 with code <c>session_not_found</c>: the session is not on the server and never will be.</summary>
     SessionNotFound,
 
-    /// <summary>413: the request is over the server's size limit. A POST of one item can never fit, so that
-    /// item is rejected; a chunk of turns is split and sent again.</summary>
+    /// <summary>413: the request is over the server's size limit. A request of several items is split and
+    /// sent again; one item too large alone is held and retried, never rejected.</summary>
     TooLarge,
 
     /// <summary>Anything else (network error, timeout, 5xx, 401/403, a 404 without the code): retried later.</summary>
@@ -33,10 +34,12 @@ public enum ItemOutcome
 public sealed record ItemResults(
     IReadOnlySet<string> Accepted, IReadOnlySet<string> Duplicate, IReadOnlyDictionary<string, string> Rejected);
 
-/// <summary>How a POST to the server ended, and for an <c>/events</c> POST, how each item in it ended.</summary>
+/// <summary>How a POST to the server ended, and for an <c>/events</c> POST, how each item in it ended. A
+/// status other than <see cref="PostStatus.Ok"/> covers the whole request; see <see cref="HalvingPoster"/>
+/// for how it becomes each item's outcome.</summary>
 /// <param name="Items">Null when the 200 lists no results: a start, an end, or a server older than
 /// per-item results. Every item then counts as accepted.</param>
-/// <param name="Reason">Why a 400 rejected the request.</param>
+/// <param name="Reason">Why the server refused the request.</param>
 public sealed record ApiResult(PostStatus Status, ItemResults? Items = null, string? Reason = null)
 {
     public static readonly ApiResult Success = new(PostStatus.Ok);

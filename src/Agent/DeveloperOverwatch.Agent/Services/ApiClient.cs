@@ -45,7 +45,7 @@ public sealed class ApiClient : IApiClient
 
             if (response.IsSuccessStatusCode)
                 return new ApiResult(PostStatus.Ok, ParseItemResults(body));
-            // The caller logs the rejection once, with what it was about to drop.
+            // A verdict on the whole request: the caller splits it, and logs each item it finally rejects.
             if (response.StatusCode == HttpStatusCode.BadRequest)
                 return new ApiResult(PostStatus.Rejected, Reason: FieldLimits.Clamp(body, MaxReasonLength));
             if (response.StatusCode == HttpStatusCode.RequestEntityTooLarge)

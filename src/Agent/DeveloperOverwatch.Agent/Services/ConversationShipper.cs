@@ -60,46 +60,48 @@ internal sealed class ConversationShipper
         }
 
         var title = await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, ct);
-        var size = MaxTurnsPerPost;
-        for (var index = 0; index < turns.Count;)
+        var callbacks = Callbacks(sessionId, title, captured, answered, ct);
+        foreach (var chunk in turns.Chunk(MaxTurnsPerPost))
         {
-            var chunk = turns.Skip(index).Take(size).ToArray();
-            var payload = ConversationPayload.Build(
-                sessionId, title, chunk.Select(t => t.Turn).ToList(), _redactor, captured.Marker.UsageOnly);
-            var result = await _api.SendSessionEventsAsync(sessionId, _redactor.Redact(payload), ct);
-            // Over the size limit: send the same turns again in halves. A single turn that is still too
-            // large can never fit, so RecordAnswers rejects it and the cursor moves past it.
-            if (result.Status == PostStatus.TooLarge && chunk.Length > 1)
-            {
-                size = Math.Max(1, chunk.Length / 2);
-                continue;
-            }
-            if (result.Status == PostStatus.Transient)
-                return EventOutcome.Transient;
-            if (result.Status == PostStatus.SessionNotFound)
-                return EventOutcome.SessionGone;
-
-            RecordAnswers(sessionId, chunk, result, answered);
-            await AdvanceCursorsAsync(captured, answered, ct);
-            index += chunk.Length;
-            // One oversized turn must not make the rest of the marker ship a turn per POST.
-            if (result.Status == PostStatus.TooLarge)
-                size = MaxTurnsPerPost;
+            var stop = await HalvingPoster.PostAsync(chunk, callbacks);
+            if (stop != HalvingStop.Completed)
+                return stop.ToOutcome(EventOutcome.Transient);
         }
 
         return turns.All(t => answered.Contains(t.Id)) ? EventOutcome.Done : EventOutcome.Transient;
     }
 
-    /// <summary>Adds each turn the server answered for. Rejected turns count too: they would never
-    /// succeed, so they are logged here, once, and the cursor moves past them.</summary>
-    private void RecordAnswers(string sessionId, TurnRef[] chunk, ApiResult result, HashSet<string> answered)
+    /// <summary>A refused chunk is split until each turn has its own answer. The cursors move after every
+    /// answer, so a turn held as too large keeps them, and the turns after it, where they are.</summary>
+    private HalvingPoster.Callbacks<TurnRef> Callbacks(
+        string sessionId, string? title, CapturedConversation captured, HashSet<string> answered, CancellationToken ct) =>
+        new(
+            subset => _api.SendSessionEventsAsync(sessionId, _redactor.Redact(ConversationPayload.Build(
+                sessionId, title, subset.Select(t => t.Turn).ToList(), _redactor, captured.Marker.UsageOnly)), ct),
+            async (subset, result) =>
+            {
+                RecordAnswers(sessionId, subset, result, answered);
+                await AdvanceCursorsAsync(captured, answered, ct);
+            },
+            async (turn, result) =>
+            {
+                _logger.LogWarning("Server rejected turn {TurnId} of session {SessionId}; dropping it: {Reason}",
+                    turn.Id, sessionId, result.Reason);
+                answered.Add(turn.Id);
+                await AdvanceCursorsAsync(captured, answered, ct);
+            },
+            turn => _logger.LogWarning(
+                "Server refused turn {TurnId} of session {SessionId} as too large even alone; holding it and the turns after it for the next poll",
+                turn.Id, sessionId));
+
+    /// <summary>Adds each turn a 200 answered for. Rejected turns count too: they would never succeed, so
+    /// they are logged here, once, and the cursor moves past them.</summary>
+    private void RecordAnswers(string sessionId, IReadOnlyList<TurnRef> chunk, ApiResult result, HashSet<string> answered)
     {
         var rejected = new List<string>();
         foreach (var turn in chunk)
         {
-            var outcome = result.Status is PostStatus.Rejected or PostStatus.TooLarge
-                ? ItemOutcome.Rejected
-                : result.OutcomeOf(turn.Id);
+            var outcome = result.OutcomeOf(turn.Id);
             if (outcome is null)
                 continue;
             answered.Add(turn.Id);

@@ -1,3 +1,5 @@
+using DeveloperOverwatch.Agent.Models;
+
 namespace DeveloperOverwatch.Agent.Services;
 
 /// <summary>What one delivery attempt settled for a queued event.</summary>
@@ -16,3 +18,8 @@ internal enum EventOutcome
     /// <summary>The server does not know the session and never will: the session's pending items are dead.</summary>
     SessionGone
 }
+
+/// <summary>What one send settled.</summary>
+/// <param name="Whole">Transient or session-gone when the send stopped before every event had an answer.</param>
+/// <param name="Each">Each event's own outcome; events the send never reached are transient.</param>
+internal sealed record SettledPost(EventOutcome Whole, IReadOnlyList<(QueuedEvent Event, EventOutcome Outcome)> Each);

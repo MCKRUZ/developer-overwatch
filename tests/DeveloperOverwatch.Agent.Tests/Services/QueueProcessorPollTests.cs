@@ -132,7 +132,7 @@ public sealed class QueueProcessorPollTests : IDisposable
     }
 
     [Fact]
-    public async Task TooLarge_SingleToolExecution_IsDroppedOnce_AndNeverRetried()
+    public async Task TooLarge_SingleToolExecution_IsHeld_NeverDead_AndTheSessionsLaterItemsWait()
     {
         _http.Respond = (_, body) => body.Contains("te-big") ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.OK;
         await EnqueueAsync(Start("s", "s"), DateTime.UtcNow.AddMinutes(-3));
@@ -141,12 +141,11 @@ public sealed class QueueProcessorPollTests : IDisposable
 
         var sut = CreateSut(new AgentConfig { Mode = AgentMode.Pilot, OverwatchDir = _dir });
         (await sut.PollOnceAsync(CancellationToken.None)).Should().Be(QueueProcessor.PollResult.Continue);
-        await sut.PollOnceAsync(CancellationToken.None);
 
         _http.Bodies.Count(b => b.Contains("te-big")).Should().Be(1);
-        _http.Bodies.Should().Contain(b => b.Contains("te-ok"));
+        _http.Bodies.Should().NotContain(b => b.Contains("te-ok"));
         _logger.Warnings.Should().ContainSingle(w => w.Contains("too large"));
-        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+        (await _queue.DequeueBatchAsync(10)).Select(e => e.Id).Should().Equal("big", "ok");
     }
 
     [Fact]
@@ -158,12 +157,12 @@ public sealed class QueueProcessorPollTests : IDisposable
 
         await CreateSut(new AgentConfig { Mode = AgentMode.Pilot, OverwatchDir = _dir }).PollOnceAsync(CancellationToken.None);
 
-        _http.Bodies.Select(TurnCount).Where(count => count > 0).Should().Equal(8, 4, 2, 2, 2, 2);
+        _http.Bodies.Select(TurnCount).Where(count => count > 0).Should().Equal(8, 4, 2, 2, 4, 2, 2);
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task TooLarge_SingleTurn_IsRejected_AndTheCursorMovesPastIt()
+    public async Task TooLarge_SingleTurn_IsHeld_AndTheCursorStopsBeforeIt()
     {
         CaptureTurns(Enumerable.Range(0, 3).Select(i => ($"uuid:{i}", $"turn {i}", DateTime.UtcNow.AddMinutes(-10).AddSeconds(i))).ToArray());
         _http.Respond = (_, body) => body.Contains("turn 1") ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.OK;
@@ -171,10 +170,11 @@ public sealed class QueueProcessorPollTests : IDisposable
 
         await CreateSut(new AgentConfig { Mode = AgentMode.Pilot, OverwatchDir = _dir }).PollOnceAsync(CancellationToken.None);
 
-        _http.Bodies.Select(TurnCount).Where(count => count > 0).Should().Equal(3, 1, 1, 1);
-        await _cursors.Received().SetAsync("s", 3, Arg.Any<CancellationToken>());
-        _logger.Warnings.Should().ContainSingle(w => w.Contains("rejected 1 turns"));
-        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+        _http.Bodies.Select(TurnCount).Where(count => count > 0).Should().Equal(3, 1, 2, 1);
+        await _cursors.Received().SetAsync("s", 1, Arg.Any<CancellationToken>());
+        await _cursors.DidNotReceive().SetAsync("s", Arg.Is<int>(line => line > 1), Arg.Any<CancellationToken>());
+        _logger.Warnings.Should().ContainSingle(w => w.Contains("too large"));
+        (await _queue.GetUnshippedCountAsync()).Should().Be(1);
     }
 
     // Events ship in the order they happened. A start newer than the batch's items is a resume: the

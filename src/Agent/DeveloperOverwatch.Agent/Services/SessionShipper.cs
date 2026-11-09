@@ -6,7 +6,9 @@ namespace DeveloperOverwatch.Agent.Services;
 
 /// <summary>Delivers one session's queued events in the order they happened and marks each by its own
 /// outcome. Starts, ends, tool, file and turn events are sent where they fall. Activity and tool failures
-/// gather and go in one POST before each start or end, and once at the end of the walk. Once a start is
+/// gather and go in one POST before each start or end, and once at the end of the walk. A request the
+/// server refuses as a whole is split until each item has its own answer (see <see cref="HalvingPoster"/>):
+/// an item rejected alone is dead, and one too large even alone is held, never dead. Once a start is
 /// refused, or the server no longer knows the session, its events are dropped up to its next start. The
 /// first transient failure holds the rest of the session until the next poll.</summary>
 internal sealed class SessionShipper
@@ -20,6 +22,8 @@ internal sealed class SessionShipper
     private readonly IGitReader _gitRemote;
     private readonly IUsageStore _usageStore;
     private readonly ConversationShipper _conversations;
+    private readonly ToolEventShipper _tools;
+    private readonly SignalShipper _signals;
     private readonly ILogger _logger;
 
     public SessionShipper(
@@ -32,6 +36,8 @@ internal sealed class SessionShipper
         _gitRemote = gitRemote;
         _usageStore = usageStore;
         _conversations = conversations;
+        _tools = new ToolEventShipper(api, redactor, logger);
+        _signals = new SignalShipper(api, logger);
         _logger = logger;
     }
 
@@ -96,7 +102,7 @@ internal sealed class SessionShipper
             case EventType.ToolExecution or EventType.FileChange or EventType.ConversationTurn:
                 run.Signals.Add(evt);
                 var outcome = await ShipItemAsync(sessionId, evt, ct);
-                return await ApplyAsync(sessionId, run, outcome, [(evt, outcome)], ct);
+                return await ApplyAsync(sessionId, run, new SettledPost(outcome, [(evt, outcome)]), ct);
             case EventType.ActivityChanged or EventType.ToolFailed:
                 run.Signals.Add(evt);
                 return true;
@@ -105,28 +111,28 @@ internal sealed class SessionShipper
         }
     }
 
-    /// <summary>An accepted start lets the session's later items ship. A refused one drops them up to the
-    /// next start, unless an earlier start of this session already reached the server.</summary>
+    /// <summary>An accepted start lets the session's later items ship. A rejected one, or one the server
+    /// answers session_not_found, drops them up to the next start, unless an earlier start of this session
+    /// already reached the server. A transient start, or one too large to send, holds the session.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
         var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
         var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id);
-        var result = await _api.SendSessionStartAsync(payload, ct);
-        if (result.Status == PostStatus.Transient)
+        var outcome = await SendAloneAsync(sessionId, start, () => _api.SendSessionStartAsync(payload, ct));
+        switch (outcome)
         {
-            run.Transient = true;
-            return false;
+            case EventOutcome.Transient:
+                run.Transient = true;
+                return false;
+            case EventOutcome.Done:
+                await run.MarkShippedAsync([start], ct);
+                run.Gate = StartState.Shipped;
+                return true;
+            case EventOutcome.SessionGone:
+                _logger.LogWarning("Server refused start {EventId} of session {SessionId}: {Why}", start.Id, sessionId, SessionUnknown);
+                break;
         }
 
-        if (result.Status == PostStatus.Ok)
-        {
-            await run.MarkShippedAsync([start], ct);
-            run.Gate = StartState.Shipped;
-            return true;
-        }
-
-        _logger.LogWarning("Server refused start {EventId} of session {SessionId} ({Status}): {Reason}",
-            start.Id, sessionId, result.Status, result.Reason);
         await run.MarkDeadAsync([start], ct);
         if (run.Gate != StartState.Shipped)
             run.Gate = StartState.Dead;
@@ -136,103 +142,56 @@ internal sealed class SessionShipper
     private async Task<bool> ShipEndAsync(string sessionId, SessionRun run, QueuedEvent end, CancellationToken ct)
     {
         var payload = AgentPayload.WithEventId(_redactor.Redact(end.PayloadJson), end.Id);
-        var outcome = OutcomeOf(sessionId, await _api.SendSessionEndAsync(sessionId, payload, ct), [], 1);
-        return await ApplyAsync(sessionId, run, outcome, [(end, outcome)], ct);
+        var outcome = await SendAloneAsync(sessionId, end, () => _api.SendSessionEndAsync(sessionId, payload, ct));
+        return await ApplyAsync(sessionId, run, new SettledPost(outcome, [(end, outcome)]), ct);
     }
 
-    private async Task<EventOutcome> ShipItemAsync(string sessionId, QueuedEvent evt, CancellationToken ct)
+    /// <summary>A start or end is a request of one item: a 400 rejects it, and a 413 holds it.</summary>
+    private async Task<EventOutcome> SendAloneAsync(string sessionId, QueuedEvent evt, Func<Task<ApiResult>> send)
     {
-        if (evt.EventType == EventType.ConversationTurn)
-            return await _conversations.ShipAsync(sessionId, evt, ct);
-
-        var payload = AgentPayload.NormalizeToolEvent(_redactor.Redact(evt.PayloadJson));
-        var result = await _api.SendSessionEventsAsync(sessionId, payload, ct);
-        return OutcomeOf(sessionId, result, AgentPayload.ItemIds(payload), 1);
+        var outcome = EventOutcome.Done;
+        var stop = await HalvingPoster.PostAsync([evt], new HalvingPoster.Callbacks<QueuedEvent>(
+            _ => send(),
+            (_, _) => Task.CompletedTask,
+            (_, result) =>
+            {
+                _logger.LogWarning("Server rejected {EventType} {EventId} of session {SessionId}; dropping it: {Reason}",
+                    evt.EventType, evt.Id, sessionId, result.Reason);
+                outcome = EventOutcome.Dead;
+                return Task.CompletedTask;
+            },
+            _ => _logger.LogWarning("Server refused {EventType} {EventId} of session {SessionId} as too large; holding it for the next poll",
+                evt.EventType, evt.Id, sessionId)));
+        return stop.ToOutcome(outcome);
     }
 
-    /// <summary>One POST for the activity states and tool failures gathered since the last one. The payload
-    /// holds only states, tool names, ids and times: nothing to redact.</summary>
+    private async Task<EventOutcome> ShipItemAsync(string sessionId, QueuedEvent evt, CancellationToken ct) =>
+        evt.EventType == EventType.ConversationTurn
+            ? await _conversations.ShipAsync(sessionId, evt, ct)
+            : await _tools.ShipAsync(sessionId, evt, ct);
+
     private async Task<bool> FlushSignalsAsync(string sessionId, SessionRun run, CancellationToken ct)
     {
         var contributors = run.Signals.ToList();
         run.Signals.Clear();
-        if (SessionSignals.BuildPayload(sessionId, contributors) is not { } payload)
-            return true;
-
-        var signalEvents = contributors.Where(e => SessionSignals.IsSignalEvent(e.EventType)).ToList();
-        var result = await _api.SendSessionEventsAsync(sessionId, payload, ct);
-        var whole = OutcomeOf(sessionId, result, [], signalEvents.Count);
-        // Activity carries no id and is accepted with the POST; in a 200, a tool failure has its own outcome.
-        var each = signalEvents
-            .Select(e => (e, e.EventType == EventType.ToolFailed && result.Status == PostStatus.Ok
-                ? OutcomeOf(sessionId, result, [e.Id], 0)
-                : whole))
-            .ToList();
-        return await ApplyAsync(sessionId, run, whole, each, ct);
+        return await ApplyAsync(sessionId, run, await _signals.FlushAsync(sessionId, contributors, ct), ct);
     }
 
-    /// <summary>The outcome for an event carrying <paramref name="itemIds"/>. A 400 is logged here once
-    /// per POST, naming how many events it drops.</summary>
-    private EventOutcome OutcomeOf(string sessionId, ApiResult result, IReadOnlyList<string> itemIds, int eventsInPost)
+    /// <summary>Marks each event the send settled. Then a session-gone send drops the session's open events up
+    /// to its next start. False when the session must stop for this poll: the send stopped transient, or left
+    /// an event transient.</summary>
+    private async Task<bool> ApplyAsync(string sessionId, SessionRun run, SettledPost settled, CancellationToken ct)
     {
-        switch (result.Status)
-        {
-            case PostStatus.Transient:
-                return EventOutcome.Transient;
-            case PostStatus.SessionNotFound:
-                return EventOutcome.SessionGone;
-            case PostStatus.Rejected:
-                if (eventsInPost > 0)
-                    _logger.LogWarning("Server rejected a request for session {SessionId}; dropping its {Count} events: {Reason}",
-                        sessionId, eventsInPost, result.Reason);
-                return EventOutcome.Dead;
-            // One event in the POST: it can never fit, so it alone is dropped.
-            case PostStatus.TooLarge when eventsInPost == 1:
-                _logger.LogWarning("Server refused an event of session {SessionId} as too large; dropping it: {Reason}",
-                    sessionId, result.Reason);
-                return EventOutcome.Dead;
-            case PostStatus.TooLarge:
-                return EventOutcome.Transient;
-        }
-
-        var outcomes = itemIds.Select(id => (Id: id, Outcome: result.OutcomeOf(id))).ToList();
-        var unanswered = outcomes.Where(o => o.Outcome is null).Select(o => o.Id).ToList();
-        if (unanswered.Count > 0)
-        {
-            _logger.LogWarning("Server's results left out items {ItemIds} of session {SessionId}; retrying them",
-                string.Join(", ", unanswered), sessionId);
-            return EventOutcome.Transient;
-        }
-        if (outcomes.FirstOrDefault(o => o.Outcome == ItemOutcome.Rejected) is not { Id: { } rejectedId })
-            return EventOutcome.Done;
-
-        _logger.LogWarning("Server rejected item {ItemId} of session {SessionId}; dropping it: {Reason}",
-            rejectedId, sessionId, result.RejectionReason(rejectedId));
-        return EventOutcome.Dead;
-    }
-
-    /// <summary>Marks each event by its outcome. False when the session must stop for this poll, which an
-    /// event left transient also forces.</summary>
-    /// <param name="whole">The POST's own outcome: transient or session-gone settles every event in it.</param>
-    private async Task<bool> ApplyAsync(
-        string sessionId, SessionRun run, EventOutcome whole,
-        IReadOnlyList<(QueuedEvent Event, EventOutcome Outcome)> each, CancellationToken ct)
-    {
-        if (whole == EventOutcome.SessionGone)
+        var each = settled.Each;
+        await run.MarkShippedAsync(each.Where(o => o.Outcome == EventOutcome.Done).Select(o => o.Event).ToList(), ct);
+        await run.MarkDeadAsync(each.Where(o => o.Outcome == EventOutcome.Dead).Select(o => o.Event).ToList(), ct);
+        if (settled.Whole == EventOutcome.SessionGone)
         {
             await SweepAsync(sessionId, run, SessionUnknown, ct);
             return true;
         }
 
-        if (whole == EventOutcome.Transient)
-        {
-            run.Transient = true;
-            return false;
-        }
-
-        await run.MarkShippedAsync(each.Where(o => o.Outcome == EventOutcome.Done).Select(o => o.Event).ToList(), ct);
-        await run.MarkDeadAsync(each.Where(o => o.Outcome == EventOutcome.Dead).Select(o => o.Event).ToList(), ct);
-        if (each.All(o => o.Outcome != EventOutcome.Transient))
+        if (settled.Whole != EventOutcome.Transient && each.All(o => o.Outcome != EventOutcome.Transient))
             return true;
 
         run.Transient = true;

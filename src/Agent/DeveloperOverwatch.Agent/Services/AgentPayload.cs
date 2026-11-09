@@ -8,12 +8,26 @@ internal static class AgentPayload
 {
     private static readonly string[] ItemLists = ["conversationTurns", "toolExecutions", "fileChanges"];
 
-    /// <summary>The ids of every item a ToolExecution or FileChange payload carries. The server reports
-    /// each item's outcome by its id. Empty when the payload is not a JSON object.</summary>
-    public static IReadOnlyList<string> ItemIds(string payloadJson) =>
-        ParseObject(payloadJson) is { } body
-            ? ItemLists.SelectMany(list => Items(body, list)).Select(item => StringValue(item, "id")).OfType<string>().ToList()
-            : [];
+    /// <summary>One item of a ToolExecution or FileChange payload, and the list it is in.</summary>
+    public sealed record PayloadItem(string List, JsonObject Item)
+    {
+        /// <summary>The server reports the item's outcome by this id.</summary>
+        public string? Id => StringValue(Item, "id");
+    }
+
+    /// <summary>Every item the payload carries, list by list, tools before files: sent in this order, a
+    /// file change's tool reaches the server first.</summary>
+    public static IReadOnlyList<PayloadItem> ListItems(JsonObject body) =>
+        ItemLists.SelectMany(list => Items(body, list).Select(item => new PayloadItem(list, item))).ToList();
+
+    /// <summary>The payload carrying only <paramref name="items"/>, every other property kept.</summary>
+    public static string WithItems(JsonObject body, IReadOnlyList<PayloadItem> items)
+    {
+        var copy = (JsonObject)body.DeepClone();
+        foreach (var list in ItemLists.Where(copy.ContainsKey))
+            copy[list] = new JsonArray(items.Where(i => i.List == list).Select(i => i.Item.DeepClone()).ToArray());
+        return copy.ToJsonString();
+    }
 
     /// <summary>Clamps each tool execution's name to the server limit. The payload is returned unchanged
     /// when nothing needed clamping.</summary>
