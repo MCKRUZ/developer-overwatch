@@ -24,10 +24,10 @@ public class Session
 
     // Running totals across all conversation turns, maintained incrementally as turns are
     // ingested — lets the dashboard show session-level usage/cost without summing turns client-side.
-    public int TotalInputTokens { get; set; }
-    public int TotalOutputTokens { get; set; }
-    public int TotalCacheCreationInputTokens { get; set; }
-    public int TotalCacheReadInputTokens { get; set; }
+    public long TotalInputTokens { get; set; }
+    public long TotalOutputTokens { get; set; }
+    public long TotalCacheCreationInputTokens { get; set; }
+    public long TotalCacheReadInputTokens { get; set; }
     public decimal EstimatedCostUsd { get; set; }
 
     public IList<ConversationTurn> ConversationTurns { get; set; } = new List<ConversationTurn>();

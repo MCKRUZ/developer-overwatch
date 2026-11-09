@@ -57,4 +57,25 @@ public class GetSessionDailyUsageTests
         result.IsSuccess.Should().BeTrue();
         result.Value.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task Handle_DayTotalsBeyondInt32_SumAsLongWithoutOverflow()
+    {
+        var day = new DateTime(2026, 9, 22, 10, 0, 0, DateTimeKind.Utc);
+        const int big = 1_500_000_000;
+        _repo.GetTurnUsageRowsAsync("s1", Arg.Any<CancellationToken>()).Returns(new List<TurnUsageRow>
+        {
+            new(day, "claude-sonnet-5", big, big, big, big, 0m),
+            new(day.AddHours(1), "claude-sonnet-5", big, big, big, big, 0m),
+        });
+
+        var handler = new GetSessionDailyUsageQueryHandler(_repo);
+        var result = await handler.Handle(new GetSessionDailyUsageQuery("s1"), CancellationToken.None);
+
+        var only = result.Value!.Single();
+        only.InputTokens.Should().Be(3_000_000_000L);
+        only.OutputTokens.Should().Be(3_000_000_000L);
+        only.CacheCreationInputTokens.Should().Be(3_000_000_000L);
+        only.CacheReadInputTokens.Should().Be(3_000_000_000L);
+    }
 }

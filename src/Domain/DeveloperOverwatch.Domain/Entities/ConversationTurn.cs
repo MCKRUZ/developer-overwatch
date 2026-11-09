@@ -14,6 +14,9 @@ public class ConversationTurn
     public int? CacheReadInputTokens { get; set; }
     public string? Model { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+
+    /// <summary>Date of the price table that computed <see cref="EstimatedCostUsd"/>.</summary>
+    public DateOnly? PricesAsOf { get; set; }
     public bool ContainsRedactedSecret { get; set; }
     public DateTime Timestamp { get; set; }
     public bool IsDecision { get; set; }

@@ -8,8 +8,8 @@ public sealed record GetSessionModelBreakdownQuery(string SessionId) : IRequest<
 public sealed record ModelUsage(
     string Model,
     int TurnCount,
-    int InputTokens,
-    int OutputTokens,
-    int CacheCreationInputTokens,
-    int CacheReadInputTokens,
+    long InputTokens,
+    long OutputTokens,
+    long CacheCreationInputTokens,
+    long CacheReadInputTokens,
     decimal EstimatedCostUsd);

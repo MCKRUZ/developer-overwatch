@@ -22,10 +22,10 @@ public sealed class GetSessionDailyUsageQueryHandler
             .Select(g => new DailyUsage(
                 g.Key,
                 g.Count(),
-                g.Sum(r => r.InputTokens ?? 0),
-                g.Sum(r => r.OutputTokens ?? 0),
-                g.Sum(r => r.CacheCreationInputTokens ?? 0),
-                g.Sum(r => r.CacheReadInputTokens ?? 0),
+                g.Sum(r => (long)(r.InputTokens ?? 0)),
+                g.Sum(r => (long)(r.OutputTokens ?? 0)),
+                g.Sum(r => (long)(r.CacheCreationInputTokens ?? 0)),
+                g.Sum(r => (long)(r.CacheReadInputTokens ?? 0)),
                 g.Sum(r => r.EstimatedCostUsd ?? 0m)))
             .ToList();
 

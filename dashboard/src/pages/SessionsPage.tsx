@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { SessionListItem } from "../types";
 import StatusBadge from "../components/StatusBadge";
 import ExportButtons from "../components/ExportButtons";
+import PriceEstimateNote from "../components/PriceEstimateNote";
 import { exportCsv } from "../utils/exportCsv";
 import { exportPdf } from "../utils/exportPdf";
 import { formatTotalTokens, formatCost, dailyUsageFor, tokenBreakdownTooltip, totalTokens } from "../utils/tokenFormat";
@@ -241,6 +242,7 @@ export default function SessionsPage() {
         <h2 className="text-xl font-semibold">Sessions</h2>
         <ExportButtons onExportCsv={handleExportCsv} onExportPdf={handleExportPdf} />
       </div>
+      <PriceEstimateNote className="-mt-2 mb-4" />
 
       {datePreset === "custom" && customRange && (
         <div className="flex items-center gap-2 mb-3 text-sm bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded px-3 py-2">

@@ -15,6 +15,7 @@ import { api } from "../api";
 import type { TeamAnalytics, SessionListItem } from "../types";
 import ChartCard from "../components/ChartCard";
 import ExportButtons from "../components/ExportButtons";
+import PriceEstimateNote from "../components/PriceEstimateNote";
 import { exportCsv } from "../utils/exportCsv";
 import { exportPdf } from "../utils/exportPdf";
 import { formatCost } from "../utils/tokenFormat";
@@ -253,6 +254,7 @@ export default function AnalyticsPage() {
         <ChartCard
           title={`Daily Cost Trend${overThreshold ? " ⚠" : ""}`}
         >
+          <PriceEstimateNote className="mb-2" />
           {analytics.dailyCostTrend.length === 0 ? (
             <EmptyChart message="No cost data available" />
           ) : (

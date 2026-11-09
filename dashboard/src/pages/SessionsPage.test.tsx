@@ -6,6 +6,7 @@ import { buildSessionListItem } from "../test/factories";
 
 vi.mock("../api", () => ({
   api: {
+    pricing: { get: vi.fn().mockResolvedValue({ asOf: "2026-11-09" }) },
     sessions: {
       list: vi.fn(),
     },

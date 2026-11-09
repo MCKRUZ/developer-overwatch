@@ -17,6 +17,7 @@ import type { SessionDetail, GovernanceViolation, DailyUsage, ModelUsage } from 
 import StatusBadge from "../components/StatusBadge";
 import SeverityBadge from "../components/SeverityBadge";
 import ChartCard from "../components/ChartCard";
+import PriceEstimateNote from "../components/PriceEstimateNote";
 import SessionTimeline from "../components/SessionTimeline";
 import { formatTotalTokens, formatCost, tokenBreakdownTooltip } from "../utils/tokenFormat";
 import { violationSessionLink } from "../utils/violationLink";
@@ -158,6 +159,7 @@ export default function SessionDetailPage() {
           <div>
             <span className="text-gray-500 dark:text-gray-400">Est. Cost:</span>{" "}
             <span>{formatCost(session.estimatedCostUsd)}</span>
+            <PriceEstimateNote className="mt-1" />
           </div>
         </div>
       </div>

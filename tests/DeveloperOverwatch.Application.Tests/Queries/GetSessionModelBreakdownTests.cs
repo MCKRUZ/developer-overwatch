@@ -53,4 +53,25 @@ public class GetSessionModelBreakdownTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Should().ContainSingle().Which.Model.Should().Be("claude-sonnet-5");
     }
+
+    [Fact]
+    public async Task Handle_ModelTotalsBeyondInt32_SumAsLongWithoutOverflow()
+    {
+        var now = DateTime.UtcNow;
+        const int big = 1_500_000_000;
+        _repo.GetTurnUsageRowsAsync("s1", Arg.Any<CancellationToken>()).Returns(new List<TurnUsageRow>
+        {
+            new(now, "claude-opus", big, big, big, big, 1m),
+            new(now, "claude-opus", big, big, big, big, 1m),
+        });
+
+        var handler = new GetSessionModelBreakdownQueryHandler(_repo);
+        var result = await handler.Handle(new GetSessionModelBreakdownQuery("s1"), CancellationToken.None);
+
+        var only = result.Value!.Single();
+        only.InputTokens.Should().Be(3_000_000_000L);
+        only.OutputTokens.Should().Be(3_000_000_000L);
+        only.CacheCreationInputTokens.Should().Be(3_000_000_000L);
+        only.CacheReadInputTokens.Should().Be(3_000_000_000L);
+    }
 }

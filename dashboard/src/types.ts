@@ -215,3 +215,7 @@ export interface DeveloperAnalytics {
   totalCommits: number;
   recentRepos: string[];
 }
+
+export interface PricingInfo {
+  asOf: string;
+}

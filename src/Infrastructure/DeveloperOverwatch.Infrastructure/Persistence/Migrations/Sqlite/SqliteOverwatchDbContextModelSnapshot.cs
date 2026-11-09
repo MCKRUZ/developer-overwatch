@@ -119,6 +119,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<int?>("OutputTokens")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateOnly?>("PricesAsOf")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -139,6 +142,8 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.HasKey("Id");
 
                     b.HasIndex("SessionId");
+
+                    b.HasIndex("Timestamp");
 
                     b.ToTable("ConversationTurns");
                 });
@@ -310,16 +315,16 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<string>("Title")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("TotalCacheCreationInputTokens")
+                    b.Property<long>("TotalCacheCreationInputTokens")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("TotalCacheReadInputTokens")
+                    b.Property<long>("TotalCacheReadInputTokens")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("TotalInputTokens")
+                    b.Property<long>("TotalInputTokens")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("TotalOutputTokens")
+                    b.Property<long>("TotalOutputTokens")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
