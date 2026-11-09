@@ -7,7 +7,7 @@ public sealed class IngestSessionStartCommandValidator : AbstractValidator<Inges
     public IngestSessionStartCommandValidator()
     {
         RuleFor(x => x.SessionId).NotEmpty();
-        RuleFor(x => x.EventId).MaximumLength(64);
+        RuleFor(x => x.EventId).NotEmpty().MaximumLength(64).When(x => x.EventId is not null);
         RuleFor(x => x.DeveloperEmail).NotEmpty().EmailAddress();
         RuleFor(x => x.StartedAt).NotEmpty();
         RuleFor(x => x.Agent).MaximumLength(64);
