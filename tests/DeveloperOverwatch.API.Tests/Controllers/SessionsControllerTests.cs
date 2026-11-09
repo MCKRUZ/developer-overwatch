@@ -190,7 +190,7 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
                 }
             },
             activityEvents = new[] { new { state = "waiting", at = now } },
-            toolFailures = new[] { new { toolName = "Bash", at = now } }
+            toolFailures = new[] { new { id = Guid.NewGuid().ToString(), toolName = "Bash", at = now } }
         });
         eventsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 

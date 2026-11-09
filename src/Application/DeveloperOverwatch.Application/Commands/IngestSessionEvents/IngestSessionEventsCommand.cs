@@ -21,10 +21,12 @@ public sealed record ActivityEventDto
     public required DateTime At { get; init; }
 }
 
-/// <summary>A failed tool call. No id and no error text: the Agent ships each failure once
-/// (cursor-tracked), and the server only counts it and remembers the latest tool name.</summary>
+/// <summary>A failed tool call, with no error text. Agent delivery is at-least-once, so the same
+/// failure can arrive more than once; <see cref="Id"/> (the hook's event id) lets the server store
+/// each failure once and count only ids it has not seen.</summary>
 public sealed record ToolFailureDto
 {
+    public required string Id { get; init; }
     public required string ToolName { get; init; }
     public required DateTime At { get; init; }
 }

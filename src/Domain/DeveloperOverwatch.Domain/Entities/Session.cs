@@ -41,15 +41,15 @@ public class Session
     // together across machines and clone paths. The Agent strips credentials before sending.
     public string? ProjectKey { get; set; }
 
-    // Largest single-request context (input + cache read + cache creation) seen in this session.
-    // Only ever raised as turns arrive.
+    // Largest single-request context (input + cache read + cache creation) seen on the main thread.
+    // Subagent turns have their own context window and never set it. Only ever raised as turns arrive.
     public long? PeakContextTokens { get; set; }
 
     public ActivityState? ActivityState { get; set; }
     public DateTime? ActivityStateAt { get; set; }
 
-    // Tool failures carry no ids, so a redelivered batch would count twice; the Agent ships each
-    // failure exactly once (cursor-tracked) and the server just adds what it receives.
+    // Cached from the SessionToolFailure rows: each failure is stored once by id, and these move
+    // only when a new id arrives, so a redelivered batch is not counted twice.
     public int ToolErrorCount { get; set; }
     public string? LastToolErrorName { get; set; }
     public DateTime? LastToolErrorAt { get; set; }

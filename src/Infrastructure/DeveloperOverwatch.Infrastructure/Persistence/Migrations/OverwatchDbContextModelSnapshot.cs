@@ -387,6 +387,31 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.ToTable("Sessions");
                 });
 
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ToolName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("SessionToolFailures");
+                });
+
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>
                 {
                     b.Property<string>("Id")
@@ -495,6 +520,15 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
+                {
+                    b.HasOne("DeveloperOverwatch.Domain.Entities.Session", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>

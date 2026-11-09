@@ -384,4 +384,17 @@ public sealed class SessionRepositoryTests : IDisposable
 
         existing.Should().BeEquivalentTo(["t-in-s1", "t-in-s2"]);
     }
+
+    [Fact]
+    public async Task GetExistingToolFailureIdsAsync_StoredFailures_ReturnsOnlyStoredIds()
+    {
+        await _repo.AddAsync(NewSession("s1"));
+        await _repo.AddToolFailuresAsync(
+            [new SessionToolFailure { Id = "f-1", SessionId = "s1", ToolName = "Bash", At = DateTime.UtcNow }]);
+        await _db.SaveChangesAsync();
+
+        var existing = await _repo.GetExistingToolFailureIdsAsync(["f-1", "f-new"]);
+
+        existing.Should().BeEquivalentTo(["f-1"]);
+    }
 }

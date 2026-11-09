@@ -26,7 +26,17 @@ public class IngestSessionCaptureTests
     {
         _repo.GetExistingTurnIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(new HashSet<string>());
+
+        // Behaves like the database: ids added in one ingest are "existing" in the next.
+        _repo.GetExistingToolFailureIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(ci => (IReadOnlySet<string>)ci.Arg<IReadOnlyCollection<string>>()
+                .Where(_storedFailureIds.Contains).ToHashSet());
+        _repo.AddToolFailuresAsync(
+            Arg.Do<IEnumerable<SessionToolFailure>>(fs => _storedFailureIds.UnionWith(fs.Select(f => f.Id))),
+            Arg.Any<CancellationToken>());
     }
+
+    private readonly HashSet<string> _storedFailureIds = [];
 
     [Fact]
     public async Task Start_NewSessionWithCaptureFields_StoresAgentMachineAndProject()
@@ -77,7 +87,10 @@ public class IngestSessionCaptureTests
     [Theory]
     [InlineData("https://user:token@github.com/o/r")]
     [InlineData("HTTPS://token@github.com/o/r")]
-    public void StartValidator_ProjectKeyWithUrlCredentials_Fails(string projectKey)
+    [InlineData("git@github.com:o/r")]
+    [InlineData("token@github.com/o/r")]
+    [InlineData("github.com/o/r@x")]
+    public void StartValidator_ProjectKeyContainingAt_Fails(string projectKey)
     {
         var result = new IngestSessionStartCommandValidator()
             .Validate(StartCommand("s-4") with { ProjectKey = projectKey });
@@ -192,14 +205,236 @@ public class IngestSessionCaptureTests
             SessionId = session.Id,
             ToolFailures =
             [
-                new ToolFailureDto { ToolName = "Bash", At = T0.AddMinutes(5) },
-                new ToolFailureDto { ToolName = "Edit", At = T0.AddMinutes(1) }
+                new ToolFailureDto { Id = "f-1", ToolName = "Bash", At = T0.AddMinutes(5) },
+                new ToolFailureDto { Id = "f-2", ToolName = "Edit", At = T0.AddMinutes(1) }
             ]
         }, CancellationToken.None);
 
         session.ToolErrorCount.Should().Be(4);
         session.LastToolErrorName.Should().Be("Bash");
         session.LastToolErrorAt.Should().Be(T0.AddMinutes(5));
+    }
+
+    [Fact]
+    public async Task Events_SameToolFailureSentTwice_CountsOnce()
+    {
+        var session = ExistingSession("s-11");
+        var handler = EventsHandler();
+        var command = FailuresCommand(session.Id, ("f-1", "Bash", T0));
+
+        await handler.Handle(command, CancellationToken.None);
+        var second = await handler.Handle(command, CancellationToken.None);
+
+        session.ToolErrorCount.Should().Be(1);
+        second.Value.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Events_DuplicateToolFailuresInOneBatch_CountOnce()
+    {
+        var session = ExistingSession("s-12");
+        List<SessionToolFailure> stored = [];
+        await _repo.AddToolFailuresAsync(
+            Arg.Do<IEnumerable<SessionToolFailure>>(fs => stored.AddRange(fs)), Arg.Any<CancellationToken>());
+
+        await EventsHandler().Handle(
+            FailuresCommand(session.Id, ("f-1", "Bash", T0), ("f-1", "Bash", T0)), CancellationToken.None);
+
+        session.ToolErrorCount.Should().Be(1);
+        stored.Should().ContainSingle(f => f.Id == "f-1" && f.SessionId == session.Id);
+    }
+
+    [Fact]
+    public async Task Events_RedeliveredOlderFailure_DoesNotChangeLatestToolError()
+    {
+        var session = ExistingSession("s-13");
+        var handler = EventsHandler();
+        await handler.Handle(FailuresCommand(session.Id, ("f-old", "Read", T0)), CancellationToken.None);
+        await handler.Handle(FailuresCommand(session.Id, ("f-new", "Bash", T0.AddMinutes(1))), CancellationToken.None);
+
+        await handler.Handle(FailuresCommand(session.Id, ("f-old", "Read", T0)), CancellationToken.None);
+
+        session.ToolErrorCount.Should().Be(2);
+        session.LastToolErrorName.Should().Be("Bash");
+    }
+
+    [Fact]
+    public async Task Events_SubagentTurnLargerThanMainTurns_DoesNotRaisePeak()
+    {
+        var session = ExistingSession("s-14");
+        List<ConversationTurn> stored = [];
+        await _repo.AddTurnsAsync(
+            Arg.Do<IEnumerable<ConversationTurn>>(ts => stored = ts.ToList()), Arg.Any<CancellationToken>());
+
+        await EventsHandler().Handle(new IngestSessionEventsCommand
+        {
+            SessionId = session.Id,
+            ConversationTurns =
+            [
+                new ConversationTurnDto { Id = "a-1", Role = "assistant", InputTokens = 4000, Timestamp = T0 },
+                new ConversationTurnDto { Id = "s-1", Role = "subagent", InputTokens = 90000, Timestamp = T0 }
+            ]
+        }, CancellationToken.None);
+
+        session.PeakContextTokens.Should().Be(4000);
+        stored.Single(t => t.Id == "s-1").ContextTokens.Should().Be(90000);
+    }
+
+    [Fact]
+    public void EventsValidator_MoreThan500ActivityEvents_Fails()
+    {
+        var result = EventsValidator().Validate(new IngestSessionEventsCommand
+        {
+            SessionId = "s-15",
+            ActivityEvents = Enumerable.Range(0, 501)
+                .Select(_ => new ActivityEventDto { State = ActivityState.Active, At = T0 }).ToList()
+        });
+
+        result.Errors.Should().Contain(e => e.PropertyName == nameof(IngestSessionEventsCommand.ActivityEvents));
+    }
+
+    [Fact]
+    public void EventsValidator_MoreThan500ToolFailures_Fails()
+    {
+        var result = EventsValidator().Validate(new IngestSessionEventsCommand
+        {
+            SessionId = "s-16",
+            ToolFailures = Enumerable.Range(0, 501)
+                .Select(i => new ToolFailureDto { Id = $"f-{i}", ToolName = "Bash", At = T0 }).ToList()
+        });
+
+        result.Errors.Should().Contain(e => e.PropertyName == nameof(IngestSessionEventsCommand.ToolFailures));
+    }
+
+    [Fact]
+    public void EventsValidator_Exactly500OfEach_Passes()
+    {
+        var result = EventsValidator().Validate(new IngestSessionEventsCommand
+        {
+            SessionId = "s-17",
+            ActivityEvents = Enumerable.Range(0, 500)
+                .Select(_ => new ActivityEventDto { State = ActivityState.Active, At = T0 }).ToList(),
+            ToolFailures = Enumerable.Range(0, 500)
+                .Select(i => new ToolFailureDto { Id = $"f-{i}", ToolName = "Bash", At = T0 }).ToList()
+        });
+
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EventsValidator_ActivityEventMoreThanFiveMinutesAhead_Fails()
+    {
+        var result = EventsValidator().Validate(new IngestSessionEventsCommand
+        {
+            SessionId = "s-18",
+            ActivityEvents = [new ActivityEventDto { State = ActivityState.Active, At = T0.AddMinutes(5).AddSeconds(1) }]
+        });
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EventsValidator_ToolFailureMoreThanFiveMinutesAhead_Fails()
+    {
+        var result = EventsValidator().Validate(
+            FailuresCommand("s-19", ("f-1", "Bash", new DateTime(9999, 1, 1, 0, 0, 0, DateTimeKind.Utc))));
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EventsValidator_TimestampsAtFiveMinutesAhead_Pass()
+    {
+        var result = EventsValidator().Validate(new IngestSessionEventsCommand
+        {
+            SessionId = "s-20",
+            ActivityEvents = [new ActivityEventDto { State = ActivityState.Active, At = T0.AddMinutes(5) }],
+            ToolFailures = [new ToolFailureDto { Id = "f-1", ToolName = "Bash", At = T0.AddMinutes(5) }]
+        });
+
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0123456789012345678901234567890123456789012345678901234567890123x")]
+    public void EventsValidator_ToolFailureIdEmptyOrOver64_Fails(string id)
+    {
+        var result = EventsValidator().Validate(FailuresCommand("s-21", (id, "Bash", T0)));
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Start_BackfillForEndedSession_KeepsItEndedAndFillsOnlyMissingMetadata()
+    {
+        var endedAt = T0.AddHours(-1);
+        var lastActivity = T0.AddHours(-2);
+        var existing = new Session
+        {
+            Id = "s-22", Status = SessionStatus.Completed, EndedAt = endedAt, LastActivityAt = lastActivity,
+            Title = "kept-title", MachineName = null, ProjectKey = "github.com/o/kept"
+        };
+        _repo.GetByIdAsync("s-22", Arg.Any<CancellationToken>()).Returns(existing);
+
+        await StartHandler().Handle(StartCommand("s-22") with
+        {
+            IsBackfill = true,
+            Title = "backfill-title",
+            MachineName = "box-a",
+            ProjectKey = "github.com/o/other"
+        }, CancellationToken.None);
+
+        existing.Status.Should().Be(SessionStatus.Completed);
+        existing.EndedAt.Should().Be(endedAt);
+        existing.LastActivityAt.Should().Be(lastActivity);
+        existing.Title.Should().Be("kept-title");
+        existing.MachineName.Should().Be("box-a");
+        existing.ProjectKey.Should().Be("github.com/o/kept");
+    }
+
+    [Fact]
+    public async Task Start_BackfillForEndedSessionWithoutTitle_FillsTitle()
+    {
+        var existing = new Session { Id = "s-23", Status = SessionStatus.Completed, Title = null };
+        _repo.GetByIdAsync("s-23", Arg.Any<CancellationToken>()).Returns(existing);
+
+        await StartHandler().Handle(StartCommand("s-23") with { IsBackfill = true, Title = "from-backfill" },
+            CancellationToken.None);
+
+        existing.Title.Should().Be("from-backfill");
+        existing.Status.Should().Be(SessionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task Start_BackfillForNewSession_CreatesActiveWithLastActivityAtStartedAt()
+    {
+        Session? stored = null;
+        await _repo.AddAsync(Arg.Do<Session>(s => stored = s), Arg.Any<CancellationToken>());
+        var startedAt = T0.AddDays(-30);
+
+        await StartHandler().Handle(StartCommand("s-24") with { IsBackfill = true, StartedAt = startedAt },
+            CancellationToken.None);
+
+        stored!.Status.Should().Be(SessionStatus.Active);
+        stored.StartedAt.Should().Be(startedAt);
+        stored.LastActivityAt.Should().Be(startedAt);
+    }
+
+    private static IngestSessionEventsCommandValidator EventsValidator() => new(new FixedTime(T0));
+
+    private static IngestSessionEventsCommand FailuresCommand(
+        string sessionId, params (string Id, string ToolName, DateTime At)[] failures) => new()
+    {
+        SessionId = sessionId,
+        ToolFailures = failures
+            .Select(f => new ToolFailureDto { Id = f.Id, ToolName = f.ToolName, At = f.At })
+            .ToList()
+    };
+
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private IngestSessionStartCommandHandler StartHandler() => new(_repo, _uow);

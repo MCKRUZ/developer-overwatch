@@ -9,6 +9,9 @@ using MediatR;
 public sealed class IngestSessionEventsCommandHandler
     : IRequestHandler<IngestSessionEventsCommand, Result<int>>
 {
+    // The role the Agent gives every turn produced inside a subagent.
+    private const string SubagentRole = "subagent";
+
     private readonly ISessionRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITokenPricingCalculator _pricing;
@@ -84,8 +87,11 @@ public sealed class IngestSessionEventsCommandHandler
                 session.TotalCacheReadInputTokens += t.CacheReadInputTokens ?? 0;
                 session.EstimatedCostUsd += cost;
 
+                // A subagent runs in its own context window, so only main-thread turns set the
+                // session's peak. ContextTokens is still stored on every turn.
                 var contextTokens = ContextTokensOf(t);
-                if (contextTokens is long context && (session.PeakContextTokens is null || context > session.PeakContextTokens))
+                if (t.Role != SubagentRole && contextTokens is long context
+                    && (session.PeakContextTokens is null || context > session.PeakContextTokens))
                     session.PeakContextTokens = context;
 
                 // The Agent is the only place that ever sees the raw secret — by the time this
@@ -171,7 +177,7 @@ public sealed class IngestSessionEventsCommandHandler
         }
 
         totalEvents += ApplyActivity(session, request.ActivityEvents);
-        totalEvents += ApplyToolFailures(session, request.ToolFailures);
+        totalEvents += await ApplyToolFailuresAsync(session, request.ToolFailures, cancellationToken);
 
         if (totalEvents > 0)
             session.LastActivityAt = DateTime.UtcNow;
@@ -201,19 +207,37 @@ public sealed class IngestSessionEventsCommandHandler
         return 1;
     }
 
-    private static int ApplyToolFailures(Session session, IReadOnlyList<ToolFailureDto> failures)
+    // Delivery is at-least-once, so a failure can arrive again. Each is stored once by id, and the
+    // cached count and latest name on the session move only for ids not seen before.
+    private async Task<int> ApplyToolFailuresAsync(
+        Session session, IReadOnlyList<ToolFailureDto> failures, CancellationToken cancellationToken)
     {
         if (failures.Count == 0)
             return 0;
 
-        session.ToolErrorCount += failures.Count;
-        var latest = failures.MaxBy(f => f.At)!;
+        var incoming = failures.DistinctBy(f => f.Id).ToList();
+        var existingIds = await _repository.GetExistingToolFailureIdsAsync(
+            incoming.Select(f => f.Id).ToList(), cancellationToken);
+        var newFailures = incoming.Where(f => !existingIds.Contains(f.Id)).ToList();
+        if (newFailures.Count == 0)
+            return 0;
+
+        await _repository.AddToolFailuresAsync(newFailures.Select(f => new SessionToolFailure
+        {
+            Id = f.Id,
+            SessionId = session.Id,
+            ToolName = f.ToolName,
+            At = f.At
+        }).ToList(), cancellationToken);
+
+        session.ToolErrorCount += newFailures.Count;
+        var latest = newFailures.MaxBy(f => f.At)!;
         if (session.LastToolErrorAt is null || latest.At >= session.LastToolErrorAt)
         {
             session.LastToolErrorName = latest.ToolName;
             session.LastToolErrorAt = latest.At;
         }
 
-        return failures.Count;
+        return newFailures.Count;
     }
 }

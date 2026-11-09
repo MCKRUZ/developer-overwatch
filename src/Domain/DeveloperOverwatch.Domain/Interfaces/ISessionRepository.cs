@@ -67,6 +67,13 @@ public interface ISessionRepository
     Task<IReadOnlySet<string>> GetExistingTurnIdsAsync(
         IReadOnlyCollection<string> turnIds, CancellationToken ct = default);
 
+    /// <summary>Which of these tool failure ids are already stored, in any session. The id is the
+    /// primary key, so the check is global.</summary>
+    Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(
+        IReadOnlyCollection<string> failureIds, CancellationToken ct = default);
+
+    Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default);
+
     Task AddAsync(Session session, CancellationToken ct = default);
     Task UpdateAsync(Session session, CancellationToken ct = default);
     Task AddTurnAsync(ConversationTurn turn, CancellationToken ct = default);
