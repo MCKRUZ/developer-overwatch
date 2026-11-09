@@ -12,15 +12,18 @@ public interface IEventQueue
     Task IncrementRetryAsync(string id, CancellationToken ct = default);
     Task<int> GetUnshippedCountAsync(CancellationToken ct = default);
     Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default);
+    Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default);
 }
 
 public sealed class EventQueue : IEventQueue, IDisposable
 {
     private readonly SqliteConnection _connection;
+    private readonly TimeProvider _time;
     private readonly Lock _lock = new();
 
-    public EventQueue(string dbPath)
+    public EventQueue(string dbPath, TimeProvider? timeProvider = null)
     {
+        _time = timeProvider ?? TimeProvider.System;
         var directory = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
@@ -156,14 +159,21 @@ public sealed class EventQueue : IEventQueue, IDisposable
         }
     }
 
-    public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default)
+    public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
+        PurgeAsync(shipped: true, olderThan);
+
+    public Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
+        PurgeAsync(shipped: false, olderThan);
+
+    private Task PurgeAsync(bool shipped, TimeSpan olderThan)
     {
-        var threshold = DateTime.UtcNow.Subtract(olderThan).ToString("o");
+        var threshold = _time.GetUtcNow().UtcDateTime.Subtract(olderThan).ToString("o");
 
         lock (_lock)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = "DELETE FROM events WHERE shipped = 1 AND created_at < $threshold";
+            cmd.CommandText = "DELETE FROM events WHERE shipped = $shipped AND created_at < $threshold";
+            cmd.Parameters.AddWithValue("$shipped", shipped ? 1 : 0);
             cmd.Parameters.AddWithValue("$threshold", threshold);
             cmd.ExecuteNonQuery();
         }

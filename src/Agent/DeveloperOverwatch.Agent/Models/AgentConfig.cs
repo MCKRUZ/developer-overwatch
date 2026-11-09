@@ -1,7 +1,13 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace DeveloperOverwatch.Agent.Models;
 
 public sealed class AgentConfig
 {
+    /// <summary>Pilot unless a config says otherwise: every install from before modes existed has a
+    /// config file with no <c>mode</c> key, and must keep shipping.</summary>
+    public AgentMode Mode { get; init; } = AgentMode.Pilot;
     public string ApiUrl { get; init; } = "http://localhost:5000";
     public string? ApiKey { get; init; }
     public int PollIntervalSeconds { get; init; } = 5;
@@ -10,11 +16,41 @@ public sealed class AgentConfig
     public IReadOnlyList<string> RedactionPatterns { get; init; } = DefaultRedactionPatterns;
     public bool PrivateSession { get; init; }
 
-    public string OverwatchDir => Path.Combine(
+    public static string DefaultOverwatchDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".overwatch");
+
+    public string OverwatchDir { get; init; } = DefaultOverwatchDir;
 
     public string QueueDbPath => Path.Combine(OverwatchDir, "queue.db");
     public string ConfigPath => Path.Combine(OverwatchDir, "config.json");
+
+    private static readonly JsonSerializerOptions LoadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
+    };
+
+    /// <summary>
+    /// No config file means a machine nobody enrolled, so <see cref="AgentMode.Local"/>. A file
+    /// without <c>mode</c> is an existing install, so <see cref="AgentMode.Pilot"/>. An explicit
+    /// <c>mode</c> wins. A file that cannot be read fails closed to Local: when the agent cannot
+    /// tell what the machine was enrolled as, nothing leaves it.
+    /// </summary>
+    public static AgentConfig Load(string configPath)
+    {
+        if (!File.Exists(configPath))
+            return new AgentConfig { Mode = AgentMode.Local };
+
+        try
+        {
+            return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(configPath), LoadOptions)
+                ?? new AgentConfig { Mode = AgentMode.Local };
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return new AgentConfig { Mode = AgentMode.Local };
+        }
+    }
 
     private static readonly string[] DefaultRedactionPatterns =
     [

@@ -34,14 +34,17 @@ public sealed class QueueProcessorTests
         {
             PollIntervalSeconds = 1,
             BatchSize = 50,
-            GitFallbackThreshold = 100
+            GitFallbackThreshold = 100,
+            // Never the real ~/.overwatch: the processor imports and deletes its fallback file.
+            OverwatchDir = Path.Combine(Path.GetTempPath(), $"ow-qp-{Guid.NewGuid():N}")
         };
 
         _gitRemote = Substitute.For<IGitRemoteReader>();
 
         var logger = Substitute.For<ILogger<QueueProcessor>>();
         _sut = new QueueProcessor(
-            _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _gitRemote, _config, logger);
+            _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _gitRemote,
+            Substitute.For<IUsageStore>(), _config, logger);
     }
 
     private readonly IGitRemoteReader _gitRemote;

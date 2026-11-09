@@ -35,7 +35,9 @@ public static partial class ProjectKey
         if (path.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
             path = path[..^4].Trim('/');
 
-        return host.Length == 0 || path.Length == 0 ? null : $"{host.ToLowerInvariant()}/{path}";
+        // GitHub, GitLab and Azure DevOps paths are case-insensitive, so Acme/Widget and
+        // acme/widget are one project and must get one key.
+        return host.Length == 0 || path.Length == 0 ? null : $"{host}/{path}".ToLowerInvariant();
     }
 
     // scheme://authority/path

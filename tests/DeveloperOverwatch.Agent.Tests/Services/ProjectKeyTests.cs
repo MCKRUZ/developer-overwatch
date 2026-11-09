@@ -23,7 +23,11 @@ public sealed class ProjectKeyTests
     [InlineData("ssh://git@github.com/acme/widget.git", "github.com/acme/widget")]
     [InlineData("git+ssh://git@github.com/acme/widget.git", "github.com/acme/widget")]
     [InlineData("git+ssh://user:token@github.com:2222/acme/widget.git", "github.com/acme/widget")]
-    [InlineData("https://org@dev.azure.com/org/proj/_git/repo", "dev.azure.com/org/proj/_git/repo")]
+    [InlineData("https://org@dev.azure.com/Org/Proj/_git/Repo", "dev.azure.com/org/proj/_git/repo")]
+    // GitHub, GitLab and Azure DevOps paths are case-insensitive: one project, one key.
+    [InlineData("https://github.com/Acme/Widget.git", "github.com/acme/widget")]
+    [InlineData("git@GitHub.com:Acme/Widget", "github.com/acme/widget")]
+    [InlineData("https://gitlab.com/Acme/Sub/Widget.git", "gitlab.com/acme/sub/widget")]
     [InlineData("  https://github.com/acme/widget.git\n", "github.com/acme/widget")]
     public void From_RemoteForms_NormalizeToHostOwnerRepo(string remote, string expected)
     {

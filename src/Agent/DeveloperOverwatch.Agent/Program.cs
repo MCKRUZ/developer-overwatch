@@ -1,11 +1,10 @@
-using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using DeveloperOverwatch.Agent.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-var config = LoadConfig();
+var config = AgentConfig.Load(Path.Combine(AgentConfig.DefaultOverwatchDir, "config.json"));
 
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureLogging(logging =>
@@ -17,6 +16,7 @@ var host = Host.CreateDefaultBuilder(args)
     {
         services.AddSingleton(config);
         services.AddSingleton<IEventQueue>(_ => new EventQueue(config.QueueDbPath));
+        services.AddSingleton<IUsageStore>(_ => new UsageStore(config.QueueDbPath));
         services.AddSingleton<IPrivacyRedactor>(_ => new PrivacyRedactor(config.RedactionPatterns));
         services.AddSingleton<IDecisionDetector, DecisionDetector>();
         services.AddSingleton<IConversationCapture, ConversationCapture>();
@@ -35,29 +35,10 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .Build();
 
-Console.WriteLine($"Overwatch Agent started — shipping to {config.ApiUrl}");
+Console.WriteLine(config.Mode == AgentMode.Local
+    ? "Overwatch Agent started — local mode, usage stays on this machine"
+    : $"Overwatch Agent started — shipping to {config.ApiUrl}");
 Console.WriteLine($"Queue: {config.QueueDbPath}");
 Console.WriteLine($"Poll interval: {config.PollIntervalSeconds}s, Batch size: {config.BatchSize}");
 
 await host.RunAsync();
-
-static AgentConfig LoadConfig()
-{
-    var configPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".overwatch", "config.json");
-
-    if (!File.Exists(configPath))
-        return new AgentConfig();
-
-    try
-    {
-        var json = File.ReadAllText(configPath);
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        return JsonSerializer.Deserialize<AgentConfig>(json, options) ?? new AgentConfig();
-    }
-    catch
-    {
-        return new AgentConfig();
-    }
-}

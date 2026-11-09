@@ -13,12 +13,22 @@ internal static class SessionStartPayload
     private const int MaxMachineNameLength = 255;
     private const int MaxProjectKeyLength = 512;
 
+    /// <summary>The session's project key, exactly as the server receives it. Kept locally too,
+    /// so usage recorded on the machine groups by the same project.</summary>
     /// <param name="rawPayload">The payload as queued — the repository path is read from here,
     /// since redaction may rewrite strings.</param>
+    public static async Task<string?> ResolveProjectKeyAsync(
+        string rawPayload, IGitRemoteReader gitRemote, CancellationToken ct)
+    {
+        var repoPath = ReadRepoPath(rawPayload);
+        var remoteUrl = repoPath is null ? null : await gitRemote.GetOriginUrlAsync(repoPath, ct);
+        return Truncate(ProjectKey.From(remoteUrl, repoPath), MaxProjectKeyLength);
+    }
+
     /// <param name="redactedPayload">The payload that will be sent; returned unchanged when it is
     /// not a JSON object, because a session start must never be dropped.</param>
-    public static async Task<string> EnrichAsync(
-        string rawPayload, string redactedPayload, IGitRemoteReader gitRemote, CancellationToken ct)
+    /// <param name="projectKey">From <see cref="ResolveProjectKeyAsync"/>.</param>
+    public static string Enrich(string redactedPayload, string? projectKey)
     {
         JsonObject? body;
         try
@@ -33,12 +43,9 @@ internal static class SessionStartPayload
         if (body is null)
             return redactedPayload;
 
-        var repoPath = ReadRepoPath(rawPayload);
-        var remoteUrl = repoPath is null ? null : await gitRemote.GetOriginUrlAsync(repoPath, ct);
-
         body["agent"] = AgentName;
         body["machineName"] = Truncate(Environment.MachineName, MaxMachineNameLength);
-        body["projectKey"] = Truncate(ProjectKey.From(remoteUrl, repoPath), MaxProjectKeyLength);
+        body["projectKey"] = projectKey;
         return body.ToJsonString();
     }
 
