@@ -57,6 +57,7 @@ public static class DependencyInjection
         services.Configure<TokenPricingOptions>(configuration.GetSection("TokenPricing"));
         services.AddSingleton<ITokenPricingCalculator>(sp =>
             sp.GetRequiredService<IOptions<TokenPricingOptions>>().Value.ToPriceTable());
+        services.AddScoped<TurnRepricer>();
 
         services.Configure<ModelContextWindowsOptions>(configuration.GetSection("ModelContextWindows"));
         services.AddSingleton<IModelContextWindowProvider>(sp =>

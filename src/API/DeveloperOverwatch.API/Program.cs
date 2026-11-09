@@ -10,6 +10,7 @@ using DeveloperOverwatch.Application;
 using DeveloperOverwatch.Domain.Interfaces;
 using DeveloperOverwatch.Infrastructure;
 using DeveloperOverwatch.Infrastructure.Persistence;
+using DeveloperOverwatch.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
@@ -239,6 +240,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
     await DatabaseInitializer.InitializeAsync(db);
+    await scope.ServiceProvider.GetRequiredService<TurnRepricer>().RepriceAsync();
 }
 
 app.UseMiddleware<GlobalExceptionMiddleware>();

@@ -124,6 +124,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<int?>("OutputTokens")
                         .HasColumnType("int");
 
+                    b.Property<DateOnly?>("PricesAsOf")
+                        .HasColumnType("date");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");

@@ -119,6 +119,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<int?>("OutputTokens")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateOnly?>("PricesAsOf")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("TEXT");

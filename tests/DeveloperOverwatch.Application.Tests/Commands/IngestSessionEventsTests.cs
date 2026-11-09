@@ -116,6 +116,36 @@ public class IngestSessionEventsTests
     }
 
     [Fact]
+    public async Task Handle_WithConversationTurns_StampsEachTurnWithThePriceTableDate()
+    {
+        // The repricer recomputes any turn whose stamp differs from the current table, so ingest
+        // must record which table priced the turn.
+        var pricesAsOf = new DateOnly(2026, 11, 9);
+        var sessionId = Guid.NewGuid().ToString();
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>())
+            .Returns(new Session { Id = sessionId, Status = SessionStatus.Active });
+        _pricing.PricesAsOf.Returns(pricesAsOf);
+        List<ConversationTurn> stored = [];
+        await _repo.AddTurnsAsync(Arg.Do<IEnumerable<ConversationTurn>>(ts => stored.AddRange(ts)), Arg.Any<CancellationToken>());
+
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations);
+        var command = new IngestSessionEventsCommand
+        {
+            SessionId = sessionId,
+            ConversationTurns =
+            [
+                new ConversationTurnDto { Id = "t1", Role = "assistant", InputTokens = 15, Timestamp = DateTime.UtcNow },
+                new ConversationTurnDto { Id = "t2", Role = "assistant", OutputTokens = 8, Timestamp = DateTime.UtcNow },
+            ]
+        };
+
+        var result = await handler.Handle(command, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        stored.Should().HaveCount(2).And.OnlyContain(t => t.PricesAsOf == pricesAsOf);
+    }
+
+    [Fact]
     public async Task Handle_TurnFlaggedAsContainingRedactedSecret_CreatesCriticalViolation()
     {
         var sessionId = Guid.NewGuid().ToString();

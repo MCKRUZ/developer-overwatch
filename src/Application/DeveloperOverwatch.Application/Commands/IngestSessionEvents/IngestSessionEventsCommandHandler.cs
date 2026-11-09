@@ -116,6 +116,7 @@ public sealed class IngestSessionEventsCommandHandler
                     CacheReadInputTokens = t.CacheReadInputTokens,
                     Model = t.Model,
                     EstimatedCostUsd = cost,
+                    PricesAsOf = _pricing.PricesAsOf,
                     ContainsRedactedSecret = t.ContainsRedactedSecret,
                     Timestamp = t.Timestamp,
                     IsDecision = t.IsDecision
