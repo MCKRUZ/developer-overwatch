@@ -138,6 +138,48 @@ public sealed class HookScriptTests
         payload.RootElement.GetProperty("state").GetString().Should().Be(expectedState);
     }
 
+    public static TheoryData<string> AllHookNames() => new(
+        "overwatch-session-start.ps1", "overwatch-post-tool-use.ps1", "overwatch-tool-failure.ps1",
+        "overwatch-prompt-submit.ps1", "overwatch-notification.ps1", "overwatch-stop.ps1", "overwatch-session-end.ps1");
+
+    [Theory]
+    [MemberData(nameof(AllHookNames))]
+    public void Hook_SessionIdThatLeavesTheSessionsFolder_WritesNothing(string hook)
+    {
+        // Planted where sessions\..\x.json resolves: without the check, session-start overwrites it and
+        // the other hooks read it as a mapping and queue an event.
+        var home = CreateHome();
+        var planted = Path.Combine(home, ".overwatch", "x.json");
+        const string plantedContent = "{\"ourSessionId\":\"planted\",\"repoPath\":null}";
+        File.WriteAllText(planted, plantedContent);
+
+        var result = RunHook(hook, home, new
+        {
+            session_id = "../x",
+            hook_event_name = "Test",
+            tool_name = "Bash",
+            notification_type = "permission_prompt",
+            transcript_path = Path.Combine(home, "missing.jsonl")
+        });
+        if (result is null) return;
+
+        File.ReadAllText(planted).Should().Be(plantedContent);
+        ReadLines(home).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SessionStartHook_DatesItsEventBeforeWritingTheMapping()
+    {
+        // Other hooks queue events as soon as the mapping exists, so the start must be dated first.
+        var script = File.ReadAllText(Path.Combine(Pwsh.HooksDir, "overwatch-session-start.ps1"));
+
+        var dated = script.IndexOf("$now = ", StringComparison.Ordinal);
+        var mapped = script.IndexOf("Set-Content $mappingPath", StringComparison.Ordinal);
+        dated.Should().BePositive();
+        mapped.Should().BeGreaterThan(dated);
+        script.Should().Contain("startedAt = $now");
+    }
+
     private static string? RunHookAndReadLine(string hook, object input)
     {
         var home = CreateHome();

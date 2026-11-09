@@ -16,7 +16,7 @@ try {
 
     $hookInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $claudeSessionId = $hookInput.session_id
-    if (-not $claudeSessionId) { exit 0 }
+    if ($claudeSessionId -notmatch '^[A-Za-z0-9-]{1,100}$') { exit 0 }
 
     $toolName = [string]$hookInput.tool_name
     if (-not $toolName) { exit 0 }

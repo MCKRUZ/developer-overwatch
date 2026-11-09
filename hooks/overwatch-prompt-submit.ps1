@@ -13,7 +13,7 @@ try {
 
     $hookInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $claudeSessionId = $hookInput.session_id
-    if (-not $claudeSessionId) { exit 0 }
+    if ($claudeSessionId -notmatch '^[A-Za-z0-9-]{1,100}$') { exit 0 }
 
     $mappingPath = Join-Path $overwatchDir "sessions\$claudeSessionId.json"
     if (-not (Test-Path $mappingPath)) { exit 0 }

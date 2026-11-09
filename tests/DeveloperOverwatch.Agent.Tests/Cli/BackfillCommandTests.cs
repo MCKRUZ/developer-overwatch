@@ -179,6 +179,39 @@ public sealed class BackfillCommandTests : IDisposable
         (await AllRowsAsync()).Should().HaveCount(4);
     }
 
+    // Backfill run from inside a live Claude session must not mark that session ended on the dashboard.
+    [Theory]
+    [InlineData(5, 60)]      // last transcript line 5 minutes ago
+    [InlineData(1440, 10)]   // last line a day ago, but the file was written 10 minutes ago
+    public async Task Pilot_RecentlyActiveSession_IsQueuedWithoutASessionEnd(int lastLineMinutesAgo, int writtenMinutesAgo)
+    {
+        WriteMapping(SessionA, MappedId);
+        WriteTranscript(_transcriptA, Now.AddMinutes(-writtenMinutesAgo),
+            User(SessionA, _cwdA, Now.AddDays(-2)),
+            Assistant(SessionA, _cwdA, "msg-live", Now.AddMinutes(-lastLineMinutesAgo)));
+
+        var (_, output) = await RunAsync(AgentMode.Pilot);
+
+        output.Should().MatchRegex(@"Queued for shipping\s+2").And.MatchRegex(@"Still active, not closed\s+1");
+        (await _queue.DequeueBatchAsync(100)).Where(e => e.SessionId == MappedId).Select(e => e.EventType)
+            .Should().Equal([EventType.SessionStart, EventType.ConversationTurn],
+                "a session active in the last 30 minutes may be live, and its own SessionEnd hook closes it");
+    }
+
+    [Fact]
+    public async Task Pilot_SessionIdleLongerThanTheWindow_IsClosed()
+    {
+        WriteMapping(SessionA, MappedId);
+        WriteTranscript(_transcriptA, Now.AddMinutes(-31),
+            Assistant(SessionA, _cwdA, "msg-idle", Now.AddMinutes(-31)));
+
+        var (_, output) = await RunAsync(AgentMode.Pilot);
+
+        output.Should().MatchRegex(@"Still active, not closed\s+0");
+        (await _queue.DequeueBatchAsync(100)).Where(e => e.SessionId == MappedId).Select(e => e.EventType)
+            .Should().EndWith(EventType.SessionEnd);
+    }
+
     // A transcript can start in a folder outside any repository, such as Documents. Like the live hook,
     // backfill then sends no repository and no project key, rather than the raw folder.
     [Fact]

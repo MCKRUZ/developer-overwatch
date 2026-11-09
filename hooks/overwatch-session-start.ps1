@@ -9,8 +9,17 @@
 # later `/resume` of the same Claude session — even much later — is recognized as the same
 # session and reactivates it (via the API's upsert-on-conflict SessionStart handling) instead of
 # creating a duplicate.
+#
+# Registered without async: every other hook drops its event until this mapping exists.
 
 $ErrorActionPreference = "SilentlyContinue"
+
+$stdinJson = [Console]::In.ReadToEnd()
+$hookInput = $null
+try { $hookInput = $stdinJson | ConvertFrom-Json } catch { }
+$claudeSessionId = if ($hookInput) { $hookInput.session_id } else { $null }
+# The id names a file, so anything that could leave the sessions folder is refused.
+if ($claudeSessionId -notmatch '^[A-Za-z0-9-]{1,100}$') { exit 0 }
 
 # Safety net: the agent is meant to auto-start via the "OverwatchAgent" scheduled task
 # (registered by install-hooks.ps1), but if that task isn't registered on this machine —
@@ -28,12 +37,6 @@ if (-not (Test-Path $overwatchDir)) { New-Item -ItemType Directory -Path $overwa
 
 $sessionsDir = Join-Path $overwatchDir "sessions"
 if (-not (Test-Path $sessionsDir)) { New-Item -ItemType Directory -Path $sessionsDir -Force | Out-Null }
-
-$stdinJson = [Console]::In.ReadToEnd()
-$hookInput = $null
-try { $hookInput = $stdinJson | ConvertFrom-Json } catch { }
-$claudeSessionId = if ($hookInput) { $hookInput.session_id } else { $null }
-if (-not $claudeSessionId) { exit 0 }
 
 # SessionStart fires again on `/resume` (and on `/clear`, `/compact`) for a Claude session that
 # already has a mapping here — reuse the existing overwatch session ID rather than minting a new
@@ -61,6 +64,10 @@ if ($transcriptPath -and (Test-Path $transcriptPath)) {
     }
 }
 
+# Dated before the mapping exists: once it does, other hooks can queue events, and none of them
+# may sort before this start.
+$now = (Get-Date).ToUniversalTime().ToString("o")
+
 $mapping = @{
     ourSessionId = $sessionId
     repoPath = $repoPath
@@ -73,13 +80,12 @@ $payload = @{
     developerName = $developerName
     repoPath = $repoPath
     title = $title
-    startedAt = (Get-Date).ToUniversalTime().ToString("o")
+    startedAt = $now
 } | ConvertTo-Json -Compress
 
 # Hooks run under pwsh, which cannot load the SQLite library, so they only append to this file;
 # the Agent imports it into its queue on each poll.
 $eventId = [guid]::NewGuid().ToString()
-$now = (Get-Date).ToUniversalTime().ToString("o")
 $fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
 $line = @{ id = $eventId; sessionId = $sessionId; eventType = "SessionStart"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
 try { . (Join-Path $PSScriptRoot "overwatch-common.ps1"); Add-OverwatchLine $fallbackFile $line } catch { }

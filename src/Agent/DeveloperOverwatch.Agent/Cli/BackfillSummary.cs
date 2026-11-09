@@ -9,4 +9,5 @@ internal sealed record BackfillSummary(
     int ResponsesAdded,
     int ResponsesAlreadyPresent,
     int ParseErrors,
-    int SessionsQueued);
+    int SessionsQueued,
+    int SessionsStillActive);

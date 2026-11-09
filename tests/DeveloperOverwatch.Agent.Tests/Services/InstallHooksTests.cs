@@ -34,9 +34,12 @@ public sealed class InstallHooksTests : IDisposable
     private string ConfigPath => Path.Combine(_home, ".overwatch", "config.json");
     private string SettingsPath => Path.Combine(_home, ".claude", "settings.json");
     private string BackupPath => SettingsPath + ".overwatch-backup";
+    private string OriginalBackupPath => BackupPath + ".original";
+
+    private const string RestartWarning = "[!] Agent not restarted";
 
     [Fact]
-    public void FreshInstall_IsLocal_WithSevenAsyncHooks_AndNoServerAddress()
+    public void FreshInstall_IsLocal_WithSessionStartSyncAndSixAsyncHooks_AndNoServerAddress()
     {
         if (Install() is not { } result) return;
 
@@ -55,10 +58,103 @@ public sealed class InstallHooksTests : IDisposable
             group.ContainsKey("matcher").Should().BeFalse();
             var hook = group["hooks"]!.AsArray().Single()!.AsObject();
             hook["type"]!.GetValue<string>().Should().Be("command");
-            hook["async"]!.GetValue<bool>().Should().BeTrue("a cold pwsh costs ~440 ms, which must not block Claude Code");
+            if (eventName == "SessionStart")
+                hook.ContainsKey("async").Should().BeFalse(
+                    "every other hook needs the mapping SessionStart writes, so it must finish before they run");
+            else
+                hook["async"]!.GetValue<bool>().Should().BeTrue("a cold pwsh costs ~440 ms, which must not block Claude Code");
             hook["command"]!.GetValue<string>().Should().Contain(Path.Combine(Pwsh.HooksDir, script));
         }
         File.Exists(BackupPath).Should().BeFalse("there was no settings file to back up");
+        File.Exists(OriginalBackupPath).Should().BeFalse();
+        result.Stdout.Should().NotContain(RestartWarning, "a fresh install has no agent holding an old config");
+    }
+
+    [Fact]
+    public void UserHookWhoseNameStartsWithOverwatch_IsKept()
+    {
+        const string userHook = "pwsh -File \"C:\\tools\\overwatch-lint.ps1\"";
+        WriteFile(SettingsPath, $$"""
+            { "hooks": {
+                "Stop": [ { "hooks": [ { "type": "command", "command": {{System.Text.Json.JsonSerializer.Serialize(userHook)}} } ] } ],
+                "PreToolUse": [ { "hooks": [ { "type": "command", "command": "C:\\tools\\overwatch-lint.ps1" } ] } ]
+            } }
+            """);
+
+        if (Install() is not { } first) return;
+        var second = Install()!;
+
+        first.ExitCode.Should().Be(0, first.Stderr);
+        second.ExitCode.Should().Be(0, second.Stderr);
+        var hooks = ReadJson(SettingsPath)["hooks"]!.AsObject();
+        Commands(hooks, "PreToolUse").Should().Equal(@"C:\tools\overwatch-lint.ps1");
+        var stop = Commands(hooks, "Stop");
+        stop.Should().HaveCount(2);
+        stop[0].Should().Be(userHook, "only the scripts this installer registers are its own");
+    }
+
+    [Fact]
+    public void DateStringsInSettings_ComeBackUnchanged_TheOriginalBackupIsKept_AndNoTempFileIsLeft()
+    {
+        const string original = """{ "lastChecked": "2026-01-02T03:04:05.123+02:00", "model": "opus" }""";
+        WriteFile(SettingsPath, original);
+
+        if (Install() is null) return;
+        var second = Install()!;
+
+        second.ExitCode.Should().Be(0, second.Stderr);
+        File.ReadAllText(SettingsPath).Should().Contain("\"2026-01-02T03:04:05.123+02:00\"",
+            "a user's date string must not be parsed into a date and written back reformatted");
+        File.ReadAllText(BackupPath).Should().Contain("\"2026-01-02T03:04:05.123+02:00\"");
+        File.ReadAllText(OriginalBackupPath).Should().Be(original);
+        Directory.GetFiles(_home, "*.tmp", SearchOption.AllDirectories).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void OldSingleBackup_IsPromotedToTheOriginal_BeforeBeingOverwritten()
+    {
+        // Before .original existed, the one backup was written once and held the pre-Overwatch file.
+        const string preOverwatch = """{ "model": "sonnet" }""";
+        WriteFile(BackupPath, preOverwatch);
+        WriteFile(SettingsPath, """{ "model": "opus" }""");
+
+        if (Install() is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        File.ReadAllText(OriginalBackupPath).Should().Be(preOverwatch);
+        File.ReadAllText(BackupPath).Should().Be("""{ "model": "opus" }""");
+    }
+
+    [Theory]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "k" }""", "-Local")]
+    [InlineData("""{ "apiUrl": "https://overwatch.example.com" }""", "-Local")]
+    [InlineData("""{ "mode": "local" }""", "-Pilot -ApiUrl https://overwatch.example.com")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "old" }""", "-Pilot -ApiKey new")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://old.example.com" }""", "-Pilot -ApiUrl https://overwatch.example.com")]
+    public void ChangingModeAddressOrKey_NeedsARestart(string existingConfig, string args)
+    {
+        WriteFile(ConfigPath, existingConfig);
+
+        if (Install(args.Split(' ')) is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        result.Stdout.Should().Contain(RestartWarning,
+            "a running agent keeps its old config in memory, so a pilot agent would keep shipping after -Local");
+    }
+
+    [Theory]
+    [InlineData("""{ "mode": "local" }""", "-Local")]
+    [InlineData("""{ "mode": "local" }""", "")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "k" }""", "-Pilot")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "k" }""", "-Pilot -ApiUrl https://overwatch.example.com -ApiKey k")]
+    public void SameModeRerun_NeedsNoRestart(string existingConfig, string args)
+    {
+        WriteFile(ConfigPath, existingConfig);
+
+        if (Install(args.Split(' ', StringSplitOptions.RemoveEmptyEntries)) is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        result.Stdout.Should().NotContain(RestartWarning);
     }
 
     [Fact]
@@ -93,6 +189,7 @@ public sealed class InstallHooksTests : IDisposable
         stop[0].Should().Be("notify-me.sh");
         stop[1].Should().Contain(Path.Combine(Pwsh.HooksDir, "overwatch-stop.ps1"));
         File.ReadAllText(BackupPath).Should().Be(original);
+        File.ReadAllText(OriginalBackupPath).Should().Be(original);
     }
 
     [Fact]
@@ -108,7 +205,9 @@ public sealed class InstallHooksTests : IDisposable
         var hooks = ReadJson(SettingsPath)["hooks"]!.AsObject();
         hooks.SelectMany(h => Commands(hooks, h.Key)).Count(c => c.Contains("overwatch-")).Should().Be(7);
         Commands(hooks, "Stop").Should().HaveCount(2).And.Contain("notify-me.sh");
-        File.ReadAllText(BackupPath).Should().Be(original, "the backup keeps the file as it was before Overwatch first changed it");
+        File.ReadAllText(OriginalBackupPath).Should().Be(original,
+            "the original backup keeps the file as it was before Overwatch first changed it");
+        File.ReadAllText(BackupPath).Should().NotBe(original, "the rolling backup holds the file as this run found it");
     }
 
     [Fact]
@@ -164,10 +263,10 @@ public sealed class InstallHooksTests : IDisposable
         config.ContainsKey("apiKey").Should().BeFalse();
     }
 
-    /// <summary>Always passes -NoStart: without it the script registers a real scheduled task and starts
-    /// the real agent.</summary>
+    /// <summary>Always passes -NoStart and -NoProcessControl: without them the script registers a real
+    /// scheduled task, and stops and starts the real agent.</summary>
     private PwshResult? Install(params string[] args) =>
-        Pwsh.Start("install-hooks.ps1", _home, [.. args, "-NoStart"]) is { } process
+        Pwsh.Start("install-hooks.ps1", _home, [.. args, "-NoStart", "-NoProcessControl"]) is { } process
             ? Pwsh.Finish(process, stdin: "")
             : null;
 

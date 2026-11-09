@@ -71,8 +71,11 @@ public static class BackfillCommand
             summary.ResponsesAdded, summary.ResponsesAlreadyPresent)));
         output.WriteLine(Row("Parse errors", summary.ParseErrors.ToString(Invariant)));
         if (mode == AgentMode.Pilot)
+        {
             output.WriteLine(Row("Queued for shipping", summary.SessionsQueued.ToString(Invariant)));
+            output.WriteLine(Row("Still active, not closed", summary.SessionsStillActive.ToString(Invariant)));
+        }
     }
 
-    private static string Row(string label, string value) => $"  {label,-22}{value}";
+    private static string Row(string label, string value) => $"  {label,-26}{value}";
 }

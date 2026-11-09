@@ -1,4 +1,4 @@
-#Requires -Version 7
+#Requires -Version 7.5
 # hooks/install-hooks.ps1
 # Registers the Overwatch hooks in Claude Code's settings and writes the agent's config.
 #
@@ -6,27 +6,40 @@
 #   .\install-hooks.ps1                                        # local: usage stays on this machine
 #   .\install-hooks.ps1 -Pilot -ApiUrl <url> [-ApiKey <key>]   # pilot: also ships to the Overwatch API
 #   add -NoStart to skip registering the scheduled task and starting the agent
+#   add -NoProcessControl to never stop or start an agent process (tests use it)
 #
 # With neither -Pilot nor -Local, a fresh install is local and a re-run keeps the existing mode.
 # A config with no "mode" key predates modes and has always shipped, so it stays pilot, which is
 # also how the agent reads it. Other config keys are kept.
 #
+# A running agent holds its config in memory. When this run changes the mode, the API address or
+# the key, the running agent is stopped before config.json is written, even with -NoStart, so a
+# pilot agent never keeps shipping after a switch to local. It is then started again unless
+# -NoStart is set.
+#
 # Hooks are merged into ~/.claude/settings.json: every hook and setting that is not Overwatch's is
-# kept, entries whose command names an overwatch- script are replaced, and the file as it was
-# before the first change is kept as settings.json.overwatch-backup.
+# kept, and only entries whose command runs one of the scripts below are replaced. Each run backs
+# the file up to settings.json.overwatch-backup first; the file as it was before Overwatch ever
+# changed it is kept as settings.json.overwatch-backup.original and never overwritten.
+#
+# Needs PowerShell 7.5 for ConvertFrom-Json -DateKind String. Older versions turn date strings in
+# the user's settings into dates and write them back reformatted.
 
 param(
     [switch]$Pilot,
     [switch]$Local,
     [string]$ApiUrl,
     [string]$ApiKey,
-    [switch]$NoStart
+    [switch]$NoStart,
+    [switch]$NoProcessControl
 )
 
 $ErrorActionPreference = "Stop"
 
-# All async: a cold pwsh costs about 440 ms, and an async command hook runs in the background
-# instead of holding up Claude Code.
+# Every hook but SessionStart is async: a cold pwsh costs about 440 ms, and an async command hook
+# runs in the background instead of holding up Claude Code. SessionStart writes the session mapping
+# every other hook needs, so it runs to completion first; otherwise a fast or headless session
+# (claude -p) drops its first events. Claude Code already runs SessionStart without blocking input.
 $hookScripts = [ordered]@{
     SessionStart       = "overwatch-session-start.ps1"
     PostToolUse        = "overwatch-post-tool-use.ps1"
@@ -36,8 +49,15 @@ $hookScripts = [ordered]@{
     Stop               = "overwatch-stop.ps1"
     SessionEnd         = "overwatch-session-end.ps1"
 }
+$syncEvents = @("SessionStart")
+
+# One of our script names at the end of a path, right before the closing quote of the -File
+# argument. A user's own script such as C:\tools\overwatch-lint.ps1 does not match.
+$overwatchHookPattern = '[\\/](?:' + (@($hookScripts.Values | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')"'
 
 $configDefaults = [ordered]@{ pollIntervalSeconds = 5; batchSize = 50; gitFallbackThreshold = 100 }
+
+$agentName = "overwatch-agent"
 
 function Stop-Install([string]$Message) {
     [Console]::Error.WriteLine("[x] $Message")
@@ -45,13 +65,13 @@ function Stop-Install([string]$Message) {
     exit 1
 }
 
-# Null when the file does not exist.
+# Null when the file does not exist. Date strings stay strings, so they are written back unchanged.
 function Read-JsonObject([string]$Path) {
     if (-not (Test-Path $Path)) { return $null }
     $raw = Get-Content $Path -Raw
     if ([string]::IsNullOrWhiteSpace($raw)) { return [ordered]@{} }
     try {
-        $value = $raw | ConvertFrom-Json -AsHashtable
+        $value = $raw | ConvertFrom-Json -AsHashtable -DateKind String
     } catch {
         Stop-Install "$Path is not valid JSON. Fix or remove it, then run this again."
     }
@@ -61,12 +81,19 @@ function Read-JsonObject([string]$Path) {
     return $value
 }
 
-function Test-OverwatchHook($Hook) {
-    $Hook -is [System.Collections.IDictionary] -and ([string]$Hook["command"]) -match "overwatch-"
+# Writes beside the file, then moves over it, so a crash never leaves a half-written file.
+function Write-FileAtomic([string]$Path, [string]$Content) {
+    $tmp = "$Path.tmp"
+    Set-Content -Path $tmp -Value $Content
+    Move-Item -Path $tmp -Destination $Path -Force
 }
 
-# Removes every hook whose command names an overwatch- script, from every event, and drops the
-# groups and events left empty. A group can hold a user's hook beside ours; the user's stays.
+function Test-OverwatchHook($Hook) {
+    $Hook -is [System.Collections.IDictionary] -and ([string]$Hook["command"]) -match $overwatchHookPattern
+}
+
+# Removes every hook that runs one of our scripts, from every event, and drops the groups and
+# events left empty. A group can hold a user's hook beside ours; the user's stays.
 function Remove-OverwatchHooks([System.Collections.IDictionary]$Hooks) {
     foreach ($eventName in @($Hooks.Keys)) {
         $groups = @(foreach ($group in @($Hooks[$eventName])) {
@@ -83,14 +110,40 @@ function Remove-OverwatchHooks([System.Collections.IDictionary]$Hooks) {
 
 function Add-OverwatchHooks([System.Collections.IDictionary]$Hooks) {
     foreach ($eventName in $hookScripts.Keys) {
-        $command = "pwsh -NoProfile -File `"$(Join-Path $PSScriptRoot $hookScripts[$eventName])`""
+        $hook = [ordered]@{ type = "command"; command = "pwsh -NoProfile -File `"$(Join-Path $PSScriptRoot $hookScripts[$eventName])`"" }
+        if ($eventName -notin $syncEvents) { $hook["async"] = $true }
         $groups = [System.Collections.Generic.List[object]]::new()
         foreach ($existing in @($Hooks[$eventName])) {
             if ($null -ne $existing) { $groups.Add($existing) }
         }
-        $groups.Add([ordered]@{ hooks = @([ordered]@{ type = "command"; command = $command; async = $true }) })
+        $groups.Add([ordered]@{ hooks = @($hook) })
         $Hooks[$eventName] = $groups.ToArray()
     }
+}
+
+function Get-ConfigMode($Config) {
+    if ($null -eq $Config) { return $null }
+    if (-not $Config.Contains("mode")) { return "pilot" }
+    if ([string]$Config["mode"] -eq "pilot") { return "pilot" }
+    return "local"
+}
+
+# This user's agents only, which needs no admin rights.
+function Get-OwnAgent {
+    $session = (Get-Process -Id $PID).SessionId
+    @(Get-Process -Name $agentName -ErrorAction SilentlyContinue | Where-Object SessionId -eq $session)
+}
+
+function Stop-OwnAgent {
+    $running = Get-OwnAgent
+    if ($running.Count -eq 0) { return $false }
+    try {
+        $running | Stop-Process -Force
+        $running | Wait-Process -Timeout 15
+    } catch {
+        Stop-Install "Could not stop the running $agentName, which would keep its old settings: $_. Stop it in Task Manager, then run this again."
+    }
+    return $true
 }
 
 # --- Read and validate everything before writing anything ---
@@ -102,16 +155,20 @@ $configPath = Join-Path $overwatchDir "config.json"
 $claudeDir = Join-Path $env:USERPROFILE ".claude"
 $settingsPath = Join-Path $claudeDir "settings.json"
 $backupPath = "$settingsPath.overwatch-backup"
+$originalBackupPath = "$backupPath.original"
 
 $existingConfig = Read-JsonObject $configPath
 $config = if ($null -eq $existingConfig) { [ordered]@{} } else { $existingConfig }
 
+# Taken before $config, the same object, is changed below.
+$oldMode = Get-ConfigMode $existingConfig
+$oldApiUrl = [string]$config["apiUrl"]
+$oldApiKey = [string]$config["apiKey"]
+
 $mode = if ($Pilot) { "pilot" }
     elseif ($Local) { "local" }
     elseif ($null -eq $existingConfig) { "local" }
-    elseif (-not $config.Contains("mode")) { "pilot" }
-    elseif ([string]$config["mode"] -eq "pilot") { "pilot" }
-    else { "local" }
+    else { $oldMode }
 
 $droppedServer = $false
 if ($mode -eq "pilot") {
@@ -130,6 +187,10 @@ if ($mode -eq "pilot") {
     $config.Remove("apiKey")
 }
 
+# A fresh install has no config, so no running agent can hold an old one.
+$restartNeeded = $null -ne $existingConfig -and (
+    $oldMode -ne $mode -or $oldApiUrl -ne [string]$config["apiUrl"] -or $oldApiKey -ne [string]$config["apiKey"])
+
 $settings = Read-JsonObject $settingsPath
 $settingsExisted = $null -ne $settings
 if (-not $settingsExisted) { $settings = [ordered]@{} }
@@ -141,21 +202,31 @@ if ($null -eq $settings["hooks"]) {
 
 # --- Write ---
 
+$stoppedAgent = $false
+if ($restartNeeded -and -not $NoProcessControl) { $stoppedAgent = Stop-OwnAgent }
+
 $config["mode"] = $mode
 foreach ($key in $configDefaults.Keys) {
     if (-not $config.Contains($key)) { $config[$key] = $configDefaults[$key] }
 }
 New-Item -ItemType Directory -Path $overwatchDir -Force | Out-Null
-$config | ConvertTo-Json -Depth 100 | Set-Content $configPath
+Write-FileAtomic $configPath ($config | ConvertTo-Json -Depth 100)
 
 New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
-if ($settingsExisted -and -not (Test-Path $backupPath)) { Copy-Item $settingsPath $backupPath }
+if ($settingsExisted) {
+    # Before .original existed, .overwatch-backup was written once and held the original.
+    if (-not (Test-Path $originalBackupPath)) {
+        Copy-Item $(if (Test-Path $backupPath) { $backupPath } else { $settingsPath }) $originalBackupPath
+    }
+    Copy-Item $settingsPath $backupPath -Force
+}
 Remove-OverwatchHooks $settings["hooks"]
 Add-OverwatchHooks $settings["hooks"]
-$settings | ConvertTo-Json -Depth 100 | Set-Content $settingsPath
+Write-FileAtomic $settingsPath ($settings | ConvertTo-Json -Depth 100)
 
 Write-Host "[+] Overwatch hooks merged into $settingsPath"
-if (Test-Path $backupPath) { Write-Host "[+] Settings before Overwatch first changed them: $backupPath" }
+if ($settingsExisted) { Write-Host "[+] Settings before this run: $backupPath" }
+if (Test-Path $originalBackupPath) { Write-Host "[+] Settings before Overwatch first changed them: $originalBackupPath" }
 Write-Host "[+] Config saved to $configPath"
 if ($mode -eq "pilot") {
     Write-Host "[+] Mode: pilot. Usage is recorded here and shipped to $($config["apiUrl"])"
@@ -163,6 +234,10 @@ if ($mode -eq "pilot") {
     Write-Host "[+] Mode: local. Usage is recorded on this machine only"
     if ($droppedServer) { Write-Host "[+] Removed the API address and key, which local mode does not use" }
 }
+if ($restartNeeded -and $NoProcessControl) {
+    Write-Host "[!] Agent not restarted: an $agentName that is already running keeps its old settings until it restarts"
+}
+if ($stoppedAgent) { Write-Host "[+] Stopped the running agent so it does not keep its old settings" }
 
 if ($NoStart) {
     Write-Host "[+] -NoStart: did not register the scheduled task or start the agent"
@@ -173,7 +248,7 @@ if ($NoStart) {
 # Register it as a per-user scheduled task so it auto-starts at login and survives reboots
 # without anyone having to open a terminal. (The SessionStart hook also does a lazy-start check
 # as a safety net in case this task isn't registered on a given machine.)
-$agentCommand = Get-Command overwatch-agent -ErrorAction SilentlyContinue
+$agentCommand = Get-Command $agentName -ErrorAction SilentlyContinue
 if ($agentCommand) {
     $agentPath = $agentCommand.Source
     $taskName = "OverwatchAgent"
@@ -186,17 +261,19 @@ if ($agentCommand) {
         Write-Host "[+] Registered scheduled task '$taskName' — agent will auto-start at login"
     } catch {
         Write-Host "[!] Could not register scheduled task '$taskName': $_"
-        Write-Host "    You can start the agent manually for now: overwatch-agent"
+        Write-Host "    You can start the agent manually for now: $agentName"
     }
 
-    if (-not (Get-Process -Name "overwatch-agent" -ErrorAction SilentlyContinue)) {
+    if ($NoProcessControl) {
+        Write-Host "[+] -NoProcessControl: did not start the agent"
+    } elseif ((Get-OwnAgent).Count -eq 0) {
         Start-Process -FilePath $agentPath -WindowStyle Hidden
         Write-Host "[+] Started the agent now (runs hidden; check Task Manager > Details > overwatch-agent.exe)"
     } else {
-        Write-Host "[+] Agent is already running"
+        Write-Host "[+] Agent is already running with these settings"
     }
 } else {
-    Write-Host "[!] overwatch-agent not found on PATH — install it first:"
+    Write-Host "[!] $agentName not found on PATH — install it first:"
     Write-Host "    dotnet tool install -g DeveloperOverwatch.Agent"
     Write-Host "    Then re-run this script to register auto-start."
 }

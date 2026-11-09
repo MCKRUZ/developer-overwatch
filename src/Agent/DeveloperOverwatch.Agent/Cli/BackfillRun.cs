@@ -14,6 +14,9 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
     // What overwatch-session-start.ps1 sends when git has no user.email.
     private const string UnknownDeveloperEmail = "unknown@localhost";
 
+    // A session active this recently may be the one running backfill, so it is not marked ended.
+    private static readonly TimeSpan StillActiveWindow = TimeSpan.FromMinutes(30);
+
     private readonly Dictionary<string, RepoInfo> _repos = new(StringComparer.Ordinal);
 
     private int _filesScanned;
@@ -24,6 +27,7 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
     private int _alreadyPresent;
     private int _parseErrors;
     private int _queued;
+    private int _stillActive;
 
     private bool Pilot => config.Mode == AgentMode.Pilot;
 
@@ -40,7 +44,8 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
         }
 
         return new BackfillSummary(
-            _filesScanned, _filesTooOld, _filesUnreadable, _sessions, _added, _alreadyPresent, _parseErrors, _queued);
+            _filesScanned, _filesTooOld, _filesUnreadable, _sessions, _added, _alreadyPresent, _parseErrors, _queued,
+            _stillActive);
     }
 
     private async Task ProcessTranscriptAsync(string transcript, CancellationToken ct)
@@ -127,7 +132,9 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
     /// <summary>Queues what the hooks would have: a SessionStart, a ConversationTurn marker and a SessionEnd,
     /// so the processor ships the session through its normal path with stable turn ids. The marker is
     /// usage-only and starts at the cutoff, so no conversation text and nothing outside --days leaves the
-    /// machine. Live capture may already have shipped some of these turns; the server skips ids it stores.</summary>
+    /// machine. Live capture may already have shipped some of these turns; the server skips ids it stores.
+    /// A session active within the last 30 minutes gets no SessionEnd: it may be live, even the session
+    /// running backfill, and its own SessionEnd hook closes it.</summary>
     private async Task QueueForShippingAsync(
         string transcript, string claudeSessionId, BackfillSession session, TranscriptHeader header, RepoInfo repo,
         CancellationToken ct)
@@ -136,8 +143,10 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
         if (!session.Mapped)
             await BackfillSessionIds.WriteMappingAsync(config.OverwatchDir, claudeSessionId, session.Id, repo.Root, ct);
 
-        var lastActiveAt = Iso(await TranscriptHeader.ReadLastTimestampAsync(transcript, ct)
-                               ?? File.GetLastWriteTimeUtc(transcript));
+        var lastWriteUtc = File.GetLastWriteTimeUtc(transcript);
+        var lastActiveUtc = ToUtc(await TranscriptHeader.ReadLastTimestampAsync(transcript, ct) ?? lastWriteUtc);
+        var lastActiveAt = Iso(lastActiveUtc);
+        var stillActive = nowUtc - lastActiveUtc < StillActiveWindow || nowUtc - lastWriteUtc < StillActiveWindow;
         // The processor reads the marker as "idle", dated by "at": when the session was last active.
         var marker = JsonSerializer.Serialize(new
         {
@@ -153,7 +162,10 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
         await services.Queue.EnqueueAsync(
             Event($"start:{claudeSessionId}", session.Id, EventType.SessionStart, BuildSessionStart(transcript, session.Id, header, repo), 0), ct);
         await services.Queue.EnqueueAsync(Event($"turns:{claudeSessionId}", session.Id, EventType.ConversationTurn, marker, 1), ct);
-        await services.Queue.EnqueueAsync(Event($"end:{claudeSessionId}", session.Id, EventType.SessionEnd, end, 2), ct);
+        if (stillActive)
+            _stillActive++;
+        else
+            await services.Queue.EnqueueAsync(Event($"end:{claudeSessionId}", session.Id, EventType.SessionEnd, end, 2), ct);
         _queued++;
     }
 
