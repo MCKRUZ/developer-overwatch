@@ -30,6 +30,10 @@ public static class DependencyInjection
 
         services.AddScoped<Services.SessionCommitCorrelator>();
 
+        // The only unkeyed IOverwatchNotifier. Channels register keyed under ChannelKey
+        // (Infrastructure: Slack/email, API: SignalR) so none can shadow another.
+        services.AddScoped<Domain.Interfaces.IOverwatchNotifier, Services.CompositeOverwatchNotifier>();
+
         return services;
     }
 }
