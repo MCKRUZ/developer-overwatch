@@ -266,6 +266,21 @@ public sealed class SessionRepository : ISessionRepository
         return existing;
     }
 
+    public async Task<IReadOnlySet<string>> GetExistingToolExecutionIdsAsync(
+        IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in toolExecutionIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.ToolExecutions
+                .Where(t => chunk.Contains(t.Id))
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
     public async Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(
         IReadOnlyCollection<string> failureIds, CancellationToken ct = default)
     {

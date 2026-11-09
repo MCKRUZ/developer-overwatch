@@ -386,6 +386,23 @@ public sealed class SessionRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task GetExistingToolExecutionIdsAsync_ReturnsMatchingIdsFromEverySession()
+    {
+        await _repo.AddAsync(NewSession("s1"));
+        await _repo.AddAsync(NewSession("s2"));
+        await _repo.AddToolExecutionsAsync(
+        [
+            new ToolExecution { Id = "x-in-s1", SessionId = "s1", ToolName = "Read", Timestamp = DateTime.UtcNow },
+            new ToolExecution { Id = "x-in-s2", SessionId = "s2", ToolName = "Edit", Timestamp = DateTime.UtcNow },
+        ]);
+        await _db.SaveChangesAsync();
+
+        var existing = await _repo.GetExistingToolExecutionIdsAsync(["x-in-s1", "x-in-s2", "x-new"]);
+
+        existing.Should().BeEquivalentTo(["x-in-s1", "x-in-s2"]);
+    }
+
+    [Fact]
     public async Task GetExistingToolFailureIdsAsync_StoredFailures_ReturnsOnlyStoredIds()
     {
         await _repo.AddAsync(NewSession("s1"));

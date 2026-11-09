@@ -67,6 +67,11 @@ public interface ISessionRepository
     Task<IReadOnlySet<string>> GetExistingTurnIdsAsync(
         IReadOnlyCollection<string> turnIds, CancellationToken ct = default);
 
+    /// <summary>Which of these tool execution ids are already stored, in any session. A file change
+    /// references its tool execution by foreign key, and the key does not depend on the session.</summary>
+    Task<IReadOnlySet<string>> GetExistingToolExecutionIdsAsync(
+        IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default);
+
     /// <summary>Which of these tool failure ids are already stored, in any session. The id is the
     /// primary key, so the check is global.</summary>
     Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(

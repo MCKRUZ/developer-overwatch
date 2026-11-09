@@ -14,17 +14,19 @@ internal static class IngestItemRules
         ?? AtMost(t.SubagentName, MaxNameLength, "subagentName");
 
     // A tool execution references its turn, and a file change its tool execution, by foreign key.
-    // A child of an item rejected in this batch would fail the whole save, so it is rejected too.
-    public static string? ToolExecution(ToolExecutionDto t, IReadOnlySet<string> rejectedIds) =>
+    // A child of an item rejected in this batch, or of a parent neither in the batch nor stored,
+    // would fail the whole save, so it is rejected too. knownIds holds the valid batch parents and
+    // the stored ones.
+    public static string? ToolExecution(
+        ToolExecutionDto t, IReadOnlySet<string> rejectedIds, IReadOnlySet<string> knownTurnIds) =>
         Required(t.Id, "id") ?? Required(t.ToolName, "toolName")
         ?? AtMost(t.ToolName, MaxNameLength, "toolName")
-        ?? (t.TurnId is not null && rejectedIds.Contains(t.TurnId) ? $"turn {t.TurnId} was rejected" : null);
+        ?? Parent(t.TurnId, "turn", rejectedIds, knownTurnIds);
 
-    public static string? FileChange(FileChangeDto f, IReadOnlySet<string> rejectedIds) =>
+    public static string? FileChange(
+        FileChangeDto f, IReadOnlySet<string> rejectedIds, IReadOnlySet<string> knownToolIds) =>
         Required(f.Id, "id") ?? Required(f.FilePath, "filePath")
-        ?? (f.ToolExecutionId is not null && rejectedIds.Contains(f.ToolExecutionId)
-            ? $"tool execution {f.ToolExecutionId} was rejected"
-            : null);
+        ?? Parent(f.ToolExecutionId, "tool execution", rejectedIds, knownToolIds);
 
     public static string? ToolFailure(ToolFailureDto f) =>
         Required(f.Id, "id") ?? AtMost(f.Id, MaxToolFailureIdLength, "id")
@@ -34,6 +36,13 @@ internal static class IngestItemRules
     /// <summary>Activity has no id to report, so an invalid event is dropped. A valid one is always
     /// accepted, with a future time clamped to now.</summary>
     public static bool IsValid(ActivityEventDto a) => Enum.IsDefined(a.State) && a.At != default;
+
+    private static string? Parent(
+        string? parentId, string parent, IReadOnlySet<string> rejectedIds, IReadOnlySet<string> knownIds) =>
+        parentId is null ? null
+        : rejectedIds.Contains(parentId) ? $"{parent} {parentId} was rejected"
+        : knownIds.Contains(parentId) ? null
+        : $"fk_missing: {parent} {parentId} does not exist";
 
     private static string? Required(string? value, string field) =>
         string.IsNullOrWhiteSpace(value) ? $"{field} is required" : null;

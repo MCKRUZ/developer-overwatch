@@ -49,12 +49,6 @@ public sealed class IngestSessionEventsCommandHandler
         // the rest are validated before deduping so a resend reports them the same way.
         var results = new IngestItemResultsBuilder();
         var validTurns = results.Valid(request.ConversationTurns, t => t.Id, IngestItemRules.Turn);
-        var validTools = results.Valid(
-            request.ToolExecutions, t => t.Id, t => IngestItemRules.ToolExecution(t, results.RejectedIds));
-        var validFiles = results.Valid(
-            request.FileChanges, f => f.Id, f => IngestItemRules.FileChange(f, results.RejectedIds));
-        var validFailures = results.Valid(request.ToolFailures, f => f.Id, IngestItemRules.ToolFailure);
-        var activity = request.ActivityEvents.Where(IngestItemRules.IsValid).ToList();
 
         // The Agent delivers at-least-once: a slow/timed-out response can look like a failure
         // client-side even though this exact batch already committed, so the same Ids get
@@ -64,9 +58,25 @@ public sealed class IngestSessionEventsCommandHandler
         // Conversation turn ids are derived from the transcript content (the API message id or
         // line uuid), not generated per send. A resumed Claude Code session copies the earlier
         // session's history, with the same ids, into its own transcript, so the existence check
-        // for turns spans every session, not just this one.
+        // for turns spans every session, not just this one. The same lookup covers the turns the
+        // batch's tools reference, so a tool whose turn exists nowhere is rejected, not saved.
         var existingTurnIds = await _repository.GetExistingTurnIdsAsync(
-            validTurns.Select(t => t.Id).ToList(), cancellationToken);
+            validTurns.Select(t => t.Id).Concat(ParentIds(request.ToolExecutions, t => t.TurnId)).ToList(),
+            cancellationToken);
+        var knownTurnIds = KnownIds(validTurns.Select(t => t.Id), existingTurnIds);
+        var validTools = results.Valid(
+            request.ToolExecutions, t => t.Id,
+            t => IngestItemRules.ToolExecution(t, results.RejectedIds, knownTurnIds));
+
+        var existingToolIds = await _repository.GetExistingToolExecutionIdsAsync(
+            ParentIds(request.FileChanges, f => f.ToolExecutionId).ToList(), cancellationToken);
+        var knownToolIds = KnownIds(validTools.Select(t => t.Id), existingToolIds);
+        var validFiles = results.Valid(
+            request.FileChanges, f => f.Id,
+            f => IngestItemRules.FileChange(f, results.RejectedIds, knownToolIds));
+        var validFailures = results.Valid(request.ToolFailures, f => f.Id, IngestItemRules.ToolFailure);
+        var activity = request.ActivityEvents.Where(IngestItemRules.IsValid).ToList();
+
         var newConversationTurns = results.New(validTurns, t => t.Id, existingTurnIds);
         var newToolExecutions = results.New(
             validTools, t => t.Id, session.ToolExecutions.Select(t => t.Id).ToHashSet());
@@ -217,6 +227,12 @@ public sealed class IngestSessionEventsCommandHandler
         }), cancellationToken);
         return newFiles.Count;
     }
+
+    private static IEnumerable<string> ParentIds<T>(IEnumerable<T> children, Func<T, string?> parentOf) =>
+        children.Select(parentOf).OfType<string>().Distinct();
+
+    private static IReadOnlySet<string> KnownIds(IEnumerable<string> batchIds, IReadOnlySet<string> storedIds) =>
+        batchIds.Concat(storedIds).ToHashSet(StringComparer.Ordinal);
 
     // The latest moment the batch describes, never earlier than what is stored, so backfilled history
     // does not make an old session look active now. Capped at now, so a fast client clock cannot push it

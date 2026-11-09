@@ -87,6 +87,82 @@ public class IngestItemOutcomeTests : IClassFixture<OverwatchWebApplicationFacto
         results.GetProperty("rejected").EnumerateArray().Should().BeEmpty();
     }
 
+    // A tool execution references its turn, and a file change its tool execution, by foreign key. A
+    // parent in neither the batch nor the store would fail the whole save, and a resend can never
+    // supply it, so only the orphan is rejected.
+    [Theory]
+    [InlineData("toolExecutions", "turnId")]
+    [InlineData("fileChanges", "toolExecutionId")]
+    public async Task Events_ItemWhoseParentDoesNotExist_RejectsOnlyThatItemAsFkMissing(string list, string parentField)
+    {
+        var sessionId = await StartSession();
+        var (good, orphan) = (NewId(), NewId());
+        var orphanItem = Item(list, orphan);
+        orphanItem[parentField] = NewId();
+        var body = new Dictionary<string, object>
+        {
+            ["sessionId"] = sessionId,
+            [list] = new[] { Item(list, good), orphanItem }
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", body);
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, text);
+        var results = JsonDocument.Parse(text).RootElement.GetProperty("results");
+        results.GetProperty("accepted").EnumerateArray().Select(e => e.GetString()).Should().Equal(good);
+        var rejected = results.GetProperty("rejected").EnumerateArray().ToList();
+        rejected.Should().ContainSingle();
+        rejected[0].GetProperty("id").GetString().Should().Be(orphan);
+        rejected[0].GetProperty("reason").GetString().Should().StartWith("fk_missing");
+    }
+
+    // A resumed session copies the earlier session's turns, with their ids, so a tool can reference a
+    // turn that was stored under a different session.
+    [Fact]
+    public async Task Events_ToolWhoseTurnIsStoredUnderAnotherSession_IsAccepted()
+    {
+        var (earlier, resumed) = (await StartSession(), await StartSession());
+        var (turn, tool) = (NewId(), NewId());
+        await PostAccepted(earlier, "conversationTurns", Item("conversationTurns", turn));
+        var toolItem = Item("toolExecutions", tool);
+        toolItem["turnId"] = turn;
+
+        var accepted = await PostAccepted(resumed, "toolExecutions", toolItem);
+
+        accepted.Should().Equal(tool);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Events_FileChangeWhoseToolIsAlreadyStored_IsAccepted(bool sameSession)
+    {
+        var toolSession = await StartSession();
+        var fileSession = sameSession ? toolSession : await StartSession();
+        var (tool, file) = (NewId(), NewId());
+        await PostAccepted(toolSession, "toolExecutions", Item("toolExecutions", tool));
+        var fileItem = Item("fileChanges", file);
+        fileItem["toolExecutionId"] = tool;
+
+        var accepted = await PostAccepted(fileSession, "fileChanges", fileItem);
+
+        accepted.Should().Equal(file);
+    }
+
+    private async Task<IReadOnlyList<string?>> PostAccepted(
+        string sessionId, string list, Dictionary<string, object?> item)
+    {
+        var body = new Dictionary<string, object> { ["sessionId"] = sessionId, [list] = new[] { item } };
+        var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", body);
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, text);
+        var results = JsonDocument.Parse(text).RootElement.GetProperty("results");
+        results.GetProperty("rejected").EnumerateArray().Should().BeEmpty(text);
+        return results.GetProperty("accepted").EnumerateArray().Select(e => e.GetString()).ToList();
+    }
+
     // An item without an id has nothing to report a rejection under, so the request is refused and
     // the Agent narrows the batch down to that item.
     [Theory]
