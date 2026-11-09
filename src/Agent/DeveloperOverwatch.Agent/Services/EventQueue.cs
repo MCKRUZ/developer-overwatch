@@ -9,7 +9,8 @@ public interface IEventQueue
     Task EnqueueAsync(QueuedEvent @event, CancellationToken ct = default);
     Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default);
 
-    /// <summary>Whether the session's start reached the server, as far as this queue knows.</summary>
+    /// <summary>Whether a start of the session already reached the server, as far as this queue knows.
+    /// Pending starts do not count.</summary>
     Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default);
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
 
@@ -22,20 +23,17 @@ public interface IEventQueue
     Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default);
 }
 
-/// <summary>What the queue says about a session's start. <see cref="Unknown"/> is the default.</summary>
+/// <summary>What the queue says about a session's settled starts. <see cref="Unknown"/> is the default.</summary>
 public enum StartState
 {
-    /// <summary>No start for the session is queued (purged after shipping, or never queued). Its items
-    /// ship, and the server answers session_not_found if it lacks the session.</summary>
+    /// <summary>No settled start for the session is queued (purged after shipping, or never queued). Its
+    /// items ship, and the server answers session_not_found if it lacks the session.</summary>
     Unknown,
 
     /// <summary>A start was shipped: the session is on the server.</summary>
     Shipped,
 
-    /// <summary>No start shipped yet and one is pending: the session's items wait behind it.</summary>
-    Pending,
-
-    /// <summary>Every start was dead-marked: the session will never reach the server.</summary>
+    /// <summary>Every settled start was dead-marked: the session is not on the server.</summary>
     Dead
 }
 
@@ -99,7 +97,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
             cmd.Parameters.AddWithValue("$sessionId", @event.SessionId);
             cmd.Parameters.AddWithValue("$eventType", @event.EventType.ToString());
             cmd.Parameters.AddWithValue("$payloadJson", @event.PayloadJson);
-            cmd.Parameters.AddWithValue("$createdAt", @event.CreatedAt.ToString("o"));
+            cmd.Parameters.AddWithValue("$createdAt", ToUtc(@event.CreatedAt).ToString("o"));
             cmd.Parameters.AddWithValue("$retryCount", @event.RetryCount);
             cmd.Parameters.AddWithValue("$shipped", @event.Shipped ? 1 : 0);
             cmd.ExecuteNonQuery();
@@ -108,6 +106,16 @@ public sealed class EventQueue : IEventQueue, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>created_at is compared as text, which orders by instant only when every row is UTC. An
+    /// unspecified kind is taken as UTC already, as the hooks write it.</summary>
+    private static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Local => value.ToUniversalTime(),
+        DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+        _ => value
+    };
+
+    /// <summary>The oldest pending events, in the order they happened.</summary>
     public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default)
     {
         var results = new List<QueuedEvent>();
@@ -119,7 +127,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
                 SELECT rowid, id, session_id, event_type, payload_json, created_at, retry_count, shipped
                 FROM events
                 WHERE shipped = 0
-                ORDER BY (event_type = 'SessionStart') DESC, created_at, rowid
+                ORDER BY created_at, rowid
                 LIMIT $batchSize
                 """;
             cmd.Parameters.AddWithValue("$batchSize", batchSize);
@@ -133,14 +141,15 @@ public sealed class EventQueue : IEventQueue, IDisposable
     }
 
     /// <summary>A resumed session queues another start, so a shipped start anywhere means the session
-    /// is on the server and wins over a pending one. Otherwise a pending start holds the session.</summary>
+    /// is on the server and wins over a dead one. Pending starts are left out: a batch is the oldest
+    /// prefix of the queue, so every pending start older than a batch's events is in that batch.</summary>
     public Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default)
     {
         var states = new HashSet<int>();
         lock (_lock)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = "SELECT DISTINCT shipped FROM events WHERE session_id = $sessionId AND event_type = $eventType";
+            cmd.CommandText = $"SELECT DISTINCT shipped FROM events WHERE session_id = $sessionId AND event_type = $eventType AND shipped <> {Pending}";
             cmd.Parameters.AddWithValue("$sessionId", sessionId);
             cmd.Parameters.AddWithValue("$eventType", nameof(EventType.SessionStart));
 
@@ -150,7 +159,6 @@ public sealed class EventQueue : IEventQueue, IDisposable
         }
 
         var state = states.Contains(Shipped) ? StartState.Shipped
-            : states.Contains(Pending) ? StartState.Pending
             : states.Contains(Dead) ? StartState.Dead
             : StartState.Unknown;
         return Task.FromResult(state);

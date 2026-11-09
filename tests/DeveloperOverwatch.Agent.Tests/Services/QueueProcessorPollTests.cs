@@ -14,7 +14,7 @@ using NSubstitute;
 namespace DeveloperOverwatch.Agent.Tests.Services;
 
 /// <summary>Drives the processor one poll at a time over a real queue and the real ApiClient, so the
-/// enrolment cutoff, 413 handling, start-first dequeue and the unreadable-config warning are tested end to end.</summary>
+/// enrolment cutoff, 413 handling, created_at dequeue order and the unreadable-config warning are tested end to end.</summary>
 public sealed class QueueProcessorPollTests : IDisposable
 {
     private static readonly DateTime PilotSince = DateTime.UtcNow.AddMinutes(-30);
@@ -177,10 +177,10 @@ public sealed class QueueProcessorPollTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
-    // Ordered by created_at alone, a start newer than the batch's other items would be left out, and
-    // the session's older items would wait on it forever.
+    // Events ship in the order they happened. A start newer than the batch's items is a resume: the
+    // items before it belong to the session as it was, and do not wait on it.
     [Fact]
-    public async Task Dequeue_PendingStartComesFirst_EvenWhenItIsTheNewest()
+    public async Task Dequeue_OrdersByCreatedAt_SoANewerStartStaysBehindOlderItems()
     {
         await EnqueueAsync(Event("t1", "s", EventType.ToolExecution), DateTime.UtcNow.AddMinutes(-3));
         await EnqueueAsync(Event("t2", "s", EventType.ToolExecution), DateTime.UtcNow.AddMinutes(-2));
@@ -188,7 +188,7 @@ public sealed class QueueProcessorPollTests : IDisposable
 
         var batch = await _queue.DequeueBatchAsync(2);
 
-        batch.Select(e => e.Id).Should().Equal("start", "t1");
+        batch.Select(e => e.Id).Should().Equal("t1", "t2");
     }
 
     [Fact]

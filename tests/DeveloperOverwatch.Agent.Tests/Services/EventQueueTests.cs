@@ -86,6 +86,24 @@ public sealed class EventQueueTests : IDisposable
         batch[1].Id.Should().Be("second");
     }
 
+    // created_at is compared as text, so every row must carry the same UTC form to sort by instant.
+    [Fact]
+    public async Task Enqueue_LocalOrUnspecifiedTime_IsStoredAsUtc()
+    {
+        await _sut.InitializeAsync();
+
+        var instant = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        await _sut.EnqueueAsync(CreateEvent(id: "local", createdAt: instant.AddSeconds(1).ToLocalTime()));
+        await _sut.EnqueueAsync(CreateEvent(id: "unspecified", createdAt: DateTime.SpecifyKind(instant, DateTimeKind.Unspecified)));
+        await _sut.EnqueueAsync(CreateEvent(id: "utc", createdAt: instant.AddSeconds(2)));
+
+        var batch = await _sut.DequeueBatchAsync(10);
+
+        batch.Select(e => e.Id).Should().Equal("unspecified", "local", "utc");
+        batch.Should().AllSatisfy(e => e.CreatedAt.Kind.Should().Be(DateTimeKind.Utc));
+        batch[1].CreatedAt.Should().Be(instant.AddSeconds(1));
+    }
+
     [Fact]
     public async Task DequeueBatch_RespectsLimit()
     {

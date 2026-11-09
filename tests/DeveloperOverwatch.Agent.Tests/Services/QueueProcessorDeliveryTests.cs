@@ -215,7 +215,7 @@ public sealed class QueueProcessorDeliveryTests
     }
 
     [Fact]
-    public async Task EventQueue_StartState_ShippedWinsOverPending_AndAllDeadIsDead()
+    public async Task EventQueue_StartState_IgnoresPendingStarts_AndShippedWinsOverDead()
     {
         var dir = Path.Combine(Path.GetTempPath(), $"ow-start-state-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
@@ -223,14 +223,16 @@ public sealed class QueueProcessorDeliveryTests
         try
         {
             await queue.InitializeAsync();
-            foreach (var (id, session) in new[] { ("a1", "a"), ("a2", "a"), ("b1", "b"), ("c1", "c") })
+            foreach (var (id, session) in new[] { ("a1", "a"), ("a2", "a"), ("b1", "b"), ("c1", "c"), ("d1", "d"), ("d2", "d") })
                 await queue.EnqueueAsync(Event(id, EventType.SessionStart, sessionId: session));
-            await queue.MarkShippedAsync(["a1"]);
-            await queue.MarkDeadAsync(["c1"]);
+            await queue.MarkShippedAsync(["a1", "d2"]);
+            await queue.MarkDeadAsync(["c1", "d1"]);
 
             (await queue.GetStartStateAsync("a")).Should().Be(StartState.Shipped, "a resumed session's earlier start is on the server");
-            (await queue.GetStartStateAsync("b")).Should().Be(StartState.Pending);
+            (await queue.GetStartStateAsync("b")).Should().Be(StartState.Unknown,
+                "a pending start is the caller's to walk to; the gate before it is what reached the server earlier");
             (await queue.GetStartStateAsync("c")).Should().Be(StartState.Dead);
+            (await queue.GetStartStateAsync("d")).Should().Be(StartState.Shipped);
             (await queue.GetStartStateAsync("none")).Should().Be(StartState.Unknown);
         }
         finally
