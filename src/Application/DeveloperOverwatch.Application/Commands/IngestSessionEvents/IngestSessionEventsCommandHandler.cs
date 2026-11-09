@@ -152,7 +152,7 @@ public sealed class IngestSessionEventsCommandHandler
                 Id = t.Id,
                 SessionId = session.Id,
                 TurnIndex = turnIndex,
-                Role = t.Role,
+                Role = t.Role!,
                 Content = t.Content,
                 TokenCount = t.TokenCount,
                 InputTokens = t.InputTokens,
@@ -189,7 +189,7 @@ public sealed class IngestSessionEventsCommandHandler
             Id = t.Id,
             SessionId = session.Id,
             TurnId = t.TurnId,
-            ToolName = t.ToolName,
+            ToolName = t.ToolName!,
             InputParams = t.InputParams,
             OutputSummary = t.OutputSummary,
             DurationMs = t.DurationMs,
@@ -209,7 +209,7 @@ public sealed class IngestSessionEventsCommandHandler
             Id = f.Id,
             SessionId = session.Id,
             ToolExecutionId = f.ToolExecutionId,
-            FilePath = f.FilePath,
+            FilePath = f.FilePath!,
             BeforeHash = f.BeforeHash,
             AfterHash = f.AfterHash,
             DiffText = f.DiffText,
@@ -283,7 +283,7 @@ public sealed class IngestSessionEventsCommandHandler
         {
             Id = f.Id,
             SessionId = session.Id,
-            ToolName = f.ToolName,
+            ToolName = f.ToolName!,
             At = AtMost(f.At, now)
         }).ToList(), cancellationToken);
 
