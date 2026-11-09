@@ -200,9 +200,14 @@ internal sealed class SessionShipper
                 return EventOutcome.Transient;
         }
 
-        var outcomes =itemIds.Select(id => (Id: id, Outcome: result.OutcomeOf(id))).ToList();
-        if (outcomes.Any(o => o.Outcome is null))
-            return EventOutcome.Pending;
+        var outcomes = itemIds.Select(id => (Id: id, Outcome: result.OutcomeOf(id))).ToList();
+        var unanswered = outcomes.Where(o => o.Outcome is null).Select(o => o.Id).ToList();
+        if (unanswered.Count > 0)
+        {
+            _logger.LogWarning("Server's results left out items {ItemIds} of session {SessionId}; retrying them",
+                string.Join(", ", unanswered), sessionId);
+            return EventOutcome.Transient;
+        }
         if (outcomes.FirstOrDefault(o => o.Outcome == ItemOutcome.Rejected) is not { Id: { } rejectedId })
             return EventOutcome.Done;
 
@@ -211,7 +216,8 @@ internal sealed class SessionShipper
         return EventOutcome.Dead;
     }
 
-    /// <summary>Marks each event by its outcome. False when the session must stop for this poll.</summary>
+    /// <summary>Marks each event by its outcome. False when the session must stop for this poll, which an
+    /// event left transient also forces.</summary>
     /// <param name="whole">The POST's own outcome: transient or session-gone settles every event in it.</param>
     private async Task<bool> ApplyAsync(
         string sessionId, SessionRun run, EventOutcome whole,
@@ -233,7 +239,11 @@ internal sealed class SessionShipper
 
         await run.MarkShippedAsync(each.Where(o => o.Outcome == EventOutcome.Done).Select(o => o.Event).ToList(), ct);
         await run.MarkDeadAsync(each.Where(o => o.Outcome == EventOutcome.Dead).Select(o => o.Event).ToList(), ct);
-        return true;
+        if (each.All(o => o.Outcome != EventOutcome.Transient))
+            return true;
+
+        run.Transient = true;
+        return false;
     }
 
     private async Task<string?> RecordSessionProjectAsync(string sessionId, QueuedEvent evt, CancellationToken ct)

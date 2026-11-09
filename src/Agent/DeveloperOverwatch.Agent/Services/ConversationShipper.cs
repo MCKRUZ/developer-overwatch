@@ -87,7 +87,7 @@ internal sealed class ConversationShipper
                 size = MaxTurnsPerPost;
         }
 
-        return turns.All(t => answered.Contains(t.Id)) ? EventOutcome.Done : EventOutcome.Pending;
+        return turns.All(t => answered.Contains(t.Id)) ? EventOutcome.Done : EventOutcome.Transient;
     }
 
     /// <summary>Adds each turn the server answered for. Rejected turns count too: they would never
