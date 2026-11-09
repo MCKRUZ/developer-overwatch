@@ -27,24 +27,13 @@ $payload = @{
     endedAt = (Get-Date).ToUniversalTime().ToString("o")
 } | ConvertTo-Json -Compress
 
-$dbPath = Join-Path $overwatchDir "queue.db"
+# Hooks run under pwsh, which cannot load the SQLite library, so they only append to this file;
+# the Agent imports it into its queue on each poll.
 $eventId = [guid]::NewGuid().ToString()
 $now = (Get-Date).ToUniversalTime().ToString("o")
-$escapedPayload = $payload.Replace("'", "''")
-
-try {
-    $connStr = "Data Source=$dbPath"
-    $conn = New-Object Microsoft.Data.Sqlite.SqliteConnection($connStr)
-    $conn.Open()
-    $cmd = $conn.CreateCommand()
-    $cmd.CommandText = "INSERT OR IGNORE INTO events (id, session_id, event_type, payload_json, created_at) VALUES ('$eventId', '$sessionId', 'SessionEnd', '$escapedPayload', '$now')"
-    $cmd.ExecuteNonQuery() | Out-Null
-    $conn.Close()
-} catch {
-    $fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
-    $line = @{ id = $eventId; sessionId = $sessionId; eventType = "SessionEnd"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
-    $line | Add-Content $fallbackFile
-}
+$fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
+$line = @{ id = $eventId; sessionId = $sessionId; eventType = "SessionEnd"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
+try { $line | Add-Content $fallbackFile } catch { }
 
 # Intentionally NOT deleting $mappingPath — it must persist so a later `/resume` of this same
 # Claude session can find it and reactivate the same overwatch session (see

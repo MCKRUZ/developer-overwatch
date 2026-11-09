@@ -146,6 +146,8 @@ public sealed class QueueProcessor : BackgroundService
                 EventType.SessionStart => await ShipSessionStartAsync(sessionId, evt, redacted, ct),
                 EventType.SessionEnd => await _api.SendSessionEndAsync(sessionId, redacted, ct),
                 EventType.ConversationTurn => await CaptureAndShipConversationAsync(sessionId, evt, ct),
+                // Shipped together below, after everything else in the group.
+                EventType.ActivityChanged or EventType.ToolFailed => true,
                 _ => await _api.SendSessionEventsAsync(sessionId, redacted, ct)
             };
 
@@ -153,7 +155,10 @@ public sealed class QueueProcessor : BackgroundService
                 return false;
         }
 
-        return true;
+        // Last, so a failure earlier in the group never resends tool failures, which the server
+        // cannot deduplicate. The payload holds only states, tool names and times: nothing to redact.
+        return SessionSignals.BuildPayload(sessionId, events) is not { } signals
+               || await _api.SendSessionEventsAsync(sessionId, signals, ct);
     }
 
     private async Task<bool> ShipSessionStartAsync(

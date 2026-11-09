@@ -61,6 +61,9 @@ public sealed class QueueProcessorTests
         CreatedAt = DateTime.UtcNow
     };
 
+    // Every group also ships its activity signals last; QueueProcessorSessionSignalsTests covers them.
+    private static bool IsSignals(string payload) => payload.Contains("\"activityEvents\"");
+
     private async Task RunOneTickAsync()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
@@ -83,7 +86,7 @@ public sealed class QueueProcessorTests
 
         await _api.Received(1).SendSessionEventsAsync(
             evt.SessionId,
-            Arg.Any<string>(),
+            evt.PayloadJson,
             Arg.Any<CancellationToken>());
         await _queue.Received(1).MarkShippedAsync(
             Arg.Is<IReadOnlyList<string>>(ids => ids.Contains(evt.Id)),
@@ -322,7 +325,7 @@ public sealed class QueueProcessorTests
             .Returns(new ConversationCaptureResult(
                 [new CapturedTurn("msg:msg_S1", "subagent", null, t0.AddSeconds(1), GitBranch: "feat/meter", SubagentName: "Explore")], 3));
         string? payload = null;
-        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
             .Returns(true);
 
         await RunOneTickAsync();
@@ -409,7 +412,7 @@ public sealed class QueueProcessorTests
                 [new CapturedTurn("msg:msg_A", "assistant", "hi", DateTime.UtcNow),
                  new CapturedTurn("msg:msg_B", "assistant", "there", DateTime.UtcNow)], 2));
         var payloads = new List<string>();
-        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(payloads.Add), Arg.Any<CancellationToken>())
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payloads.Add(p); }), Arg.Any<CancellationToken>())
             .Returns(true);
 
         await RunOneTickAsync();
@@ -433,7 +436,7 @@ public sealed class QueueProcessorTests
                 [new CapturedTurn("msg:msg_A", "assistant", null, DateTime.UtcNow,
                     InputTokens: 3, OutputTokens: 50, CacheCreationInputTokens: 400, CacheReadInputTokens: 9000)], 1));
         string? payload = null;
-        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
             .Returns(true);
 
         await RunOneTickAsync();
@@ -456,7 +459,7 @@ public sealed class QueueProcessorTests
             .Returns(new ConversationCaptureResult(
                 [new CapturedTurn("msg:msg_S1", "subagent", null, DateTime.UtcNow, OutputTokens: 30, Model: "claude-haiku-5-5")], 17));
         string? payload = null;
-        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
             .Returns(true);
 
         await RunOneTickAsync();
@@ -505,7 +508,7 @@ public sealed class QueueProcessorTests
             .Returns(new ConversationCaptureResult(
                 [new CapturedTurn("msg:msg_S1", "subagent", "digging", t0.AddMinutes(2))], 3));
         string? payload = null;
-        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => { if (!IsSignals(p)) payload = p; }), Arg.Any<CancellationToken>())
             .Returns(true);
 
         await RunOneTickAsync();
