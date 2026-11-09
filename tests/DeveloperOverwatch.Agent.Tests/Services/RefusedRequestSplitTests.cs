@@ -220,7 +220,7 @@ public sealed class RefusedRequestSplitTests : IDisposable
         }
 
         if (kind == Kind.Start)
-            _sent.Should().NotContain("end", "a dead start drops the session's items up to its next start");
+            _sent.Should().Contain("end", "a refused start leaves the session's items to the server's answer");
         else if (kind != Kind.End)
             (await StateAsync("end")).Should().Be(Shipped);
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);

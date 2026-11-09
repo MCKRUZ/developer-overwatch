@@ -8,13 +8,13 @@ namespace DeveloperOverwatch.Agent.Services;
 /// outcome. Starts, ends, tool, file and turn events are sent where they fall. Activity and tool failures
 /// gather and go in one POST before each start or end, and once at the end of the walk. A request the
 /// server refuses as a whole is split until each item has its own answer (see <see cref="HalvingPoster"/>):
-/// an item rejected alone is dead, and one too large even alone is held, never dead. Once a start is
-/// refused, or the server no longer knows the session, its events are dropped up to its next start. A
+/// an item rejected alone is dead, and one too large even alone is held, never dead. Once the server no
+/// longer knows the session, its events are dropped up to its next start; a refused start leaves that to
+/// the server's answer to the items after it. A
 /// session whose start was handled locally keeps its items here, unsent, until a later start ships. The
 /// first transient failure holds the rest of the session until the next poll.</summary>
 internal sealed class SessionShipper
 {
-    private const string StartNeverArrived = "its start never reached the server";
     private const string SessionUnknown = "the server does not know the session";
 
     private readonly IEventQueue _queue;
@@ -85,7 +85,7 @@ internal sealed class SessionShipper
                 continue;
 
             if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Dead)
-                await SweepAsync(sessionId, run, StartNeverArrived, ct);
+                await SweepAsync(sessionId, run, SessionUnknown, ct);
             else if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Local)
                 await KeepLocalAsync(sessionId, run, evt, ct);
             else if (!await StepAsync(sessionId, run, evt, ct))
@@ -133,8 +133,9 @@ internal sealed class SessionShipper
     }
 
     /// <summary>An accepted start lets the session's later items ship. A rejected one, or one the server
-    /// answers session_not_found, drops them up to the next start, unless an earlier start of this session
-    /// already reached the server. A transient start, or one too large to send, holds the session.</summary>
+    /// answers session_not_found, is dead and leaves the gate as it was: an earlier start may have reached
+    /// the server, so its items are sent and the server's answer to them decides, unless the session is
+    /// Local. A transient start, or one too large to send, holds the session.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
         var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
@@ -155,8 +156,6 @@ internal sealed class SessionShipper
         }
 
         await run.MarkDeadAsync([start], ct);
-        if (run.Gate != StartState.Shipped)
-            run.Gate = StartState.Dead;
         return true;
     }
 
@@ -249,8 +248,8 @@ internal sealed class SessionShipper
 
         public int At { get; set; }
 
-        /// <summary>What the latest start settled. Dead drops the session's items up to its next start; Local
-        /// handles them here.</summary>
+        /// <summary>Shipped once a start ships. Dead once the server answers session_not_found, and it drops
+        /// the session's items up to its next start; Local handles them here.</summary>
         public StartState Gate { get; set; } = gate;
 
         /// <summary>Activity and tool failures gathered since the last signals POST, with the tool and turn

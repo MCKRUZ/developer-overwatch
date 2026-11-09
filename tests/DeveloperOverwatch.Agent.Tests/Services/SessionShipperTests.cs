@@ -138,33 +138,75 @@ public sealed class SessionShipperTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
+    // A refused start does not show the session is missing from the server: an earlier start may have
+    // shipped and been purged. Its items are sent, and session_not_found drops them up to the next start.
     [Fact]
-    public async Task RejectedStart_DropsOnlyUpToTheNextStart()
+    public async Task RejectedStart_TheServerDecidesItsItems_UpToTheNextStart()
     {
         _onStart = n => n == 1 ? ApiResult.Rejected : ApiResult.Success;
+        _onEvents = payload => ToolIdIn(payload) == "te-1" ? ApiResult.NotFound : ApiResult.Success;
         await EnqueueAsync(Start("S1"), T0);
         await EnqueueAsync(Event("t1", EventType.ToolExecution, ToolExecution("te-1")), T0.AddMinutes(1));
-        await EnqueueAsync(Start("S2"), T0.AddMinutes(2));
-        await EnqueueAsync(Event("t2", EventType.ToolExecution, ToolExecution("te-2")), T0.AddMinutes(3));
+        await EnqueueAsync(Event("E1", EventType.SessionEnd), T0.AddMinutes(2));
+        await EnqueueAsync(Start("S2"), T0.AddMinutes(3));
+        await EnqueueAsync(Event("t2", EventType.ToolExecution, ToolExecution("te-2")), T0.AddMinutes(4));
 
         await CreateSut().PollOnceAsync(CancellationToken.None);
 
-        _sent.Should().Equal("start:S1", "start:S2", "tool:te-2");
+        _sent.Should().Equal("start:S1", "tool:te-1", "start:S2", "tool:te-2");
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
+    // The refused start is remembered as dead, which must not close the session on the next poll either.
+    [Fact]
+    public async Task RejectedResume_OfASessionTheServerKnows_ItsItemsShip_InThisPollAndTheNext()
+    {
+        _onStart = _ => ApiResult.Rejected;
+        await EnqueueAsync(Start("R"), T0);
+        await EnqueueAsync(Event("t1", EventType.ToolExecution, ToolExecution("te-1")), T0.AddMinutes(1));
+        var sut = CreateSut();
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        await EnqueueAsync(Event("t2", EventType.ToolExecution, ToolExecution("te-2")), T0.AddMinutes(2));
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        _sent.Should().Equal("start:R", "tool:te-1", "tool:te-2");
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task StartDeadInAnEarlierPoll_DropsOnlyUpToTheNextStart()
+    public async Task StartDeadInAnEarlierPoll_TheServerDecidesItsItems_UpToTheNextStart()
     {
+        _onEvents = payload => ToolIdIn(payload) == "te-1" ? ApiResult.NotFound : ApiResult.Success;
         await EnqueueAsync(Start("S1"), T0);
         await _queue.MarkDeadAsync(["S1"]);
         await EnqueueAsync(Event("t1", EventType.ToolExecution, ToolExecution("te-1")), T0.AddMinutes(1));
-        await EnqueueAsync(Start("S2"), T0.AddMinutes(2));
-        await EnqueueAsync(Event("t2", EventType.ToolExecution, ToolExecution("te-2")), T0.AddMinutes(3));
+        await EnqueueAsync(Event("t1b", EventType.ToolExecution, ToolExecution("te-1b")), T0.AddMinutes(2));
+        await EnqueueAsync(Start("S2"), T0.AddMinutes(3));
+        await EnqueueAsync(Event("t2", EventType.ToolExecution, ToolExecution("te-2")), T0.AddMinutes(4));
 
         await CreateSut().PollOnceAsync(CancellationToken.None);
 
-        _sent.Should().Equal("start:S2", "tool:te-2");
+        _sent.Should().Equal("tool:te-1", "start:S2", "tool:te-2");
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
+    // The rescue never reaches a session that began before enrolment: its items stay on this machine.
+    [Fact]
+    public async Task RejectedResume_OfALocalSession_ItsItemsAreNeverSent()
+    {
+        _onStart = _ => ApiResult.Rejected;
+        await EnqueueAsync(Start("S1"), T0);
+        await _queue.MarkLocalAsync(["S1"]);
+        await EnqueueAsync(Start("R"), T0.AddMinutes(1));
+        await EnqueueAsync(Event("t1", EventType.ToolExecution, ToolExecution("te-1")), T0.AddMinutes(2));
+        var sut = CreateSut();
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        await EnqueueAsync(Event("t2", EventType.ToolExecution, ToolExecution("te-2")), T0.AddMinutes(3));
+        await sut.PollOnceAsync(CancellationToken.None);
+
+        _sent.Should().Equal("start:R");
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 

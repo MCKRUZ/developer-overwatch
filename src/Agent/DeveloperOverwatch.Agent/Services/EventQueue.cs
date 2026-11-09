@@ -49,7 +49,9 @@ public enum StartState
     /// <summary>A start was shipped: the session is on the server.</summary>
     Shipped,
 
-    /// <summary>Every settled start was dead-marked: the session is not on the server.</summary>
+    /// <summary>The server answered session_not_found earlier in the same walk. The queue never reports it:
+    /// a dead-marked start was refused, which does not show the session is missing, since an earlier start
+    /// may have reached the server and been purged here.</summary>
     Dead,
 
     /// <summary>The session began before enrolment, or in Local mode, and no start since has shipped. Its
@@ -166,8 +168,8 @@ public sealed class EventQueue : IEventQueue, IDisposable
     }
 
     /// <summary>A resumed session queues another start, so a shipped start anywhere means the session
-    /// is on the server and wins over a Local or dead one; a Local start wins over a dead one, so nothing of
-    /// a session that began before enrolment is sent until a later start ships. Pending starts are left out: a batch holds the oldest
+    /// is on the server and wins over a Local one, and nothing of a session that began before enrolment is
+    /// sent until a later start ships. Dead starts count as Unknown. Pending starts are left out: a batch holds the oldest
     /// prefix of each session's pending events, so every pending start of a session older than its events in
     /// a batch is in that batch.</summary>
     public Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default)
@@ -187,7 +189,6 @@ public sealed class EventQueue : IEventQueue, IDisposable
 
         var state = states.Contains(Shipped) ? StartState.Shipped
             : states.Contains(Local) ? StartState.Local
-            : states.Contains(Dead) ? StartState.Dead
             : StartState.Unknown;
         return Task.FromResult(state);
     }

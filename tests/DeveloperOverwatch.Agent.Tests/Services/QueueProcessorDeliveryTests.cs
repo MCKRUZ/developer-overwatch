@@ -62,14 +62,16 @@ public sealed class QueueProcessorDeliveryTests
     }
 
     [Fact]
-    public async Task StartRejected_TheSessionsItemsAreDead()
+    public async Task StartRejected_TheServersSessionNotFound_MakesTheSessionsItemsDead()
     {
         _api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Rejected);
+        _respond = _ => ApiResult.NotFound;
 
         await RunOneTickAsync(Start("start"), Event("t1", EventType.ToolExecution, ToolExecution("te-1")), Event("end", EventType.SessionEnd));
 
         _dead.Should().BeEquivalentTo(["start", "t1", "end"]);
-        await _api.DidNotReceive().SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        _posts.Should().ContainSingle(p => p.Contains("te-1"), "a refused start leaves its items to the server's answer");
+        await _api.DidNotReceive().SendSessionEndAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -215,7 +217,7 @@ public sealed class QueueProcessorDeliveryTests
     }
 
     [Fact]
-    public async Task EventQueue_StartState_IgnoresPendingStarts_AndShippedWinsOverDead()
+    public async Task EventQueue_StartState_IgnoresPendingStarts_AndDeadStartsCountAsUnknown()
     {
         var dir = Path.Combine(Path.GetTempPath(), $"ow-start-state-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
@@ -231,7 +233,8 @@ public sealed class QueueProcessorDeliveryTests
             (await queue.GetStartStateAsync("a")).Should().Be(StartState.Shipped, "a resumed session's earlier start is on the server");
             (await queue.GetStartStateAsync("b")).Should().Be(StartState.Unknown,
                 "a pending start is the caller's to walk to; the gate before it is what reached the server earlier");
-            (await queue.GetStartStateAsync("c")).Should().Be(StartState.Dead);
+            (await queue.GetStartStateAsync("c")).Should().Be(StartState.Unknown,
+                "a refused start does not show the session is missing; the server decides its items");
             (await queue.GetStartStateAsync("d")).Should().Be(StartState.Shipped);
             (await queue.GetStartStateAsync("none")).Should().Be(StartState.Unknown);
         }
