@@ -258,6 +258,32 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.ToTable("GovernanceViolations");
                 });
 
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ProcessedAgentEvent", b =>
+                {
+                    b.Property<string>("EventId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime>("ProcessedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("EventId");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("ProcessedAgentEvents", (string)null);
+                });
+
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.PullRequestReview", b =>
                 {
                     b.Property<string>("Id")

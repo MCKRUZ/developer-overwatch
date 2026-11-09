@@ -1,6 +1,7 @@
 namespace DeveloperOverwatch.API.Controllers;
 
 using DeveloperOverwatch.API.Hubs;
+using DeveloperOverwatch.Application.Commands;
 using DeveloperOverwatch.Application.Commands.IngestSessionEnd;
 using DeveloperOverwatch.Application.Commands.IngestSessionEvents;
 using DeveloperOverwatch.Application.Commands.IngestSessionStart;
@@ -55,7 +56,7 @@ public sealed class SessionsController : ControllerBase
         await _hub.Clients.All.SessionStarted(
             command.SessionId, command.DeveloperEmail, command.RepoPath);
 
-        return Ok(new { sessionId = result.Value });
+        return Ok(new { sessionId = command.SessionId, outcome = Wire(result.Value) });
     }
 
     [HttpPost("{sessionId}/events")]
@@ -93,7 +94,7 @@ public sealed class SessionsController : ControllerBase
             command.ToolExecutions.Count,
             command.FileChanges.Count);
 
-        return Ok(new { eventsIngested = result.Value });
+        return Ok(new { eventsIngested = result.Value!.EventsIngested, results = result.Value.Results });
     }
 
     [HttpPost("{sessionId}/end")]
@@ -122,8 +123,13 @@ public sealed class SessionsController : ControllerBase
         await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
         await _hub.Clients.All.SessionEnded(sessionId);
 
-        return Ok(new { sessionId = result.Value });
+        return Ok(new { sessionId, outcome = Wire(result.Value) });
     }
+
+    // Spelled out rather than left to the global enum converter, which keeps PascalCase names for the
+    // dashboard; the Agent's contract is lowercase.
+    private static string Wire(IngestOutcome outcome) =>
+        outcome == IngestOutcome.Duplicate ? "duplicate" : "accepted";
 
     /// <summary>The events and end handlers fail only when the session does not exist. The Agent
     /// drops a session's queued events only on a 404 carrying this code, so a 404 from anything else

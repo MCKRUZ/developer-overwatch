@@ -226,7 +226,7 @@ public class IngestSessionCaptureTests
         var second = await handler.Handle(command, CancellationToken.None);
 
         session.ToolErrorCount.Should().Be(1);
-        second.Value.Should().Be(0);
+        second.Value!.EventsIngested.Should().Be(0);
     }
 
     [Fact]
@@ -378,11 +378,19 @@ public class IngestSessionCaptureTests
     [Theory]
     [InlineData("")]
     [InlineData("0123456789012345678901234567890123456789012345678901234567890123x")]
-    public void EventsValidator_ToolFailureIdEmptyOrOver64_Fails(string id)
+    public async Task Events_ToolFailureIdEmptyOrOver64_IsRejectedAloneAndNotStored(string id)
     {
-        var result = EventsValidator().Validate(FailuresCommand("s-21", (id, "Bash", T0)));
+        var session = new Session { Id = "s-21" };
+        _repo.GetByIdAsync("s-21", Arg.Any<CancellationToken>()).Returns(session);
 
-        result.IsValid.Should().BeFalse();
+        var result = await EventsHandler().Handle(
+            FailuresCommand("s-21", (id, "Bash", T0), ("f-ok", "Bash", T0)), CancellationToken.None);
+
+        // Per-item: the bad id is reported on its own and the valid failure is still stored.
+        result.Value!.Results.Rejected.Should().ContainSingle().Which.Id.Should().Be(id);
+        result.Value.Results.Accepted.Should().Equal("f-ok");
+        _storedFailureIds.Should().Equal("f-ok");
+        session.ToolErrorCount.Should().Be(1);
     }
 
     [Fact]

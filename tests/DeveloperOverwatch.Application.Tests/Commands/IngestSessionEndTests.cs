@@ -74,7 +74,7 @@ public class IngestSessionEndTests
 
         // A redelivered end must not dead-letter the Agent's group, so it succeeds and changes nothing.
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(sessionId);
+        result.Value.Should().Be(DeveloperOverwatch.Application.Commands.IngestOutcome.Accepted);
         session.EndedAt.Should().Be(endedAt);
         session.SummaryJson.Should().Be("{}");
         await _uow.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());

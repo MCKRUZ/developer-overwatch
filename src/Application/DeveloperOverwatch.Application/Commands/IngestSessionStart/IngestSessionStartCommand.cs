@@ -3,9 +3,15 @@ namespace DeveloperOverwatch.Application.Commands.IngestSessionStart;
 using DeveloperOverwatch.Domain.Common;
 using MediatR;
 
-public sealed record IngestSessionStartCommand : IRequest<Result<string>>
+public sealed record IngestSessionStartCommand : IRequest<Result<IngestOutcome>>
 {
     public required string SessionId { get; init; }
+
+    /// <summary>The Agent's id for this start event. A start whose id was already processed is
+    /// reported as a duplicate and changes nothing. Absent from older Agents, which get the
+    /// previous behaviour.</summary>
+    public string? EventId { get; init; }
+
     public required string DeveloperEmail { get; init; }
     public string? DeveloperName { get; init; }
     public string? RepoPath { get; init; }

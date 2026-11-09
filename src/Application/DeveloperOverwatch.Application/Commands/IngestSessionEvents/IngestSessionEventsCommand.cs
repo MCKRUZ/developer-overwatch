@@ -4,7 +4,7 @@ using DeveloperOverwatch.Domain.Common;
 using DeveloperOverwatch.Domain.Enums;
 using MediatR;
 
-public sealed record IngestSessionEventsCommand : IRequest<Result<int>>
+public sealed record IngestSessionEventsCommand : IRequest<Result<IngestSessionEventsResult>>
 {
     public required string SessionId { get; init; }
     public string? SessionTitle { get; init; }

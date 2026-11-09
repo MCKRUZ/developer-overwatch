@@ -301,7 +301,7 @@ public class IngestSessionEventsTests
         var result = await handler.Handle(command, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(0);
+        result.Value!.EventsIngested.Should().Be(0);
         await _repo.DidNotReceive().AddToolExecutionsAsync(
             Arg.Any<IEnumerable<ToolExecution>>(), Arg.Any<CancellationToken>());
     }
@@ -340,7 +340,7 @@ public class IngestSessionEventsTests
         var result = await handler.Handle(command, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(0);
+        result.Value!.EventsIngested.Should().Be(0);
         session.TotalInputTokens.Should().Be(100);
         session.EstimatedCostUsd.Should().Be(1.50m);
         await _repo.DidNotReceive().AddTurnsAsync(
@@ -388,7 +388,7 @@ public class IngestSessionEventsTests
 
         var result = await handler.Handle(command, CancellationToken.None);
 
-        result.Value.Should().Be(1);
+        result.Value!.EventsIngested.Should().Be(1);
         session.TotalInputTokens.Should().Be(7);
         session.EstimatedCostUsd.Should().Be(0.25m);
         await _repo.Received(1).AddTurnsAsync(
@@ -411,7 +411,7 @@ public class IngestSessionEventsTests
 
         var result = await handler.Handle(command, CancellationToken.None);
 
-        result.Value.Should().Be(1);
+        result.Value!.EventsIngested.Should().Be(1);
         session.TotalInputTokens.Should().Be(40);
     }
 }

@@ -29,7 +29,7 @@ public class IngestSessionStartTests
         var result = await handler.Handle(command, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(command.SessionId);
+        result.Value.Should().Be(DeveloperOverwatch.Application.Commands.IngestOutcome.Accepted);
         await _repo.Received(1).AddAsync(
             Arg.Is<Session>(s =>
                 s.Id == command.SessionId &&
@@ -104,7 +104,7 @@ public class IngestSessionStartTests
         var result = await handler.Handle(command, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(sessionId);
+        result.Value.Should().Be(DeveloperOverwatch.Application.Commands.IngestOutcome.Accepted);
         existing.Status.Should().Be(SessionStatus.Active);
         existing.EndedAt.Should().BeNull();
         await _repo.Received(1).UpdateAsync(existing, Arg.Any<CancellationToken>());
