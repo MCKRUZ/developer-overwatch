@@ -42,8 +42,8 @@ public interface IEventQueue
 /// <summary>What the queue says about a session's settled starts. <see cref="Unknown"/> is the default.</summary>
 public enum StartState
 {
-    /// <summary>No settled start for the session is queued (purged after shipping, or never queued). Its
-    /// items ship, and the server answers session_not_found if it lacks the session.</summary>
+    /// <summary>No shipped or Local start for the session is queued (purged after shipping, never queued, or
+    /// only refused). Its items ship, and the server answers session_not_found if it lacks the session.</summary>
     Unknown,
 
     /// <summary>A start was shipped: the session is on the server.</summary>
