@@ -321,38 +321,58 @@ public class IngestSessionCaptureTests
         result.IsValid.Should().BeTrue();
     }
 
+    // A laptop whose clock runs fast must not have every batch rejected: the Agent would retry a 400
+    // forever. Future timestamps are accepted and clamped to now, so they cannot pin the state either.
     [Fact]
-    public void EventsValidator_ActivityEventMoreThanFiveMinutesAhead_Fails()
+    public void EventsValidator_FarFutureTimestamps_Pass()
     {
+        var farFuture = new DateTime(9999, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var result = EventsValidator().Validate(new IngestSessionEventsCommand
         {
             SessionId = "s-18",
-            ActivityEvents = [new ActivityEventDto { State = ActivityState.Active, At = T0.AddMinutes(5).AddSeconds(1) }]
-        });
-
-        result.IsValid.Should().BeFalse();
-    }
-
-    [Fact]
-    public void EventsValidator_ToolFailureMoreThanFiveMinutesAhead_Fails()
-    {
-        var result = EventsValidator().Validate(
-            FailuresCommand("s-19", ("f-1", "Bash", new DateTime(9999, 1, 1, 0, 0, 0, DateTimeKind.Utc))));
-
-        result.IsValid.Should().BeFalse();
-    }
-
-    [Fact]
-    public void EventsValidator_TimestampsAtFiveMinutesAhead_Pass()
-    {
-        var result = EventsValidator().Validate(new IngestSessionEventsCommand
-        {
-            SessionId = "s-20",
-            ActivityEvents = [new ActivityEventDto { State = ActivityState.Active, At = T0.AddMinutes(5) }],
-            ToolFailures = [new ToolFailureDto { Id = "f-1", ToolName = "Bash", At = T0.AddMinutes(5) }]
+            ActivityEvents = [new ActivityEventDto { State = ActivityState.Active, At = farFuture }],
+            ToolFailures = [new ToolFailureDto { Id = "f-1", ToolName = "Bash", At = farFuture }]
         });
 
         result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Events_FutureTimestamps_AreAppliedAndStoredAsNow()
+    {
+        var session = ExistingSession("s-19");
+        session.ActivityState = ActivityState.Waiting;
+        session.ActivityStateAt = T0.AddMinutes(-1);
+        session.LastActivityAt = T0;
+
+        await EventsHandler().Handle(new IngestSessionEventsCommand
+        {
+            SessionId = session.Id,
+            ActivityEvents = [new ActivityEventDto { State = ActivityState.Active, At = Now.AddHours(3) }],
+            ToolFailures = [new ToolFailureDto { Id = "f-future", ToolName = "Bash", At = Now.AddHours(3) }]
+        }, CancellationToken.None);
+
+        session.ActivityState.Should().Be(ActivityState.Active);
+        session.ActivityStateAt.Should().Be(Now);
+        session.LastToolErrorAt.Should().Be(Now);
+        session.ToolErrorCount.Should().Be(1);
+        await _repo.Received(1).AddToolFailuresAsync(
+            Arg.Is<IEnumerable<SessionToolFailure>>(fs => fs.Single().At == Now), Arg.Any<CancellationToken>());
+        session.LastActivityAt.Should().Be(Now);
+    }
+
+    // A batch carrying only tool failures still says when the session was last active.
+    [Fact]
+    public async Task Events_OnlyToolFailures_LastActivityIsTheLatestFailure()
+    {
+        var session = ExistingSession("s-20");
+        session.LastActivityAt = T0.AddHours(-1);
+
+        await EventsHandler().Handle(
+            FailuresCommand(session.Id, ("f-1", "Bash", T0.AddMinutes(-30)), ("f-2", "Edit", T0.AddMinutes(-10))),
+            CancellationToken.None);
+
+        session.LastActivityAt.Should().Be(T0.AddMinutes(-10));
     }
 
     [Theory]
@@ -421,7 +441,7 @@ public class IngestSessionCaptureTests
         stored.LastActivityAt.Should().Be(startedAt);
     }
 
-    private static IngestSessionEventsCommandValidator EventsValidator() => new(new FixedTime(T0));
+    private static IngestSessionEventsCommandValidator EventsValidator() => new();
 
     private static IngestSessionEventsCommand FailuresCommand(
         string sessionId, params (string Id, string ToolName, DateTime At)[] failures) => new()
@@ -439,7 +459,10 @@ public class IngestSessionCaptureTests
 
     private IngestSessionStartCommandHandler StartHandler() => new(_repo, _uow);
 
-    private IngestSessionEventsCommandHandler EventsHandler() => new(_repo, _uow, _pricing, _violations);
+    // The handler's clock sits after every fixture timestamp, so only deliberately future ones clamp.
+    private static readonly DateTime Now = T0.AddHours(1);
+
+    private IngestSessionEventsCommandHandler EventsHandler() => new(_repo, _uow, _pricing, _violations, new FixedTime(Now));
 
     private static IngestSessionStartCommand StartCommand(string sessionId) => new()
     {

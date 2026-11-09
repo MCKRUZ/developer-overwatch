@@ -40,14 +40,11 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
         return source;
     }
 
-    // A machine switched to Local must stop shipping now, not at the next logon. An unreadable config
-    // fails closed to Local.
-    [Theory]
-    [InlineData("""{"mode":"Local"}""")]
-    [InlineData("{ this is not json")]
-    public async Task Pilot_ConfigNowLocalOrUnreadable_ShipsNothingAndStops(string configJson)
+    // A machine switched to Local must stop shipping now, not at the next logon.
+    [Fact]
+    public async Task Pilot_ConfigNowLocal_ShipsNothingAndStops()
     {
-        File.WriteAllText(ConfigPath, configJson);
+        File.WriteAllText(ConfigPath, """{"mode":"Local"}""");
         await EnqueueAsync("e1", "s1", EventType.ToolExecution);
 
         await RunAsync(CreateSut(AgentMode.Pilot, new ConfigFileModeSource(ConfigPath)));
@@ -57,17 +54,33 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(1, "nothing was processed");
     }
 
+    // A half-saved config.json says nothing about the mode: ship nothing, but keep running.
     [Fact]
-    public async Task Pilot_ModeSourceThrows_IsTreatedAsLocal()
+    public async Task Pilot_ConfigUnparseable_ShipsNothingAndKeepsRunning()
     {
-        var source = Substitute.For<IAgentModeSource>();
-        source.CurrentMode().Returns(_ => throw new IOException("config.json is locked"));
+        File.WriteAllText(ConfigPath, "{ this is not json");
         await EnqueueAsync("e1", "s1", EventType.ToolExecution);
 
-        await RunAsync(CreateSut(AgentMode.Pilot, source));
+        await RunAsync(CreateSut(AgentMode.Pilot, new ConfigFileModeSource(ConfigPath)));
 
         _api.ReceivedCalls().Should().BeEmpty();
-        _lifetime.Received(1).StopApplication();
+        _lifetime.DidNotReceive().StopApplication();
+    }
+
+    [Fact]
+    public async Task Pilot_ModeBrieflyUnreadable_SkipsThatPollThenShips()
+    {
+        var source = Substitute.For<IAgentModeSource>();
+        source.CurrentMode().Returns(_ => throw new IOException("config.json is locked"), _ => AgentMode.Pilot);
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
+        await EnqueueAsync("e1", "s1", EventType.ToolExecution);
+
+        await RunAsync(CreateSut(AgentMode.Pilot, source), millis: 2600);
+
+        // The event itself, then the activity signal it implies.
+        await _api.Received(1).SendSessionEventsAsync("s1", "{}", Arg.Any<CancellationToken>());
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+        _lifetime.DidNotReceive().StopApplication();
     }
 
     // Enrolment needs a restart too; the session-start hook starts the agent again with the new config.
@@ -113,41 +126,70 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(2, "failed events are retried later");
     }
 
-    // Local holds session starts so that, once the machine is enrolled, the server learns of each session
-    // before any of its later events, which would otherwise 404.
+    // Pilot capture starts at enrolment. Local-era data, starts included, never leaves the machine
+    // except through an explicit usage-only backfill.
     [Fact]
-    public async Task Local_HoldsSessionStarts_AndThePilotAgentShipsThemOnStart()
+    public async Task LocalThenPilot_ShipsNoLocalEraSessionStart()
     {
         await EnqueueAsync("start", "s1", EventType.SessionStart, """{"repoPath":"C:/repos/widget"}""", ageMinutes: 3);
         await EnqueueAsync("tool", "s1", EventType.ToolExecution, ageMinutes: 2);
 
         await RunAsync(CreateSut(AgentMode.Local, Fixed(AgentMode.Local)));
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0, "local mode handles every event");
 
-        _api.ReceivedCalls().Should().BeEmpty();
-        (await _queue.DequeueBatchAsync(100)).Should().BeEmpty("held starts must never fill local mode's batches");
-        (await RowCountAsync()).Should().Be(2);
-
-        var shippedStarts = new List<string>();
-        _api.SendSessionStartAsync(Arg.Do<string>(shippedStarts.Add), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
         await RunAsync(CreateSut(AgentMode.Pilot, Fixed(AgentMode.Pilot)));
 
-        shippedStarts.Should().ContainSingle().Which.Should().Contain("C:/repos/widget");
-        await _api.DidNotReceiveWithAnyArgs().SendSessionEventsAsync(default!, default!, default);
+        _api.ReceivedCalls().Should().BeEmpty();
+    }
+
+    // The end committed but the signals POST timed out; the redelivered end succeeds (the server treats
+    // it as a no-op), so the group still ships and its tool failures are not lost.
+    [Fact]
+    public async Task Pilot_RedeliveredEndAfterSignalsTimedOut_GroupShipsWithItsToolFailures()
+    {
+        _api.SendSessionEndAsync("s1", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
+        var signalPayloads = new List<string>();
+        _api.SendSessionEventsAsync("s1", Arg.Do<string>(signalPayloads.Add), Arg.Any<CancellationToken>())
+            .Returns(ApiResult.Failed, ApiResult.Success);
+        await EnqueueAsync("end", "s1", EventType.SessionEnd, ageMinutes: 3);
+        await EnqueueAsync("fail", "s1", EventType.ToolFailed,
+            $"{{\"toolName\":\"Bash\",\"at\":\"{DateTime.UtcNow.AddMinutes(-2):o}\"}}", ageMinutes: 2);
+
+        await RunAsync(CreateSut(AgentMode.Pilot, Fixed(AgentMode.Pilot)), millis: 4200);
+
+        await _api.Received(2).SendSessionEndAsync("s1", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        signalPayloads.Should().HaveCount(2).And.AllSatisfy(p => p.Should().Contain("Bash"));
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+        (await RowCountAsync()).Should().Be(2, "shipped, not purged as dead");
+    }
+
+    // A 400 is deterministic: retrying can never succeed, and the oldest group would block the queue.
+    [Fact]
+    public async Task Pilot_EventsRejectedWith400_GroupIsDead_AndOtherGroupsShipInTheSamePoll()
+    {
+        _api.SendSessionEventsAsync("bad", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Rejected);
+        _api.SendSessionEventsAsync("good", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
+        await EnqueueAsync("b1", "bad", EventType.ToolExecution, ageMinutes: 3);
+        await EnqueueAsync("g1", "good", EventType.ToolExecution);
+
+        await RunAsync(CreateSut(AgentMode.Pilot, Fixed(AgentMode.Pilot)));
+
+        await _api.Received(1).SendSessionEventsAsync("bad", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _api.Received().SendSessionEventsAsync("good", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task DeadEvents_PurgeWithShipped_HeldEvents_PurgeWithUnshipped()
+    public async Task DeadEvents_PurgeWithShipped()
     {
         await EnqueueAsync("dead", "s1", EventType.ToolExecution, ageMinutes: 2 * 24 * 60);
-        await EnqueueAsync("held", "s1", EventType.SessionStart, ageMinutes: 2 * 24 * 60);
         await _queue.MarkDeadAsync(["dead"]);
-        await _queue.MarkHeldAsync(["held"]);
-
-        await _queue.PurgeShippedAsync(TimeSpan.FromHours(24));
-        (await RowCountAsync()).Should().Be(1, "the dead event is dropped like a shipped one");
 
         await _queue.PurgeUnshippedAsync(TimeSpan.FromDays(1));
-        (await RowCountAsync()).Should().Be(0, "a held event is bounded like any unshipped one");
+        (await RowCountAsync()).Should().Be(1, "a dead event is not an unshipped one");
+
+        await _queue.PurgeShippedAsync(TimeSpan.FromHours(24));
+        (await RowCountAsync()).Should().Be(0, "the dead event is dropped like a shipped one");
     }
 
     private string DbPath => Path.Combine(_dir, "queue.db");

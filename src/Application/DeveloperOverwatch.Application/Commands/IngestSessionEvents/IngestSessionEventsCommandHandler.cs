@@ -16,17 +16,20 @@ public sealed class IngestSessionEventsCommandHandler
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITokenPricingCalculator _pricing;
     private readonly IGovernanceViolationRepository _violations;
+    private readonly TimeProvider _time;
 
     public IngestSessionEventsCommandHandler(
         ISessionRepository repository,
         IUnitOfWork unitOfWork,
         ITokenPricingCalculator pricing,
-        IGovernanceViolationRepository violations)
+        IGovernanceViolationRepository violations,
+        TimeProvider time)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
         _pricing = pricing;
         _violations = violations;
+        _time = time;
     }
 
     public async Task<Result<int>> Handle(
@@ -176,11 +179,18 @@ public sealed class IngestSessionEventsCommandHandler
             totalEvents += newFileChanges.Count;
         }
 
-        totalEvents += ApplyActivity(session, request.ActivityEvents);
-        totalEvents += await ApplyToolFailuresAsync(session, request.ToolFailures, cancellationToken);
+        // A fast client clock must not push stored times into the future, where a state that only a
+        // newer timestamp replaces would stay pinned. Clamped rather than rejected: the Agent can never
+        // succeed on a retry of a rejected batch.
+        var now = _time.GetUtcNow().UtcDateTime;
+        var activity = request.ActivityEvents.Select(a => a with { At = AtMost(a.At, now) }).ToList();
+        var failures = request.ToolFailures.Select(f => f with { At = AtMost(f.At, now) }).ToList();
+
+        totalEvents += ApplyActivity(session, activity);
+        totalEvents += await ApplyToolFailuresAsync(session, failures, cancellationToken);
 
         if (totalEvents > 0)
-            session.LastActivityAt = LatestActivity(session.LastActivityAt, request);
+            session.LastActivityAt = LatestActivity(session.LastActivityAt, request, activity, failures, now);
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -190,20 +200,29 @@ public sealed class IngestSessionEventsCommandHandler
     // The latest moment the batch describes, never earlier than what is stored, so backfilled history
     // does not make an old session look active now. Capped at now, so a fast client clock cannot push it
     // into the future. A batch with no timestamps counts as activity on arrival.
-    private static DateTime LatestActivity(DateTime? stored, IngestSessionEventsCommand request)
+    private static DateTime LatestActivity(
+        DateTime? stored,
+        IngestSessionEventsCommand request,
+        IReadOnlyList<ActivityEventDto> activity,
+        IReadOnlyList<ToolFailureDto> failures,
+        DateTime now)
     {
         var stamps = request.ConversationTurns.Select(t => t.Timestamp)
             .Concat(request.ToolExecutions.Select(t => t.Timestamp))
-            .Concat(request.ActivityEvents.Select(a => a.At))
-            .Select(t => t.Kind == DateTimeKind.Local ? t.ToUniversalTime() : t)
+            .Concat(activity.Select(a => a.At))
+            .Concat(failures.Select(f => f.At))
+            .Select(ToUtc)
             .ToList();
-        var now = DateTime.UtcNow;
         if (stamps.Count == 0)
             return now;
 
-        var latest = stamps.Max() is var max && max > now ? now : max;
+        var latest = AtMost(stamps.Max(), now);
         return stored is { } s && s > latest ? s : latest;
     }
+
+    private static DateTime ToUtc(DateTime t) => t.Kind == DateTimeKind.Local ? t.ToUniversalTime() : t;
+
+    private static DateTime AtMost(DateTime at, DateTime now) => ToUtc(at) > now ? now : at;
 
     private static long? ContextTokensOf(ConversationTurnDto t) =>
         t.InputTokens is null && t.CacheReadInputTokens is null && t.CacheCreationInputTokens is null

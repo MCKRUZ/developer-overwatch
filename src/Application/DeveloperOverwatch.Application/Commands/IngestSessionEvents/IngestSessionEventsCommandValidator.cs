@@ -4,11 +4,8 @@ using FluentValidation;
 
 public sealed class IngestSessionEventsCommandValidator : AbstractValidator<IngestSessionEventsCommand>
 {
-    private readonly TimeProvider _time;
-
-    public IngestSessionEventsCommandValidator(TimeProvider time)
+    public IngestSessionEventsCommandValidator()
     {
-        _time = time;
         RuleFor(x => x.SessionId).NotEmpty();
 
         RuleForEach(x => x.ToolExecutions).ChildRules(tool =>
@@ -36,24 +33,21 @@ public sealed class IngestSessionEventsCommandValidator : AbstractValidator<Inge
         RuleFor(x => x.ToolFailures).Must(f => f.Count <= MaxItemsPerList)
             .WithMessage($"At most {MaxItemsPerList} tool failures per batch.");
 
-        // Only a newer timestamp replaces the stored state, so a far-future one would pin it forever.
+        // A future timestamp is not rejected: the handler clamps it to now. A 400 for a fast client
+        // clock would be retried forever and wedge that machine's queue.
         RuleForEach(x => x.ActivityEvents).ChildRules(activity =>
         {
             activity.RuleFor(a => a.State).IsInEnum();
-            activity.RuleFor(a => a.At).NotEmpty().Must(NotInTheFuture).WithMessage(FutureMessage);
+            activity.RuleFor(a => a.At).NotEmpty();
         });
 
         RuleForEach(x => x.ToolFailures).ChildRules(failure =>
         {
             failure.RuleFor(f => f.Id).NotEmpty().MaximumLength(64);
             failure.RuleFor(f => f.ToolName).NotEmpty().MaximumLength(255);
-            failure.RuleFor(f => f.At).NotEmpty().Must(NotInTheFuture).WithMessage(FutureMessage);
+            failure.RuleFor(f => f.At).NotEmpty();
         });
     }
 
     private const int MaxItemsPerList = 500;
-    private static readonly TimeSpan ClockSkewAllowance = TimeSpan.FromMinutes(5);
-    private const string FutureMessage = "Timestamp must not be more than 5 minutes in the future.";
-
-    private bool NotInTheFuture(DateTime at) => at <= _time.GetUtcNow().UtcDateTime + ClockSkewAllowance;
 }

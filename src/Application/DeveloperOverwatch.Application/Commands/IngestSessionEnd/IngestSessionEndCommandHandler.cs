@@ -25,8 +25,11 @@ public sealed class IngestSessionEndCommandHandler
         if (session is null)
             return Result<string>.Fail($"Session {request.SessionId} not found");
 
+        // The Agent delivers at-least-once, and backfill may have closed an idle session first, so an
+        // end for a session that is already over succeeds without changing it. Not-found is then this
+        // handler's only failure, which the controller relies on.
         if (session.Status != SessionStatus.Active)
-            return Result<string>.Fail($"Session {request.SessionId} is not active");
+            return Result<string>.Success(session.Id);
 
         session.Status = SessionStatus.Completed;
         session.EndedAt = request.EndedAt;

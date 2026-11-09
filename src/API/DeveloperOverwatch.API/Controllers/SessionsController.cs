@@ -78,7 +78,7 @@ public sealed class SessionsController : ControllerBase
         {
             return result.ValidationErrors.Count > 0
                 ? BadRequest(new { errors = result.ValidationErrors })
-                : NotFound(new { error = result.Error });
+                : SessionNotFound(result.Error);
         }
 
         await _hub.Clients.Group(sessionId).EventsIngested(
@@ -116,7 +116,7 @@ public sealed class SessionsController : ControllerBase
         {
             return result.ValidationErrors.Count > 0
                 ? BadRequest(new { errors = result.ValidationErrors })
-                : NotFound(new { error = result.Error });
+                : SessionNotFound(result.Error);
         }
 
         await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
@@ -124,6 +124,12 @@ public sealed class SessionsController : ControllerBase
 
         return Ok(new { sessionId = result.Value });
     }
+
+    /// <summary>The events and end handlers fail only when the session does not exist. The Agent
+    /// drops a session's queued events only on a 404 carrying this code, so a 404 from anything else
+    /// (a wrong base path, a proxy) stays retryable.</summary>
+    private NotFoundObjectResult SessionNotFound(string? error) =>
+        NotFound(new { error, code = "session_not_found" });
 
     [HttpGet("{sessionId}")]
     [ProducesResponseType(StatusCodes.Status200OK)]

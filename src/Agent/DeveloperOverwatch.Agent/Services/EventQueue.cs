@@ -13,13 +13,6 @@ public interface IEventQueue
     /// <summary>Never dequeued again: the server does not know the session. Purged like shipped events.</summary>
     Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
 
-    /// <summary>Handled by local mode but kept for the server: not dequeued until
-    /// <see cref="ReleaseHeldAsync"/>, and purged like unshipped events.</summary>
-    Task MarkHeldAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
-
-    /// <summary>Makes every held event dequeueable again; called when the agent starts in pilot mode.</summary>
-    Task ReleaseHeldAsync(CancellationToken ct = default);
-
     Task IncrementRetryAsync(string id, CancellationToken ct = default);
     Task<int> GetUnshippedCountAsync(CancellationToken ct = default);
     Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default);
@@ -123,25 +116,10 @@ public sealed class EventQueue : IEventQueue, IDisposable
     private const int Pending = 0;
     private const int Shipped = 1;
     private const int Dead = 2;
-    private const int Held = 3;
 
     public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Shipped);
 
     public Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Dead);
-
-    public Task MarkHeldAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Held);
-
-    public Task ReleaseHeldAsync(CancellationToken ct = default)
-    {
-        lock (_lock)
-        {
-            using var cmd = _connection.CreateCommand();
-            cmd.CommandText = $"UPDATE events SET shipped = {Pending} WHERE shipped = {Held}";
-            cmd.ExecuteNonQuery();
-        }
-
-        return Task.CompletedTask;
-    }
 
     private Task SetStateAsync(IReadOnlyList<string> ids, int state)
     {
@@ -196,21 +174,20 @@ public sealed class EventQueue : IEventQueue, IDisposable
     }
 
     public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
-        PurgeAsync(Shipped, Dead, olderThan);
+        PurgeAsync($"shipped IN ({Shipped}, {Dead})", olderThan);
 
     public Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
-        PurgeAsync(Pending, Held, olderThan);
+        PurgeAsync($"shipped = {Pending}", olderThan);
 
-    private Task PurgeAsync(int state, int otherState, TimeSpan olderThan)
+    /// <param name="stateFilter">Built only from this class's state constants, never from input.</param>
+    private Task PurgeAsync(string stateFilter, TimeSpan olderThan)
     {
         var threshold = _time.GetUtcNow().UtcDateTime.Subtract(olderThan).ToString("o");
 
         lock (_lock)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = "DELETE FROM events WHERE shipped IN ($state, $otherState) AND created_at < $threshold";
-            cmd.Parameters.AddWithValue("$state", state);
-            cmd.Parameters.AddWithValue("$otherState", otherState);
+            cmd.CommandText = $"DELETE FROM events WHERE {stateFilter} AND created_at < $threshold";
             cmd.Parameters.AddWithValue("$threshold", threshold);
             cmd.ExecuteNonQuery();
         }

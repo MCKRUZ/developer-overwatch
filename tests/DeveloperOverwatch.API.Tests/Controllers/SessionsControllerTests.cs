@@ -136,6 +136,43 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
         body.Should().Contain("Program.cs");
     }
 
+    // The Agent redelivers an end whose response it never saw, then ships the session's signals.
+    [Fact]
+    public async Task EndTwice_BothSucceed_AndEventsAfterTheEndAreStillAccepted()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var start = new { SessionId = sessionId, DeveloperEmail = "redeliver@team.dev", RepoPath = "C:/repos/test", StartedAt = DateTime.UtcNow };
+        (await _client.PostAsJsonAsync("/api/sessions/start", start)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var end = new { SessionId = sessionId, EndedAt = DateTime.UtcNow };
+        (await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/end", end)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/end", end)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var signals = new
+        {
+            SessionId = sessionId,
+            ToolFailures = new[] { new { Id = "f-1", ToolName = "Bash", At = DateTime.UtcNow } }
+        };
+        (await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", signals)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // The Agent dead-letters a session's events only on this code; any other 404 stays retryable.
+    [Theory]
+    [InlineData("events")]
+    [InlineData("end")]
+    public async Task UnknownSession_Returns404WithSessionNotFoundCode(string action)
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        object body = action == "end"
+            ? new { SessionId = sessionId, EndedAt = DateTime.UtcNow }
+            : new { SessionId = sessionId };
+
+        var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/{action}", body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"code\":\"session_not_found\"");
+    }
+
     [Fact]
     public async Task GetSessions_FilterByDeveloper_ReturnsFiltered()
     {

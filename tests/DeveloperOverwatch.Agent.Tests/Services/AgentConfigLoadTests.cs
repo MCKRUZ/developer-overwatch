@@ -66,4 +66,30 @@ public sealed class AgentConfigLoadTests : IDisposable
 
         AgentConfig.Load(ConfigPath).Mode.Should().Be(AgentMode.Local);
     }
+
+    // The running agent must tell "unreadable right now" apart from "Local", or a half-saved file stops it.
+    [Fact]
+    public void TryLoad_UnparseableConfig_IsNull()
+    {
+        File.WriteAllText(ConfigPath, "{not json");
+
+        AgentConfig.TryLoad(ConfigPath).Should().BeNull();
+    }
+
+    [Fact]
+    public void TryLoad_NoConfigFile_IsLocal() =>
+        AgentConfig.TryLoad(ConfigPath)!.Mode.Should().Be(AgentMode.Local);
+
+    // The server takes at most 500 items per list, and a batch of 0 would never drain the queue.
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-5, 1)]
+    [InlineData(10000, 500)]
+    [InlineData(7, 7)]
+    public void Load_BatchSize_IsClampedTo1Through500(int configured, int expected)
+    {
+        File.WriteAllText(ConfigPath, $$"""{"mode":"Pilot","batchSize":{{configured}}}""");
+
+        AgentConfig.Load(ConfigPath).BatchSize.Should().Be(expected);
+    }
 }

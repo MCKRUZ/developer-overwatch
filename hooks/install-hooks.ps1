@@ -81,11 +81,15 @@ function Read-JsonObject([string]$Path) {
     return $value
 }
 
-# Writes beside the file, then moves over it, so a crash never leaves a half-written file.
+# Writes beside the file, then moves over it, so a crash never leaves a half-written file. A symlink
+# (a dotfiles setup) is followed and its target replaced, so the link survives.
 function Write-FileAtomic([string]$Path, [string]$Content) {
+    if ((Test-Path -LiteralPath $Path) -and (Get-Item -LiteralPath $Path -Force).LinkType -eq "SymbolicLink") {
+        $Path = (Get-Item -LiteralPath $Path -Force).ResolveLinkTarget($true).FullName
+    }
     $tmp = "$Path.tmp"
-    Set-Content -Path $tmp -Value $Content
-    Move-Item -Path $tmp -Destination $Path -Force
+    Set-Content -LiteralPath $tmp -Value $Content
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
 function Test-OverwatchHook($Hook) {
@@ -144,6 +148,32 @@ function Stop-OwnAgent {
         Stop-Install "Could not stop the running $agentName, which would keep its old settings: $_. Stop it in Task Manager, then run this again."
     }
     return $true
+}
+
+function Start-OwnAgent {
+    $command = Get-Command $agentName -ErrorAction SilentlyContinue
+    if (-not $command) { return $false }
+    Start-Process -FilePath $command.Source -WindowStyle Hidden
+    return $true
+}
+
+# A write failed after validation passed, possibly with the agent already stopped. Says what was and
+# was not written instead of a raw exception, and restarts an agent whose config is still the old one.
+function Stop-WriteFailed([string]$Reason, [bool]$ConfigWritten, [bool]$StoppedAgent) {
+    [Console]::Error.WriteLine("[x] Could not finish the install: $Reason")
+    if ($ConfigWritten) {
+        [Console]::Error.WriteLine("    $configPath was updated, but $settingsPath was not. Fix the problem, then run this again.")
+    } else {
+        [Console]::Error.WriteLine("    Neither $configPath nor $settingsPath was changed. Fix the problem, then run this again.")
+    }
+    if ($StoppedAgent) {
+        if (-not $ConfigWritten -and -not $NoStart -and -not $NoProcessControl -and (Start-OwnAgent)) {
+            [Console]::Error.WriteLine("    Restarted the agent with its old settings.")
+        } else {
+            [Console]::Error.WriteLine("    The agent was stopped. It starts again with the next Claude Code session, or run $agentName.")
+        }
+    }
+    exit 1
 }
 
 # --- Read and validate everything before writing anything ---
@@ -209,20 +239,26 @@ $config["mode"] = $mode
 foreach ($key in $configDefaults.Keys) {
     if (-not $config.Contains($key)) { $config[$key] = $configDefaults[$key] }
 }
-New-Item -ItemType Directory -Path $overwatchDir -Force | Out-Null
-Write-FileAtomic $configPath ($config | ConvertTo-Json -Depth 100)
+$configWritten = $false
+try {
+    New-Item -ItemType Directory -Path $overwatchDir -Force | Out-Null
+    Write-FileAtomic $configPath ($config | ConvertTo-Json -Depth 100)
+    $configWritten = $true
 
-New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
-if ($settingsExisted) {
-    # Before .original existed, .overwatch-backup was written once and held the original.
-    if (-not (Test-Path $originalBackupPath)) {
-        Copy-Item $(if (Test-Path $backupPath) { $backupPath } else { $settingsPath }) $originalBackupPath
+    New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+    if ($settingsExisted) {
+        # Before .original existed, .overwatch-backup was written once and held the original.
+        if (-not (Test-Path $originalBackupPath)) {
+            Copy-Item $(if (Test-Path $backupPath) { $backupPath } else { $settingsPath }) $originalBackupPath
+        }
+        Copy-Item $settingsPath $backupPath -Force
     }
-    Copy-Item $settingsPath $backupPath -Force
+    Remove-OverwatchHooks $settings["hooks"]
+    Add-OverwatchHooks $settings["hooks"]
+    Write-FileAtomic $settingsPath ($settings | ConvertTo-Json -Depth 100)
+} catch {
+    Stop-WriteFailed $_.Exception.Message $configWritten $stoppedAgent
 }
-Remove-OverwatchHooks $settings["hooks"]
-Add-OverwatchHooks $settings["hooks"]
-Write-FileAtomic $settingsPath ($settings | ConvertTo-Json -Depth 100)
 
 Write-Host "[+] Overwatch hooks merged into $settingsPath"
 if ($settingsExisted) { Write-Host "[+] Settings before this run: $backupPath" }

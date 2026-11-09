@@ -11,7 +11,9 @@ public sealed class AgentConfig
     public string ApiUrl { get; init; } = "http://localhost:5000";
     public string? ApiKey { get; init; }
     public int PollIntervalSeconds { get; init; } = 5;
-    public int BatchSize { get; init; } = 50;
+    /// <summary>Clamped to 1..500: the server takes at most 500 items per list, and 0 never drains.</summary>
+    public int BatchSize { get => _batchSize; init => _batchSize = Math.Clamp(value, 1, 500); }
+    private readonly int _batchSize = 50;
     public int GitFallbackThreshold { get; init; } = 100;
     public IReadOnlyList<string> RedactionPatterns { get; init; } = DefaultRedactionPatterns;
     public bool PrivateSession { get; init; }
@@ -48,19 +50,23 @@ public sealed class AgentConfig
     /// <c>mode</c> wins. A file that cannot be read fails closed to Local: when the agent cannot
     /// tell what the machine was enrolled as, nothing leaves it.
     /// </summary>
-    public static AgentConfig Load(string configPath)
+    public static AgentConfig Load(string configPath) =>
+        TryLoad(configPath) ?? new AgentConfig { Mode = AgentMode.Local };
+
+    /// <summary>As <see cref="Load"/>, except that a file which exists but cannot be read or parsed gives
+    /// null rather than Local, so a running agent can tell "unreadable right now" from "Local".</summary>
+    public static AgentConfig? TryLoad(string configPath)
     {
         if (!File.Exists(configPath))
             return new AgentConfig { Mode = AgentMode.Local };
 
         try
         {
-            return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(configPath), LoadOptions)
-                ?? new AgentConfig { Mode = AgentMode.Local };
+            return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(configPath), LoadOptions);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            return new AgentConfig { Mode = AgentMode.Local };
+            return null;
         }
     }
 

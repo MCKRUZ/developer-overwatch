@@ -263,6 +263,46 @@ public sealed class InstallHooksTests : IDisposable
         config.ContainsKey("apiKey").Should().BeFalse();
     }
 
+    // A dotfiles setup symlinks settings.json; replacing the link with a plain file would detach it.
+    // Skipped (passes) where creating a symlink needs admin rights, i.e. Windows without Developer Mode.
+    [Fact]
+    public void SymlinkedSettings_StayALink_AndTheTargetGetsTheHooks()
+    {
+        var target = Path.Combine(_home, "dotfiles", "claude-settings.json");
+        WriteFile(target, """{"theme":"dark"}""");
+        Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+        try
+        {
+            File.CreateSymbolicLink(SettingsPath, target);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        if (Install() is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        new FileInfo(SettingsPath).LinkTarget.Should().NotBeNull("the link must survive");
+        var settings = ReadJson(target);
+        settings["theme"]!.GetValue<string>().Should().Be("dark");
+        Commands(settings["hooks"]!.AsObject(), "SessionEnd").Should().ContainSingle(c => c.Contains("overwatch-session-end.ps1"));
+        File.Exists(target + ".tmp").Should().BeFalse();
+    }
+
+    // A write that fails after the agent was stopped must say what happened, not dump a raw exception.
+    [Fact]
+    public void WriteFails_PrintsAClearMessage_NotARawException()
+    {
+        Directory.CreateDirectory(ConfigPath + ".tmp");
+
+        if (Install() is not { } result) return;
+
+        result.ExitCode.Should().Be(1);
+        result.Stderr.Should().Contain("[x]").And.Contain(ConfigPath).And.NotContain("At line:");
+        File.Exists(SettingsPath).Should().BeFalse("nothing after the failed write runs");
+    }
+
     /// <summary>Always passes -NoStart and -NoProcessControl: without them the script registers a real
     /// scheduled task, and stops and starts the real agent.</summary>
     private PwshResult? Install(params string[] args) =>

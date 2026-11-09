@@ -59,9 +59,6 @@ public sealed class QueueProcessor : BackgroundService
     {
         await _queue.InitializeAsync();
         await _usageStore.InitializeAsync();
-        // Session starts that local mode held back ship first, now that the machine is enrolled.
-        if (_config.Mode == AgentMode.Pilot)
-            await _queue.ReleaseHeldAsync();
 
         _logger.LogInformation("Queue processor started in {Mode} mode, polling every {Interval}s",
             _config.Mode, _config.PollIntervalSeconds);
@@ -70,8 +67,13 @@ public sealed class QueueProcessor : BackgroundService
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            if (ModeChanged())
+            var mode = ReadMode();
+            if (mode is null)
+                continue;
+            if (mode != _config.Mode)
             {
+                _logger.LogWarning("Agent mode changed from {Old} to {New}; stopping so a restart picks up the new config",
+                    _config.Mode, mode);
                 _lifetime.StopApplication();
                 break;
             }
@@ -94,27 +96,23 @@ public sealed class QueueProcessor : BackgroundService
     }
 
     /// <summary>The mode is read fresh before every poll: a machine switched to Local must stop shipping
-    /// now, not at the next logon. Any change stops the agent; the session-start hook starts it again
-    /// with the new config. A config that cannot be read counts as Local.</summary>
-    private bool ModeChanged()
+    /// now, not at the next logon. A change stops the agent; the session-start hook starts it again with
+    /// the new config. Null when the config cannot be read right now (locked, half-saved): that poll ships
+    /// nothing, but the agent keeps running, since the file does not say the mode changed.</summary>
+    private AgentMode? ReadMode()
     {
-        AgentMode current;
         try
         {
-            current = _modeSource.CurrentMode();
+            if (_modeSource.CurrentMode() is { } mode)
+                return mode;
+            _logger.LogDebug("Could not parse the agent config; skipping this poll");
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Could not read the agent mode, treating it as Local");
-            current = AgentMode.Local;
+            _logger.LogDebug(ex, "Could not read the agent mode; skipping this poll");
         }
 
-        if (current == _config.Mode)
-            return false;
-
-        _logger.LogWarning("Agent mode changed from {Old} to {New}; stopping so a restart picks up the new config",
-            _config.Mode, current);
-        return true;
+        return null;
     }
 
     private async Task ProcessBatchAsync(CancellationToken ct)
@@ -143,9 +141,16 @@ public sealed class QueueProcessor : BackgroundService
                     await _queue.MarkShippedAsync(Ids(events));
                     _consecutiveFailures = 0;
                     break;
+                // A retry can never succeed for either, and the oldest group would block the queue, so
+                // the group is never dequeued again. A session that was open when the machine enrolled
+                // ends up here: the server learns of it at its next start or /resume.
                 case ApiResult.NotFound:
-                    // A retry can never succeed, so the group is never dequeued again.
                     _logger.LogWarning("Server does not know session {SessionId}; dropping its {Count} queued events",
+                        sessionId, events.Count);
+                    await _queue.MarkDeadAsync(Ids(events));
+                    break;
+                case ApiResult.Rejected:
+                    _logger.LogWarning("Server rejected the events of session {SessionId}; dropping its {Count} queued events",
                         sessionId, events.Count);
                     await _queue.MarkDeadAsync(Ids(events));
                     break;
@@ -169,8 +174,9 @@ public sealed class QueueProcessor : BackgroundService
     private static List<string> Ids(IEnumerable<QueuedEvent> events) => events.Select(e => e.Id).ToList();
 
     /// <summary>Local mode sends nothing anywhere. The session's project and its usage are kept in
-    /// queue.db. Session starts are then held, so that after enrolment the server learns of the
-    /// session first; everything else is marked shipped, meaning handled, so the queue drains.</summary>
+    /// queue.db, and every event is marked shipped, meaning handled, so the queue drains. Pilot capture
+    /// starts at enrolment: Local-era data leaves the machine only through an explicit usage-only
+    /// backfill, never by shipping these events later.</summary>
     private async Task HandleLocallyAsync(string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
     {
         foreach (var evt in events)
@@ -182,10 +188,7 @@ public sealed class QueueProcessor : BackgroundService
                 await AdvanceCursorsAsync(captured.Captures, ct);
         }
 
-        var starts = events.Where(e => e.EventType == EventType.SessionStart).ToList();
-        if (starts.Count > 0)
-            await _queue.MarkHeldAsync(Ids(starts));
-        await _queue.MarkShippedAsync(Ids(events.Except(starts)));
+        await _queue.MarkShippedAsync(Ids(events));
     }
 
     private async Task<ApiResult> ShipSessionEventsAsync(

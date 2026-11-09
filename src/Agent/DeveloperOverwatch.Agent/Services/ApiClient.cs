@@ -1,16 +1,19 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace DeveloperOverwatch.Agent.Services;
 
-/// <summary>How a POST to the server ended. <see cref="NotFound"/> means the server does not know the
-/// session, which a retry can never fix.</summary>
+/// <summary>How a POST to the server ended. <see cref="NotFound"/> means the server said it does not know
+/// the session, and <see cref="Rejected"/> that it refused the payload (400); a retry can fix neither.
+/// <see cref="Failed"/> is everything else, retried later.</summary>
 public enum ApiResult
 {
     Success,
     Failed,
-    NotFound
+    NotFound,
+    Rejected
 }
 
 public interface IApiClient
@@ -50,8 +53,17 @@ public sealed class ApiClient : IApiClient
             if (response.IsSuccessStatusCode)
                 return ApiResult.Success;
 
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.LogWarning("POST {Path} was rejected (400): {Body}", path, Truncate(body));
+                return ApiResult.Rejected;
+            }
+
             _logger.LogWarning("POST {Path} returned {StatusCode}", path, (int)response.StatusCode);
-            return response.StatusCode == HttpStatusCode.NotFound ? ApiResult.NotFound : ApiResult.Failed;
+            return response.StatusCode == HttpStatusCode.NotFound && NamesSessionNotFound(body)
+                ? ApiResult.NotFound
+                : ApiResult.Failed;
         }
         catch (HttpRequestException ex)
         {
@@ -64,4 +76,26 @@ public sealed class ApiClient : IApiClient
             return ApiResult.Failed;
         }
     }
+
+    /// <summary>Only the server's own session-not-found answer counts. A 404 from a wrong base path or
+    /// a proxy must stay retryable, or the session's queued events would be dropped.</summary>
+    private static bool NamesSessionNotFound(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("code", out var code)
+                && code.ValueKind == JsonValueKind.String
+                && code.GetString() == SessionNotFoundCode;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private const string SessionNotFoundCode = "session_not_found";
+
+    private static string Truncate(string body) => body.Length <= 500 ? body : body[..500] + "…";
 }
