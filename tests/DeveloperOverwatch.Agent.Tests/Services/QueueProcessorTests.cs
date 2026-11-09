@@ -39,7 +39,7 @@ public sealed class QueueProcessorTests
             OverwatchDir = Path.Combine(Path.GetTempPath(), $"ow-qp-{Guid.NewGuid():N}")
         };
 
-        _gitRemote = Substitute.For<IGitRemoteReader>();
+        _gitRemote = Substitute.For<IGitReader>();
 
         var logger = Substitute.For<ILogger<QueueProcessor>>();
         _sut = new QueueProcessor(
@@ -47,7 +47,7 @@ public sealed class QueueProcessorTests
             Substitute.For<IUsageStore>(), _config, logger);
     }
 
-    private readonly IGitRemoteReader _gitRemote;
+    private readonly IGitReader _gitRemote;
 
     private static QueuedEvent CreateEvent(
         string sessionId = "session-1",

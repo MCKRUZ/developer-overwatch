@@ -36,7 +36,8 @@ try {
         payload = $payload
         createdAt = $now
     } | ConvertTo-Json -Compress
-    $line | Add-Content (Join-Path $overwatchDir "queue-fallback.jsonl")
+    . (Join-Path $PSScriptRoot "overwatch-common.ps1")
+    Add-OverwatchLine (Join-Path $overwatchDir "queue-fallback.jsonl") $line
 } catch { }
 
 exit 0

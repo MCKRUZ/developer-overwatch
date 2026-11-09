@@ -32,7 +32,7 @@ public sealed class BackfillCommandTests : IDisposable
     private readonly string _transcriptA;
     private readonly UsageStore _usage;
     private readonly EventQueue _queue;
-    private readonly IGitRemoteReader _git = Substitute.For<IGitRemoteReader>();
+    private readonly IGitReader _git = Substitute.For<IGitReader>();
 
     public BackfillCommandTests()
     {
@@ -120,9 +120,12 @@ public sealed class BackfillCommandTests : IDisposable
         start.RootElement.GetProperty("startedAt").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-40));
 
         using var marker = JsonDocument.Parse(events[1].PayloadJson);
-        marker.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("sessionId", "transcriptPath");
+        marker.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("sessionId", "transcriptPath", "at");
         marker.RootElement.GetProperty("sessionId").GetString().Should().Be(MappedId);
         marker.RootElement.GetProperty("transcriptPath").GetString().Should().Be(_transcriptA);
+        marker.RootElement.GetProperty("at").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-1),
+            "the marker means idle, and the session went idle at its last transcript line, not at backfill time");
+        events[1].CreatedAt.Should().Be(Now, "queue order and retention must treat the backfilled events as new");
     }
 
     [Fact]

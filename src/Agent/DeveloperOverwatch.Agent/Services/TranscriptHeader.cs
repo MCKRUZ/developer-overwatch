@@ -35,6 +35,32 @@ internal sealed record TranscriptHeader(string? Cwd, DateTime? StartedAt)
         return new TranscriptHeader(cwd, startedAt);
     }
 
+    /// <summary>The last <c>timestamp</c> in the transcript, which is when the session was last active;
+    /// null when there is none or the file cannot be read. Reads the whole file, one line at a time.</summary>
+    public static async Task<DateTime?> ReadLastTimestampAsync(string transcriptPath, CancellationToken ct)
+    {
+        DateTime? last = null;
+        try
+        {
+            using var stream = new FileStream(transcriptPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            while (await reader.ReadLineAsync(ct) is { } line)
+            {
+                if (TryParseObject(line) is not { } root)
+                    continue;
+
+                using (root)
+                    last = ParseUtc(ReadString(root.RootElement, "timestamp")) ?? last;
+            }
+        }
+        catch (IOException)
+        {
+            // An unreadable transcript has no known last activity.
+        }
+
+        return last;
+    }
+
     /// <summary>The <c>/rename</c>d title Claude Code keeps in <c>&lt;session-id&gt;/custom-title.json</c>
     /// beside the transcript, as overwatch-session-start.ps1 reads it; null when there is none.</summary>
     public static string? ReadCustomTitle(string transcriptPath)

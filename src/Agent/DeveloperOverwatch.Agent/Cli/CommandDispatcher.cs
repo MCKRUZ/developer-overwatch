@@ -46,8 +46,17 @@ public static class CommandDispatcher
             return UsageErrorExitCode;
         }
 
-        using var store = new UsageStore(context.Config.QueueDbPath, context.Time);
-        return await UsageCommand.RunAsync(context.Output, context.Error, store, context.Config, context.Time);
+        // Opening queue.db can fail (locked, unwritable); that must end in a short message, not a stack trace.
+        try
+        {
+            using var store = new UsageStore(context.Config.QueueDbPath, context.Time);
+            return await UsageCommand.RunAsync(context.Output, context.Error, store, context.Config, context.Time);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Error.WriteLine($"Usage failed: {ex.Message}");
+            return 1;
+        }
     }
 
     private static async Task<int> RunBackfillAsync(CliContext context)
@@ -66,7 +75,7 @@ public static class CommandDispatcher
             using var queue = new EventQueue(context.Config.QueueDbPath, context.Time);
             var services = new BackfillServices(
                 usage, queue, new ConversationCursorStore(context.Config.OverwatchDir),
-                new ConversationCapture(NullLogger<ConversationCapture>.Instance), new GitRemoteReader(),
+                new ConversationCapture(NullLogger<ConversationCapture>.Instance), new GitReader(),
                 BackfillServices.DefaultProjectsDir);
             return await BackfillCommand.RunAsync(context.Output, context.Error, services, context.Config, context.Time, days);
         }

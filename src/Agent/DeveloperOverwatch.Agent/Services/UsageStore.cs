@@ -1,4 +1,3 @@
-using DeveloperOverwatch.Agent.Cli;
 using DeveloperOverwatch.Agent.Models;
 using Microsoft.Data.Sqlite;
 
@@ -155,7 +154,7 @@ public sealed class UsageStore : IUsageStore, IDisposable
     public Task PurgeAsync(TimeSpan minimumRetention, CancellationToken ct = default)
     {
         var retentionStart = Now - minimumRetention;
-        var monthStart = UsagePeriods.For(Now, _time.LocalTimeZone).MonthStartUtc;
+        var monthStart = LocalCalendar.MonthStartUtc(Now, _time.LocalTimeZone);
         var cutoff = retentionStart < monthStart ? retentionStart : monthStart;
 
         Execute("""

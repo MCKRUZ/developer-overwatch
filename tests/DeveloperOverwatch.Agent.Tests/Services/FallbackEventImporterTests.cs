@@ -14,6 +14,7 @@ public sealed class FallbackEventImporterTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), $"ow-import-{Guid.NewGuid():N}");
     private readonly IEventQueue _queue = Substitute.For<IEventQueue>();
     private readonly ILogger _logger = Substitute.For<ILogger>();
+    private readonly MutableTimeProvider _time = new(new DateTimeOffset(2026, 11, 9, 10, 0, 0, TimeSpan.Zero));
     private readonly List<string> _enqueuedIds = [];
 
     public FallbackEventImporterTests()
@@ -36,6 +37,14 @@ public sealed class FallbackEventImporterTests : IDisposable
         createdAt = "2026-11-09T10:00:00.0000000Z"
     });
 
+    private Task ImportAsync() => FallbackEventImporter.ImportAsync(_dir, _queue, _logger, _time);
+
+    private Task ImportAfterSettleAsync()
+    {
+        _time.Now += FallbackEventImporter.ClaimSettleTime;
+        return ImportAsync();
+    }
+
     [Fact]
     public async Task ImportAsync_HookAppendsDuringImport_LineSurvivesToNextPoll()
     {
@@ -49,24 +58,50 @@ public sealed class FallbackEventImporterTests : IDisposable
             File.AppendAllText(FallbackPath, Line("during-import") + Environment.NewLine);
         });
 
-        await FallbackEventImporter.ImportAsync(_dir, _queue, _logger);
+        await ImportAsync();
+        await ImportAfterSettleAsync();
 
         _enqueuedIds.Should().Equal("first");
         File.Exists(FallbackPath).Should().BeTrue("the hook's late line must not be deleted with the claimed file");
 
-        await FallbackEventImporter.ImportAsync(_dir, _queue, _logger);
+        await ImportAsync();
+        await ImportAfterSettleAsync();
 
         _enqueuedIds.Should().Equal("first", "during-import");
         Directory.EnumerateFiles(_dir).Should().BeEmpty();
     }
 
     [Fact]
-    public async Task ImportAsync_LeftoverClaimedFileFromCrash_IsImportedAndDeleted()
+    public async Task ImportAsync_LineWrittenIntoTheClaimedFileAfterTheClaim_IsNotLost()
     {
+        // On Linux and macOS the rename succeeds while a hook has the file open, and its line then
+        // lands in the claimed file. Reading that file in the same poll would delete the line unread.
+        await File.WriteAllTextAsync(FallbackPath, Line("before-claim") + Environment.NewLine);
+
+        await ImportAsync();
+        _enqueuedIds.Should().BeEmpty("a fresh claim waits for hooks that may still hold the file");
+
+        var claimed = Directory.EnumerateFiles(_dir, "*.importing").Single();
+        await File.AppendAllTextAsync(claimed, Line("after-claim") + Environment.NewLine);
+        _time.Now += FallbackEventImporter.ClaimSettleTime / 2;
+        await ImportAsync();
+        _enqueuedIds.Should().BeEmpty();
+
+        _time.Now += FallbackEventImporter.ClaimSettleTime / 2;
+        await ImportAsync();
+
+        _enqueuedIds.Should().Equal("before-claim", "after-claim");
+        Directory.EnumerateFiles(_dir).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportAsync_LeftoverClaimedFileWithoutAClaimTime_IsImportedAtOnce()
+    {
+        // The name an older agent gave a claimed file.
         var leftover = Path.Combine(_dir, "queue-fallback.0123abcd.importing");
         await File.WriteAllTextAsync(leftover, Line("left-over") + Environment.NewLine);
 
-        await FallbackEventImporter.ImportAsync(_dir, _queue, _logger);
+        await ImportAsync();
 
         _enqueuedIds.Should().Equal("left-over");
         File.Exists(leftover).Should().BeFalse();
@@ -79,13 +114,14 @@ public sealed class FallbackEventImporterTests : IDisposable
         _queue.EnqueueAsync(Arg.Any<QueuedEvent>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new IOException("database is locked"));
 
-        await FallbackEventImporter.ImportAsync(_dir, _queue, _logger);
+        await ImportAsync();
+        await ImportAfterSettleAsync();
 
         Directory.EnumerateFiles(_dir, "*.importing").Should().ContainSingle();
 
         _enqueuedIds.Clear();
         _queue.EnqueueAsync(Arg.Any<QueuedEvent>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
-        await FallbackEventImporter.ImportAsync(_dir, _queue, _logger);
+        await ImportAsync();
 
         _enqueuedIds.Should().Equal("retry-me");
         Directory.EnumerateFiles(_dir).Should().BeEmpty();
@@ -96,7 +132,8 @@ public sealed class FallbackEventImporterTests : IDisposable
     {
         await File.WriteAllTextAsync(FallbackPath, "not json" + Environment.NewLine);
 
-        await FallbackEventImporter.ImportAsync(_dir, _queue, _logger);
+        await ImportAsync();
+        await ImportAfterSettleAsync();
 
         _enqueuedIds.Should().BeEmpty();
         Directory.EnumerateFiles(_dir).Should().BeEmpty("a file that can never parse must not be retried every poll");

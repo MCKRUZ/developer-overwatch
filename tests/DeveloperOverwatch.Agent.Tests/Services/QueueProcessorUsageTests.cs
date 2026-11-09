@@ -20,7 +20,7 @@ public sealed class QueueProcessorUsageTests : IDisposable
     private readonly EventQueue _queue;
     private readonly UsageStore _usage;
     private readonly IGitFallbackWriter _gitFallback = Substitute.For<IGitFallbackWriter>();
-    private readonly IGitRemoteReader _gitRemote = Substitute.For<IGitRemoteReader>();
+    private readonly IGitReader _gitRemote = Substitute.For<IGitReader>();
 
     public QueueProcessorUsageTests()
     {
@@ -77,7 +77,8 @@ public sealed class QueueProcessorUsageTests : IDisposable
         await RunUntilAsync(sut, async () => (await UsageNowAsync()).Count > 0);
 
         await AssertUsageRecordedAsync();
-        (await _queue.GetUnshippedCountAsync()).Should().Be(2, "the failed batch stays queued for retry");
+        // The SessionStart ships on the first poll, while the fallback marker is still settling after its claim.
+        (await _queue.GetUnshippedCountAsync()).Should().Be(1, "the marker whose send failed stays queued for retry");
     }
 
     private QueueProcessor CreateSut(AgentMode mode, IApiClient api) =>
@@ -148,11 +149,14 @@ public sealed class QueueProcessorUsageTests : IDisposable
             CreatedAt = createdAt
         });
 
-    private static async Task RunUntilAsync(QueueProcessor sut, Func<Task<bool>> done)
+    /// <summary>Also waits until the hook fallback file is imported, which takes more than one poll: a
+    /// claimed file waits <see cref="FallbackEventImporter.ClaimSettleTime"/> before it is read.</summary>
+    private async Task RunUntilAsync(QueueProcessor sut, Func<Task<bool>> done)
     {
         await sut.StartAsync(CancellationToken.None);
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline && !await done())
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadline
+            && (Directory.EnumerateFiles(_dir, "queue-fallback*").Any() || !await done()))
             await Task.Delay(100);
         await sut.StopAsync(CancellationToken.None);
     }

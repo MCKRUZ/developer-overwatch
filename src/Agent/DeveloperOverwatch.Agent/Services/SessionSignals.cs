@@ -47,7 +47,9 @@ internal static class SessionSignals
     private static ActivityEvent? ToActivity(QueuedEvent evt) => evt.EventType switch
     {
         EventType.ToolExecution => new ActivityEvent("active", evt.CreatedAt),
-        EventType.ConversationTurn => new ActivityEvent("idle", evt.CreatedAt),
+        // The Stop hook's marker carries no "at": idle as of when it was queued. Backfill's marker is queued
+        // long after the session, so it carries the transcript's last activity.
+        EventType.ConversationTurn => new ActivityEvent("idle", ReadPayload(evt) is { } marker ? ReadAt(marker, evt) : evt.CreatedAt),
         EventType.ActivityChanged => ReadPayload(evt) is { } p
             && p.TryGetProperty("state", out var s) && s.ValueKind == JsonValueKind.String
             && States.Contains(s.GetString()!)

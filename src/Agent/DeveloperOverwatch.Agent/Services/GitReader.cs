@@ -3,7 +3,8 @@ using System.Diagnostics;
 
 namespace DeveloperOverwatch.Agent.Services;
 
-public interface IGitRemoteReader
+/// <summary>Reads from git: a repository's origin remote and config values.</summary>
+public interface IGitReader
 {
     /// <summary>The <c>origin</c> remote URL of the repository at <paramref name="repoPath"/>, or
     /// null when there is none, git is missing, or git does not answer in time.</summary>
@@ -15,7 +16,7 @@ public interface IGitRemoteReader
     Task<string?> GetConfigValueAsync(string? repoPath, string key, CancellationToken ct);
 }
 
-public sealed class GitRemoteReader : IGitRemoteReader
+public sealed class GitReader : IGitReader
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(3);
 

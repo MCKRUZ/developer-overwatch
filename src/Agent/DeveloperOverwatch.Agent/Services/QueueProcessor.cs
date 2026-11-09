@@ -19,7 +19,7 @@ public sealed class QueueProcessor : BackgroundService
     private readonly IGitFallbackWriter _gitFallback;
     private readonly IConversationCapture _conversationCapture;
     private readonly IConversationCursorStore _cursorStore;
-    private readonly IGitRemoteReader _gitRemote;
+    private readonly IGitReader _gitRemote;
     private readonly IUsageStore _usageStore;
     private readonly AgentConfig _config;
     private readonly ILogger<QueueProcessor> _logger;
@@ -33,7 +33,7 @@ public sealed class QueueProcessor : BackgroundService
         IGitFallbackWriter gitFallback,
         IConversationCapture conversationCapture,
         IConversationCursorStore cursorStore,
-        IGitRemoteReader gitRemote,
+        IGitReader gitRemote,
         IUsageStore usageStore,
         AgentConfig config,
         ILogger<QueueProcessor> logger)
@@ -379,7 +379,7 @@ public sealed class QueueProcessor : BackgroundService
     }
 
     private Task ImportFallbackEventsAsync() =>
-        FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger);
+        FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger, TimeProvider.System);
 
     /// <summary>
     /// Looks up the repo path for a given (our) session ID by scanning the per-Claude-session

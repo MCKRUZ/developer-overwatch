@@ -1,6 +1,7 @@
 using DeveloperOverwatch.Agent.Cli;
 using DeveloperOverwatch.Agent.Models;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 
 namespace DeveloperOverwatch.Agent.Tests.Cli;
 
@@ -39,5 +40,27 @@ public sealed class CommandDispatcherTests
         exit.Should().Be(2);
         error.ToString().Should().Contain("takes no arguments");
         Directory.Exists(Config.OverwatchDir).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunAsync_UsageWithUnopenableQueueDb_ExitsOneWithAShortMessage()
+    {
+        var overwatch = Path.Combine(Path.GetTempPath(), $"ow-dispatch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(overwatch, "queue.db")); // a folder where the database file should be
+        var error = new StringWriter();
+        try
+        {
+            var exit = await CommandDispatcher.RunAsync(
+                ["usage"], new StringWriter(), error, new AgentConfig { Mode = AgentMode.Local, OverwatchDir = overwatch },
+                TimeProvider.System);
+
+            exit.Should().Be(1);
+            error.ToString().Should().StartWith("Usage failed: ").And.NotContain("   at ");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(overwatch, recursive: true);
+        }
     }
 }

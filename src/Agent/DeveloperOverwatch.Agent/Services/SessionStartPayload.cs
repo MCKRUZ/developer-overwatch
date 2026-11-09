@@ -18,7 +18,7 @@ internal static class SessionStartPayload
     /// <param name="rawPayload">The payload as queued — the repository path is read from here,
     /// since redaction may rewrite strings.</param>
     public static async Task<string?> ResolveProjectKeyAsync(
-        string rawPayload, IGitRemoteReader gitRemote, CancellationToken ct)
+        string rawPayload, IGitReader gitRemote, CancellationToken ct)
     {
         var repoPath = ReadRepoPath(rawPayload);
         var remoteUrl = repoPath is null ? null : await gitRemote.GetOriginUrlAsync(repoPath, ct);

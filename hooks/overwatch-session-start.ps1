@@ -82,5 +82,5 @@ $eventId = [guid]::NewGuid().ToString()
 $now = (Get-Date).ToUniversalTime().ToString("o")
 $fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
 $line = @{ id = $eventId; sessionId = $sessionId; eventType = "SessionStart"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
-try { $line | Add-Content $fallbackFile } catch { }
+try { . (Join-Path $PSScriptRoot "overwatch-common.ps1"); Add-OverwatchLine $fallbackFile $line } catch { }
 exit 0

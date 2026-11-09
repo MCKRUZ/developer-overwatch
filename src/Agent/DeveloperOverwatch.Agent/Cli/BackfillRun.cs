@@ -99,8 +99,17 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
             await BackfillSessionIds.WriteMappingAsync(config.OverwatchDir, claudeSessionId, session.Id, header.Cwd, ct);
 
         var start = await BuildSessionStartAsync(transcript, session.Id, header, ct);
-        // Exactly the payload overwatch-stop.ps1 queues.
-        var marker = JsonSerializer.Serialize(new { sessionId = session.Id, transcriptPath = transcript });
+        // The payload overwatch-stop.ps1 queues, plus when the session was last active. The processor
+        // reads a Stop marker as "idle", dated by "at" when present; without it the session would go idle
+        // as of this backfill. CreatedAt stays now, so queue order and retention treat it as new.
+        var lastActiveAt = await TranscriptHeader.ReadLastTimestampAsync(transcript, ct)
+            ?? File.GetLastWriteTimeUtc(transcript);
+        var marker = JsonSerializer.Serialize(new
+        {
+            sessionId = session.Id,
+            transcriptPath = transcript,
+            at = lastActiveAt.ToString("o", CultureInfo.InvariantCulture),
+        });
 
         await services.Queue.EnqueueAsync(Event($"start:{claudeSessionId}", session.Id, EventType.SessionStart, start), ct);
         await services.Queue.EnqueueAsync(Event($"turns:{claudeSessionId}", session.Id, EventType.ConversationTurn, marker), ct);

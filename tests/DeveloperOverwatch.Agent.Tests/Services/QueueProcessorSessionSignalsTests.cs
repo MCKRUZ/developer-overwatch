@@ -40,7 +40,7 @@ public sealed class QueueProcessorSessionSignalsTests
         };
         return new QueueProcessor(
             _queue, _api, redactor, Substitute.For<IGitFallbackWriter>(), Substitute.For<IConversationCapture>(),
-            Substitute.For<IConversationCursorStore>(), Substitute.For<IGitRemoteReader>(),
+            Substitute.For<IConversationCursorStore>(), Substitute.For<IGitReader>(),
             Substitute.For<IUsageStore>(), config, Substitute.For<ILogger<QueueProcessor>>());
     }
 
@@ -105,6 +105,15 @@ public sealed class QueueProcessorSessionSignalsTests
 
         Activity(SignalsPayload()).Should().Equal(("active", T1), ("idle", T2));
         SignalsPayload().GetProperty("toolFailures").GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Pilot_StopMarkerCarryingAt_IsIdleAtThatTime()
+    {
+        // Backfill queues its marker long after the session ended, and dates it with "at".
+        await RunOneTickAsync(AgentMode.Pilot, Event(EventType.ConversationTurn, $"{{\"at\":\"{T1:o}\"}}", T2));
+
+        Activity(SignalsPayload()).Should().Equal(("idle", T1));
     }
 
     [Fact]

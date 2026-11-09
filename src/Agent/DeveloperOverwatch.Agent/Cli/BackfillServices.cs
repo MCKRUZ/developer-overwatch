@@ -9,7 +9,7 @@ public sealed record BackfillServices(
     IEventQueue Queue,
     IConversationCursorStore Cursors,
     IConversationCapture Capture,
-    IGitRemoteReader Git,
+    IGitReader Git,
     string ProjectsDir)
 {
     public static string DefaultProjectsDir => Path.Combine(

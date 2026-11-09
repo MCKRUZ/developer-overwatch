@@ -26,7 +26,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<IConversationCapture, ConversationCapture>();
         services.AddSingleton<IConversationCursorStore>(_ => new ConversationCursorStore(config.OverwatchDir));
         services.AddSingleton<IGitFallbackWriter, GitFallbackWriter>();
-        services.AddSingleton<IGitRemoteReader, GitRemoteReader>();
+        services.AddSingleton<IGitReader, GitReader>();
 
         services.AddHttpClient<IApiClient, ApiClient>(client =>
         {

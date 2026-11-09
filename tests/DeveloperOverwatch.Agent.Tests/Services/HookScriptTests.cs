@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -15,20 +14,9 @@ public sealed class HookScriptTests
     private static readonly string[] NewHooks =
         ["overwatch-prompt-submit.ps1", "overwatch-notification.ps1", "overwatch-tool-failure.ps1"];
 
+    private const string SharedHelper = "overwatch-common.ps1";
+
     private const string Sentinel = "SENTINEL-PRIVATE";
-
-    private static readonly string HooksDir = FindHooksDir();
-
-    private static string FindHooksDir()
-    {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            var hooks = Path.Combine(dir.FullName, "hooks");
-            if (File.Exists(Path.Combine(hooks, "overwatch-stop.ps1")))
-                return hooks;
-        }
-        throw new InvalidOperationException("hooks directory not found above the test output");
-    }
 
     public static TheoryData<string> NewHookNames() => new(NewHooks);
 
@@ -36,22 +24,27 @@ public sealed class HookScriptTests
     [MemberData(nameof(NewHookNames))]
     public void NewHook_NeverReadsPromptErrorOrToolInput(string hook)
     {
-        var script = File.ReadAllText(Path.Combine(HooksDir, hook));
+        var script = File.ReadAllText(Path.Combine(Pwsh.HooksDir, hook));
 
         Regex.IsMatch(script, @"\.(prompt|error|tool_input)\b").Should().BeFalse();
-        script.Split('\n').Where(l => l.Contains("ConvertTo-Json") || l.Contains("Add-Content"))
+        script.Split('\n')
+            .Where(l => l.Contains("ConvertTo-Json") || l.Contains("Add-Content") || l.Contains("Add-OverwatchLine"))
             .Should().NotContain(l => l.Contains("$hookInput") || l.Contains("$stdinJson") || l.Contains("ReadToEnd"),
                 "the raw hook input must never be serialized or written out");
     }
 
     [Fact]
-    public void AllHooks_WriteOnlyToTheJsonlFile()
+    public void AllHooks_WriteOnlyToTheJsonlFile_ThroughTheSharedWriter()
     {
-        var hooks = Directory.GetFiles(HooksDir, "overwatch-*.ps1");
+        var hooks = Directory.GetFiles(Pwsh.HooksDir, "overwatch-*.ps1")
+            .Where(h => Path.GetFileName(h) != SharedHelper)
+            .ToList();
 
         hooks.Should().HaveCount(7);
         hooks.Should().NotContain(h => File.ReadAllText(h).Contains("SqliteConnection"),
             "pwsh cannot load the SQLite library, so that path never worked");
+        hooks.Should().NotContain(h => File.ReadAllText(h).Contains("Add-Content"),
+            "Add-Content fails outright when another hook holds the file, and the event is lost");
     }
 
     [Fact]
@@ -76,6 +69,36 @@ public sealed class HookScriptTests
         using var payload = JsonDocument.Parse(doc.RootElement.GetProperty("payload").GetString()!);
         payload.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("toolName", "at");
         payload.RootElement.GetProperty("toolName").GetString().Should().Be("Bash");
+    }
+
+    [Fact]
+    public void ToolFailureHook_SeveralRunningAtOnce_EveryLineLands()
+    {
+        // Async hooks run in parallel. An append that loses the race for the file must retry, not drop its event.
+        const int count = 4;
+        var home = CreateHome();
+        var processes = new List<Process>();
+        for (var i = 0; i < count; i++)
+        {
+            if (Pwsh.Start("overwatch-tool-failure.ps1", home) is not { } process) return;
+            processes.Add(process);
+        }
+
+        // Each one is started and waiting on stdin, so feeding them back to back makes their appends overlap.
+        Thread.Sleep(1500);
+        var input = JsonSerializer.Serialize(new { session_id = "claude-1", hook_event_name = "PostToolUseFailure", tool_name = "Bash" });
+        foreach (var process in processes)
+        {
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+        }
+        foreach (var process in processes)
+            Pwsh.Finish(process, stdin: null).ExitCode.Should().Be(0);
+
+        var lines = ReadLines(home);
+        lines.Should().HaveCount(count);
+        lines.Select(l => JsonDocument.Parse(l).RootElement.GetProperty("id").GetString())
+            .Should().OnlyHaveUniqueItems();
     }
 
     [Fact]
@@ -140,38 +163,12 @@ public sealed class HookScriptTests
     /// not installed. Asserts the async-hook contract: exit 0 and nothing on stdout.</summary>
     private static string? RunHook(string hook, string home, object input)
     {
-        var psi = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(HooksDir, hook) })
-            psi.ArgumentList.Add(arg);
-        psi.Environment["USERPROFILE"] = home;
-
-        Process process;
-        try
-        {
-            process = Process.Start(psi)!;
-        }
-        catch (Win32Exception)
-        {
+        if (Pwsh.Start(hook, home) is not { } process)
             return null;
-        }
 
-        using (process)
-        {
-            process.StandardInput.Write(JsonSerializer.Serialize(input));
-            process.StandardInput.Close();
-            var stdout = process.StandardOutput.ReadToEnd();
-            process.StandardError.ReadToEnd();
-            process.WaitForExit(30_000).Should().BeTrue();
-
-            process.ExitCode.Should().Be(0);
-            stdout.Should().BeEmpty("async hooks' stdout is parsed by Claude Code");
-            return stdout;
-        }
+        var result = Pwsh.Finish(process, JsonSerializer.Serialize(input));
+        result.ExitCode.Should().Be(0);
+        result.Stdout.Should().BeEmpty("async hooks' stdout is parsed by Claude Code");
+        return result.Stdout;
     }
 }
