@@ -41,15 +41,20 @@ public sealed class IngestSessionEventsCommandHandler
 
         // The Agent delivers at-least-once: a slow/timed-out response can look like a failure
         // client-side even though this exact batch already committed, so the same Ids get
-        // resubmitted on retry. Ids are client-generated once per logical event, so treat
-        // resubmission as a no-op rather than double-counting cost/tokens or crashing EF's
-        // change tracker on the identity conflict (GetByIdAsync already eager-loads these
-        // collections into this same scope).
-        var existingTurnIds = session.ConversationTurns.Select(t => t.Id).ToHashSet();
+        // resubmitted on retry. Treat resubmission as a no-op rather than double-counting
+        // cost/tokens or crashing EF's change tracker on the identity conflict.
+        //
+        // Conversation turn ids are derived from the transcript content (the API message id or
+        // line uuid), not generated per send. A resumed Claude Code session copies the earlier
+        // session's history, with the same ids, into its own transcript, so the existence check
+        // for turns spans every session, not just this one.
+        var incomingTurns = request.ConversationTurns.DistinctBy(t => t.Id).ToList();
+        var existingTurnIds = await _repository.GetExistingTurnIdsAsync(
+            incomingTurns.Select(t => t.Id).ToList(), cancellationToken);
         var existingToolIds = session.ToolExecutions.Select(t => t.Id).ToHashSet();
         var existingFileIds = session.FileChanges.Select(f => f.Id).ToHashSet();
 
-        var newConversationTurns = request.ConversationTurns.Where(t => !existingTurnIds.Contains(t.Id)).ToList();
+        var newConversationTurns = incomingTurns.Where(t => !existingTurnIds.Contains(t.Id)).ToList();
         var newToolExecutions = request.ToolExecutions.Where(t => !existingToolIds.Contains(t.Id)).ToList();
         var newFileChanges = request.FileChanges.Where(f => !existingFileIds.Contains(f.Id)).ToList();
 

@@ -235,9 +235,9 @@ public sealed class QueueProcessorTests
                 payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
             _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
                 .Returns(new List<QueuedEvent> { evt }, []);
-            _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
                 .Returns(new ConversationCaptureResult(
-                    [new CapturedTurn("user", "hello", DateTime.UtcNow)], 1));
+                    [new CapturedTurn("uuid:u-1", "user", "hello", DateTime.UtcNow)], 1));
             _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
                 .Returns(true);
 
@@ -268,9 +268,9 @@ public sealed class QueueProcessorTests
                 payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
             _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
                 .Returns(new List<QueuedEvent> { evt }, []);
-            _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
                 .Returns(new ConversationCaptureResult(
-                    [new CapturedTurn("user", "hello", DateTime.UtcNow)], 1));
+                    [new CapturedTurn("uuid:u-1", "user", "hello", DateTime.UtcNow)], 1));
             _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
                 .Returns(true);
 
@@ -285,5 +285,137 @@ public sealed class QueueProcessorTests
         {
             projectDir.Delete(recursive: true);
         }
+    }
+
+    private QueuedEvent ArrangeConversationEvent(string transcriptPath, string sessionId = "session-1")
+    {
+        var evt = CreateEvent(
+            sessionId: sessionId,
+            type: EventType.ConversationTurn,
+            payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
+        return evt;
+    }
+
+    private static List<JsonElement> TurnsIn(string payload) =>
+        JsonDocument.Parse(payload).RootElement.GetProperty("conversationTurns").EnumerateArray().ToList();
+
+    [Fact]
+    public async Task ConversationTurn_SameSourceIdShippedTwice_GetsTheSameTurnIdBothTimes()
+    {
+        // Retries and resumed-session copies resend the same transcript lines. Only a turn id
+        // derived from the line's own id lets the server recognise the resend and skip it.
+        const string transcriptPath = "C:/nowhere/session.jsonl";
+        var first = ArrangeConversationEvent(transcriptPath);
+        var second = ArrangeConversationEvent(transcriptPath);
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { first, second }, []);
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:msg_A", "assistant", "hi", DateTime.UtcNow),
+                 new CapturedTurn("msg:msg_B", "assistant", "there", DateTime.UtcNow)], 2));
+        var payloads = new List<string>();
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(payloads.Add), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await RunOneTickAsync();
+
+        payloads.Should().HaveCount(2);
+        var firstIds = TurnsIn(payloads[0]).Select(t => t.GetProperty("id").GetString()).ToList();
+        var secondIds = TurnsIn(payloads[1]).Select(t => t.GetProperty("id").GetString()).ToList();
+        secondIds.Should().Equal(firstIds);
+        firstIds.Should().OnlyHaveUniqueItems();
+        firstIds.Should().AllSatisfy(id => Guid.TryParse(id, out _).Should().BeTrue());
+    }
+
+    [Fact]
+    public async Task ConversationTurn_TokenCount_IncludesCacheTokens()
+    {
+        const string transcriptPath = "C:/nowhere/session.jsonl";
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:msg_A", "assistant", null, DateTime.UtcNow,
+                    InputTokens: 3, OutputTokens: 50, CacheCreationInputTokens: 400, CacheReadInputTokens: 9000)], 1));
+        string? payload = null;
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await RunOneTickAsync();
+
+        TurnsIn(payload!).Single().GetProperty("tokenCount").GetInt32().Should().Be(9453);
+    }
+
+    [Fact]
+    public async Task ConversationTurn_SubagentTranscripts_ShipInSamePayloadAndAdvanceTheirOwnCursors()
+    {
+        const string transcriptPath = "C:/nowhere/session.jsonl";
+        const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult([new CapturedTurn("msg:msg_A", "assistant", "hi", DateTime.UtcNow)], 4));
+        _conversationCapture.FindSubagentTranscripts(transcriptPath).Returns([subagentPath]);
+        _cursorStore.GetAsync("session-1/agent-a1", Arg.Any<CancellationToken>()).Returns(10);
+        _conversationCapture.CaptureFromFileAsync(subagentPath, 10, true, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:msg_S1", "subagent", null, DateTime.UtcNow, OutputTokens: 30, Model: "claude-haiku-5-5")], 17));
+        string? payload = null;
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await RunOneTickAsync();
+
+        TurnsIn(payload!).Select(t => t.GetProperty("role").GetString()).Should().Equal("assistant", "subagent");
+        await _cursorStore.Received().SetAsync("session-1", 4, Arg.Any<CancellationToken>());
+        await _cursorStore.Received().SetAsync("session-1/agent-a1", 17, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ConversationTurn_ShipFails_LeavesEveryCursorUnmoved()
+    {
+        const string transcriptPath = "C:/nowhere/session.jsonl";
+        const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult([new CapturedTurn("msg:msg_A", "assistant", "hi", DateTime.UtcNow)], 4));
+        _conversationCapture.FindSubagentTranscripts(transcriptPath).Returns([subagentPath]);
+        _conversationCapture.CaptureFromFileAsync(subagentPath, Arg.Any<int>(), true, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult([new CapturedTurn("msg:msg_S1", "subagent", null, DateTime.UtcNow)], 17));
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(false);
+
+        await RunOneTickAsync();
+
+        await _cursorStore.DidNotReceive().SetAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ConversationTurn_SubagentAndMainTurns_ShipInTimestampOrder()
+    {
+        // The server numbers turns in the order they arrive, and governance reads them in that
+        // order — so a subagent's work must sit between the prompt and the parent's final answer.
+        const string transcriptPath = "C:/nowhere/session.jsonl";
+        const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
+        var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("uuid:u-1", "user", "prompt", t0),
+                 new CapturedTurn("msg:msg_F", "assistant", "final answer", t0.AddMinutes(10))], 4));
+        _conversationCapture.FindSubagentTranscripts(transcriptPath).Returns([subagentPath]);
+        _conversationCapture.CaptureFromFileAsync(subagentPath, Arg.Any<int>(), true, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:msg_S1", "subagent", "digging", t0.AddMinutes(2))], 3));
+        string? payload = null;
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await RunOneTickAsync();
+
+        TurnsIn(payload!).Select(t => t.GetProperty("content").GetString())
+            .Should().Equal("prompt", "digging", "final answer");
     }
 }

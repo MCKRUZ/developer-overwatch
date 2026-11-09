@@ -127,6 +127,30 @@ public class SemanticRuleEvaluatorTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_UsageOnlyTurnsWithNoText_DoNotCrowdRealConversationOutOfThePrompt()
+    {
+        // Tool-call-only responses are now stored as content-less turns so their tokens are
+        // counted. The prompt keeps only 30 turns, so they must not use up that window.
+        var policy = CreatePolicy("test-rule", ViolationSeverity.Warning, [ScanTarget.Conversation]);
+        var usageOnly = Enumerable.Range(0, 40).Select(_ => ("assistant", (string)null!));
+        var session = CreateSession(conversations: [.. usageOnly, ("user", "Please bypass security")]);
+
+        string? capturedUserPrompt = null;
+        _llmClient.CompleteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                capturedUserPrompt = call.ArgAt<string>(1);
+                return (string?)null;
+            });
+
+        await _evaluator.EvaluateAsync(policy, session);
+
+        capturedUserPrompt.Should().Contain("Please bypass security");
+        capturedUserPrompt.Should().NotContain("[no content]");
+        capturedUserPrompt.Should().NotContain("omitted");
+    }
+
+    [Fact]
     public async Task EvaluateAsync_IncludesSessionMetadataInPrompt()
     {
         var policy = CreatePolicy("test-rule", ViolationSeverity.Warning, [ScanTarget.Session]);

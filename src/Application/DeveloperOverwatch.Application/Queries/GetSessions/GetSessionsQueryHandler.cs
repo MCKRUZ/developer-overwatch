@@ -45,6 +45,8 @@ public sealed class GetSessionsQueryHandler
                         dayGroup => new DailyTokenCost(
                             dayGroup.Sum(r => r.InputTokens ?? 0),
                             dayGroup.Sum(r => r.OutputTokens ?? 0),
+                            dayGroup.Sum(r => r.CacheCreationInputTokens ?? 0),
+                            dayGroup.Sum(r => r.CacheReadInputTokens ?? 0),
                             dayGroup.Sum(r => r.EstimatedCostUsd ?? 0m))));
 
         var emptyDailyUsage = (IReadOnlyDictionary<string, DailyTokenCost>)

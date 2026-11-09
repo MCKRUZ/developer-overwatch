@@ -89,6 +89,30 @@ public class GetSessionsTests
     }
 
     [Fact]
+    public async Task Handle_DailyUsage_CarriesCacheTokensSoTheListTotalMatchesTheDetailPage()
+    {
+        // Cache reads are usually the bulk of Claude Code usage; a per-day total without them
+        // disagrees with the session detail page and badly understates real volume.
+        _repo.GetAllAsync(null, null, null, null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Session> { new() { Id = "s1", DeveloperEmail = "dev@team.dev" } });
+        _repo.GetViolationCountsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, int>());
+        _repo.GetTurnUsageRowsForSessionsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<SessionTurnUsageRow>
+            {
+                new("s1", new DateTime(2026, 9, 20, 8, 0, 0, DateTimeKind.Utc), 1, 5, 300, 9000, 1.00m),
+                new("s1", new DateTime(2026, 9, 20, 9, 0, 0, DateTimeKind.Utc), 2, 5, 100, 1000, 1.00m),
+            });
+
+        var handler = new GetSessionsQueryHandler(_repo, _staleThreshold);
+        var result = await handler.Handle(new GetSessionsQuery(), CancellationToken.None);
+
+        var day = result.Value!.Single().DailyUsage["2026-09-20"];
+        day.CacheCreationInputTokens.Should().Be(400);
+        day.CacheReadInputTokens.Should().Be(10000);
+    }
+
+    [Fact]
     public async Task Handle_SessionWithNoUsageRows_HasEmptyDailyUsage()
     {
         var sessions = new List<Session> { new() { Id = "s1", DeveloperEmail = "dev@team.dev" } };

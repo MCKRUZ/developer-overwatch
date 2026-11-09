@@ -106,11 +106,17 @@ describe("SessionDetailPage", () => {
 
   it("shows total tokens and estimated cost", async () => {
     mockApi.sessions.get.mockResolvedValue(
-      buildSessionDetail({ totalInputTokens: 100, totalOutputTokens: 50, estimatedCostUsd: 1.2345 }),
+      buildSessionDetail({
+        totalInputTokens: 100,
+        totalOutputTokens: 50,
+        totalCacheCreationInputTokens: 850,
+        totalCacheReadInputTokens: 4000,
+        estimatedCostUsd: 1.2345,
+      }),
     );
     renderWithRoute("sess-001");
     await waitFor(() => {
-      expect(screen.getByText("150")).toBeInTheDocument();
+      expect(screen.getByText("5,000")).toBeInTheDocument();
     });
     expect(screen.getByText("$1.23")).toBeInTheDocument();
   });

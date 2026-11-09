@@ -139,42 +139,75 @@ public sealed class QueueProcessor : BackgroundService
         if (string.IsNullOrEmpty(transcriptPath))
             return true;
 
-        var cursor = await _cursorStore.GetAsync(sessionId, ct);
-        var result = await _conversationCapture.CaptureFromFileAsync(transcriptPath, cursor, ct);
+        var captures = await CaptureTranscriptsAsync(sessionId, transcriptPath, ct);
+        // The server numbers turns in arrival order, so interleave subagent work with the parent
+        // conversation by time. OrderBy is stable: same-timestamp turns keep transcript order.
+        var turns = captures
+            .SelectMany(c => c.Result.Turns)
+            .OrderBy(t => t.Timestamp ?? DateTime.MaxValue)
+            .ToList();
 
-        if (result.Turns.Count == 0)
+        if (turns.Count > 0)
         {
-            await _cursorStore.SetAsync(sessionId, result.TotalLines, ct);
-            return true;
+            var sessionTitle = await ResolveSessionTitleAsync(transcriptPath, ct);
+            var payload = BuildConversationPayload(sessionId, sessionTitle, turns);
+            if (!await _api.SendSessionEventsAsync(sessionId, _redactor.Redact(payload), ct))
+                return false;
         }
 
-        var sessionTitle = await ResolveSessionTitleAsync(transcriptPath, ct);
+        // Cursors move only after the server has the turns. If a later cursor write fails, the
+        // resend carries the same stable turn ids and the server skips what it already stored.
+        foreach (var capture in captures)
+            await _cursorStore.SetAsync(capture.CursorKey, capture.Result.TotalLines, ct);
 
-        var payload = JsonSerializer.Serialize(new
+        return true;
+    }
+
+    private sealed record TranscriptCapture(string CursorKey, ConversationCaptureResult Result);
+
+    /// <summary>Reads the session transcript plus every subagent transcript beside it. A subagent's
+    /// real usage — with its input/output/cache split and its own model — is only in its own file;
+    /// the parent's completion notice reports just the subagent's final context size.</summary>
+    private async Task<List<TranscriptCapture>> CaptureTranscriptsAsync(
+        string sessionId, string transcriptPath, CancellationToken ct)
+    {
+        var mainCursor = await _cursorStore.GetAsync(sessionId, ct);
+        var captures = new List<TranscriptCapture>
+        {
+            new(sessionId, await _conversationCapture.CaptureFromFileAsync(transcriptPath, mainCursor, false, ct))
+        };
+
+        foreach (var subagentPath in _conversationCapture.FindSubagentTranscripts(transcriptPath))
+        {
+            var cursorKey = $"{sessionId}/{Path.GetFileNameWithoutExtension(subagentPath)}";
+            var cursor = await _cursorStore.GetAsync(cursorKey, ct);
+            captures.Add(new(cursorKey, await _conversationCapture.CaptureFromFileAsync(subagentPath, cursor, true, ct)));
+        }
+
+        return captures;
+    }
+
+    private string BuildConversationPayload(string sessionId, string? sessionTitle, IReadOnlyList<CapturedTurn> turns) =>
+        JsonSerializer.Serialize(new
         {
             sessionId,
             sessionTitle,
-            conversationTurns = result.Turns.Select((t, i) => new
+            conversationTurns = turns.Select((t, i) => new
             {
-                id = Guid.NewGuid().ToString(),
-                turnIndex = cursor + i,
+                id = StableTurnId.From(t.SourceId),
+                turnIndex = i,
                 role = t.Role,
-                content = t.Content.Length > MaxTurnContentLength
-                    ? t.Content[..MaxTurnContentLength]
-                    : t.Content,
-                tokenCount = (t.InputTokens ?? 0) + (t.OutputTokens ?? 0) is var total && total > 0
-                    ? total
-                    : (int?)null,
+                content = t.Content is { Length: > MaxTurnContentLength } longText ? longText[..MaxTurnContentLength] : t.Content,
+                tokenCount = TotalTokens(t) is var total && total > 0 ? total : (int?)null,
                 inputTokens = t.InputTokens,
                 outputTokens = t.OutputTokens,
                 cacheCreationInputTokens = t.CacheCreationInputTokens,
                 cacheReadInputTokens = t.CacheReadInputTokens,
                 model = t.Model,
                 // Computed from the RAW (pre-redaction) content — by the time this payload is
-                // redacted below, the secret itself is gone, so this flag is the only signal the
-                // server ever gets that one was present. Governance can't detect it after the
-                // fact once redaction has already erased it.
-                containsRedactedSecret = _redactor.ContainsSensitive(t.Content),
+                // redacted, the secret itself is gone, so this flag is the only signal the server
+                // ever gets that one was present.
+                containsRedactedSecret = t.Content is not null && _redactor.ContainsSensitive(t.Content),
                 timestamp = (t.Timestamp ?? DateTime.UtcNow).ToString("o"),
                 isDecision = false
             }),
@@ -182,13 +215,9 @@ public sealed class QueueProcessor : BackgroundService
             fileChanges = Array.Empty<object>()
         });
 
-        var redactedPayload = _redactor.Redact(payload);
-        var success = await _api.SendSessionEventsAsync(sessionId, redactedPayload, ct);
-        if (success)
-            await _cursorStore.SetAsync(sessionId, result.TotalLines, ct);
-
-        return success;
-    }
+    // Cache reads and writes are tokens the model processed too — usually most of them.
+    private static int TotalTokens(CapturedTurn t) =>
+        (t.InputTokens ?? 0) + (t.OutputTokens ?? 0) + (t.CacheCreationInputTokens ?? 0) + (t.CacheReadInputTokens ?? 0);
 
     // Claude Code stores a `/rename`d session title in a sidecar file next to the transcript
     // (<projects-dir>/<encoded-repo>/<session-id>/custom-title.json), not in the transcript

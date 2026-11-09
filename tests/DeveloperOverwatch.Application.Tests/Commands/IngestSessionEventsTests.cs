@@ -269,6 +269,8 @@ public class IngestSessionEventsTests
             }],
         };
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        _repo.GetExistingTurnIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new HashSet<string> { "turn-1" });
         _pricing.CalculateCost(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>())
             .Returns(1.50m);
 
@@ -305,5 +307,58 @@ public class IngestSessionEventsTests
         await handler.Handle(command, CancellationToken.None);
 
         session.Title.Should().Be("keep-me");
+    }
+
+    [Fact]
+    public async Task Handle_TurnIdAlreadyStoredUnderAnotherSession_IsSkippedAndNotCounted()
+    {
+        // A resumed session copies the earlier session's transcript lines — same ids — into its
+        // own file. Those turns were already counted once, under the original session.
+        var sessionId = Guid.NewGuid().ToString();
+        var session = new Session { Id = sessionId, Status = SessionStatus.Active };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        _repo.GetExistingTurnIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new HashSet<string> { "copied-turn" });
+        _pricing.CalculateCost(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>())
+            .Returns(0.25m);
+
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations);
+        var command = new IngestSessionEventsCommand
+        {
+            SessionId = sessionId,
+            ConversationTurns =
+            [
+                new ConversationTurnDto { Id = "copied-turn", Role = "assistant", InputTokens = 1000, Timestamp = DateTime.UtcNow },
+                new ConversationTurnDto { Id = "fresh-turn", Role = "assistant", InputTokens = 7, Timestamp = DateTime.UtcNow },
+            ],
+        };
+
+        var result = await handler.Handle(command, CancellationToken.None);
+
+        result.Value.Should().Be(1);
+        session.TotalInputTokens.Should().Be(7);
+        session.EstimatedCostUsd.Should().Be(0.25m);
+        await _repo.Received(1).AddTurnsAsync(
+            Arg.Is<IEnumerable<ConversationTurn>>(ts => ts.Single().Id == "fresh-turn"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_SameTurnIdTwiceInOneBatch_CountsItOnce()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var session = new Session { Id = sessionId, Status = SessionStatus.Active };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        _repo.GetExistingTurnIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new HashSet<string>());
+
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations);
+        var turn = new ConversationTurnDto { Id = "dup", Role = "assistant", InputTokens = 40, Timestamp = DateTime.UtcNow };
+        var command = new IngestSessionEventsCommand { SessionId = sessionId, ConversationTurns = [turn, turn] };
+
+        var result = await handler.Handle(command, CancellationToken.None);
+
+        result.Value.Should().Be(1);
+        session.TotalInputTokens.Should().Be(40);
     }
 }

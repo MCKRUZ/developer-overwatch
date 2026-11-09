@@ -225,14 +225,21 @@ describe("SessionsPage", () => {
         totalOutputTokens: 9999,
         estimatedCostUsd: 999.99,
         dailyUsage: {
-          "2026-05-27": { inputTokens: 100, outputTokens: 50, estimatedCostUsd: 1.23 },
+          "2026-05-27": {
+            inputTokens: 100,
+            outputTokens: 50,
+            cacheCreationInputTokens: 850,
+            cacheReadInputTokens: 4000,
+            estimatedCostUsd: 1.23,
+          },
         },
       }),
     ]);
     render(<SessionsPage />);
 
+    // Cache tokens are part of the day's total, the same way the detail page counts them.
     await waitFor(() => {
-      expect(screen.getByText("150")).toBeInTheDocument();
+      expect(screen.getByText("5,000")).toBeInTheDocument();
     });
     expect(screen.getByText("$1.23")).toBeInTheDocument();
     expect(screen.queryByText("9,999")).not.toBeInTheDocument();

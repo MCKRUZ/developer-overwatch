@@ -247,6 +247,25 @@ public sealed class SessionRepository : ISessionRepository
     public async Task AddAsync(Session session, CancellationToken ct = default) =>
         await _db.Sessions.AddAsync(session, ct);
 
+    // SQL Server caps a query at 2,100 parameters; a first capture of a long transcript can send
+    // thousands of turns, so the lookup runs in chunks.
+    private const int TurnIdLookupChunkSize = 1000;
+
+    public async Task<IReadOnlySet<string>> GetExistingTurnIdsAsync(
+        IReadOnlyCollection<string> turnIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in turnIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.ConversationTurns
+                .Where(t => chunk.Contains(t.Id))
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
     public Task UpdateAsync(Session session, CancellationToken ct = default)
     {
         _db.Sessions.Update(session);

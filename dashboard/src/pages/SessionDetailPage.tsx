@@ -147,7 +147,12 @@ export default function SessionDetailPage() {
           <div>
             <span className="text-gray-500 dark:text-gray-400">Total Tokens:</span>{" "}
             <span title={tokenBreakdownTooltip(session)}>
-              {formatTotalTokens(session.totalInputTokens, session.totalOutputTokens)}
+              {formatTotalTokens({
+                inputTokens: session.totalInputTokens,
+                outputTokens: session.totalOutputTokens,
+                cacheCreationInputTokens: session.totalCacheCreationInputTokens,
+                cacheReadInputTokens: session.totalCacheReadInputTokens,
+              })}
             </span>
           </div>
           <div>

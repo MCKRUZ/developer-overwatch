@@ -6,7 +6,7 @@ import StatusBadge from "../components/StatusBadge";
 import ExportButtons from "../components/ExportButtons";
 import { exportCsv } from "../utils/exportCsv";
 import { exportPdf } from "../utils/exportPdf";
-import { formatTotalTokens, formatCost, dailyUsageFor } from "../utils/tokenFormat";
+import { formatTotalTokens, formatCost, dailyUsageFor, tokenBreakdownTooltip } from "../utils/tokenFormat";
 import { sessionDisplayName } from "../utils/sessionDisplay";
 import { repoDisplayName, osUserFromRepoPath } from "../utils/pathDisplay";
 
@@ -87,9 +87,14 @@ function SessionsTable({ sessions, referenceDay }: { sessions: SessionListItem[]
                 </td>
                 <td
                   className="px-4 py-3 text-gray-500 dark:text-gray-400"
-                  title={`${daily.inputTokens} in · ${daily.outputTokens} out`}
+                  title={tokenBreakdownTooltip({
+                    totalInputTokens: daily.inputTokens,
+                    totalOutputTokens: daily.outputTokens,
+                    totalCacheReadInputTokens: daily.cacheReadInputTokens,
+                    totalCacheCreationInputTokens: daily.cacheCreationInputTokens,
+                  })}
                 >
-                  {formatTotalTokens(daily.inputTokens, daily.outputTokens)}
+                  {formatTotalTokens(daily)}
                 </td>
                 <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{formatCost(daily.estimatedCostUsd)}</td>
               </tr>
@@ -216,7 +221,7 @@ export default function SessionsPage() {
       s.status,
       formatDate(s.startedAt),
       s.endedAt ? formatDate(s.endedAt) : "In progress",
-      formatTotalTokens(daily.inputTokens, daily.outputTokens),
+      formatTotalTokens(daily),
       formatCost(daily.estimatedCostUsd),
       String(s.violationCount),
     ];

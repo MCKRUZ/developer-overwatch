@@ -20,6 +20,8 @@ export interface SessionListItem {
 export interface DailyTokenCost {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
   estimatedCostUsd: number;
 }
 

@@ -61,6 +61,12 @@ public interface ISessionRepository
     Task<IReadOnlyList<SessionTurnUsageRow>> GetTurnUsageRowsForSessionsAsync(
         IEnumerable<string> sessionIds, CancellationToken ct = default);
 
+    /// <summary>Which of these conversation turn ids are already stored, in any session. Turn ids
+    /// come from the transcript content itself, and a resumed session copies earlier history into
+    /// its own transcript, so a resend can arrive under a different session than the original.</summary>
+    Task<IReadOnlySet<string>> GetExistingTurnIdsAsync(
+        IReadOnlyCollection<string> turnIds, CancellationToken ct = default);
+
     Task AddAsync(Session session, CancellationToken ct = default);
     Task UpdateAsync(Session session, CancellationToken ct = default);
     Task AddTurnAsync(ConversationTurn turn, CancellationToken ct = default);

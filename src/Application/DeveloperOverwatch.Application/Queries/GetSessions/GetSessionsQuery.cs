@@ -32,4 +32,9 @@ public sealed record SessionListItem(
 /// <summary>Token/cost totals for one calendar day (ISO "yyyy-MM-dd" key in the owning
 /// dictionary) — lets the sessions list show "what did this session cost today/on this day"
 /// instead of its lifetime total, which is what actually matters for daily cost control.</summary>
-public sealed record DailyTokenCost(int InputTokens, int OutputTokens, decimal EstimatedCostUsd);
+public sealed record DailyTokenCost(
+    int InputTokens,
+    int OutputTokens,
+    int CacheCreationInputTokens,
+    int CacheReadInputTokens,
+    decimal EstimatedCostUsd);
