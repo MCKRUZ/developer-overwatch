@@ -1,3 +1,4 @@
+using DeveloperOverwatch.Agent.Cli;
 using DeveloperOverwatch.Agent.Models;
 using Microsoft.Data.Sqlite;
 
@@ -7,12 +8,15 @@ public interface IUsageStore
 {
     Task InitializeAsync(CancellationToken ct = default);
     Task SetSessionProjectAsync(string sessionId, string? projectKey, CancellationToken ct = default);
-    Task RecordTurnsAsync(string sessionId, IReadOnlyList<CapturedTurn> turns, CancellationToken ct = default);
+    /// <summary>Writes one row per model response that carries usage; a response already stored is left as is.</summary>
+    Task<RecordedUsage> RecordTurnsAsync(string sessionId, IReadOnlyList<CapturedTurn> turns, CancellationToken ct = default);
 
     /// <summary>Rows with <paramref name="fromUtc"/> &lt;= timestamp &lt; <paramref name="toUtc"/>.</summary>
     Task<IReadOnlyList<UsageRecord>> GetUsageAsync(DateTime fromUtc, DateTime toUtc, CancellationToken ct = default);
 
-    Task PurgeAsync(TimeSpan olderThan, CancellationToken ct = default);
+    /// <summary>Deletes usage older than <paramref name="minimumRetention"/>, but never from the current local
+    /// month, so the usage report's "This month" stays whole even on the 31st.</summary>
+    Task PurgeAsync(TimeSpan minimumRetention, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -77,12 +81,13 @@ public sealed class UsageStore : IUsageStore, IDisposable
         return Task.CompletedTask;
     }
 
-    public Task RecordTurnsAsync(string sessionId, IReadOnlyList<CapturedTurn> turns, CancellationToken ct = default)
+    public Task<RecordedUsage> RecordTurnsAsync(string sessionId, IReadOnlyList<CapturedTurn> turns, CancellationToken ct = default)
     {
         var withUsage = turns.Where(HasUsage).ToList();
         if (withUsage.Count == 0)
-            return Task.CompletedTask;
+            return Task.FromResult(new RecordedUsage(0, 0));
 
+        var added = 0;
         lock (_lock)
         {
             using var transaction = _connection.BeginTransaction();
@@ -104,13 +109,13 @@ public sealed class UsageStore : IUsageStore, IDisposable
                     ("$input", turn.InputTokens ?? 0), ("$output", turn.OutputTokens ?? 0),
                     ("$cacheRead", turn.CacheReadInputTokens ?? 0), ("$cacheCreate", turn.CacheCreationInputTokens ?? 0),
                     ("$gitBranch", turn.GitBranch), ("$subagentName", turn.SubagentName));
-                cmd.ExecuteNonQuery();
+                added += cmd.ExecuteNonQuery();
             }
 
             transaction.Commit();
         }
 
-        return Task.CompletedTask;
+        return Task.FromResult(new RecordedUsage(added, withUsage.Count - added));
     }
 
     public Task<IReadOnlyList<UsageRecord>> GetUsageAsync(DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
@@ -147,13 +152,17 @@ public sealed class UsageStore : IUsageStore, IDisposable
         return Task.FromResult<IReadOnlyList<UsageRecord>>(rows);
     }
 
-    public Task PurgeAsync(TimeSpan olderThan, CancellationToken ct = default)
+    public Task PurgeAsync(TimeSpan minimumRetention, CancellationToken ct = default)
     {
+        var retentionStart = Now - minimumRetention;
+        var monthStart = UsagePeriods.For(Now, _time.LocalTimeZone).MonthStartUtc;
+        var cutoff = retentionStart < monthStart ? retentionStart : monthStart;
+
         Execute("""
             DELETE FROM usage WHERE timestamp < $cutoff;
             DELETE FROM session_project WHERE created_at < $cutoff;
             """,
-            ("$cutoff", ToUtcIso(Now - olderThan)));
+            ("$cutoff", ToUtcIso(cutoff)));
         return Task.CompletedTask;
     }
 

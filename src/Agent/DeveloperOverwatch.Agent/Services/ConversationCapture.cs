@@ -23,7 +23,8 @@ public sealed record CapturedTurn(
     string? GitBranch = null,
     string? SubagentName = null);
 
-public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines);
+/// <param name="ParseErrors">Lines read that were not valid JSON.</param>
+public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines, int ParseErrors = 0);
 
 public interface IConversationCapture
 {
@@ -73,6 +74,7 @@ public sealed class ConversationCapture : IConversationCapture
             var builder = new TurnBuilder(asSubagent);
             var lineIndex = 0;
             var lastLineFailedToParse = false;
+            var parseErrors = 0;
 
             using var stream = new FileStream(
                 transcriptPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -81,7 +83,11 @@ public sealed class ConversationCapture : IConversationCapture
             while (await reader.ReadLineAsync(ct) is { } line)
             {
                 if (lineIndex >= fromLineIndex && !string.IsNullOrWhiteSpace(line))
+                {
                     lastLineFailedToParse = !builder.TryAdd(line, $"{fileName}:line:{lineIndex}");
+                    if (lastLineFailedToParse)
+                        parseErrors++;
+                }
 
                 lineIndex++;
             }
@@ -93,7 +99,7 @@ public sealed class ConversationCapture : IConversationCapture
             if (asSubagent && await ReadSubagentNameAsync(transcriptPath, ct) is { } subagentName)
                 turns = turns.Select(t => t with { SubagentName = subagentName }).ToList();
 
-            return new ConversationCaptureResult(turns, Math.Max(nextCursor, fromLineIndex));
+            return new ConversationCaptureResult(turns, Math.Max(nextCursor, fromLineIndex), parseErrors);
         }
         catch (Exception ex)
         {

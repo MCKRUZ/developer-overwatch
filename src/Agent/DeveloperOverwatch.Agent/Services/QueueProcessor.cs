@@ -9,7 +9,8 @@ public sealed class QueueProcessor : BackgroundService
 {
     private static readonly TimeSpan ShippedRetention = TimeSpan.FromHours(24);
 
-    // Local usage, and events a machine never managed to ship, are kept this long and no longer.
+    // Events a machine never managed to ship are kept this long and no longer. Local usage is kept at
+    // least this long, and always for the whole current month (see UsageStore.PurgeAsync).
     private static readonly TimeSpan LocalRetention = TimeSpan.FromDays(30);
 
     private readonly IEventQueue _queue;

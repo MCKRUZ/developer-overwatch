@@ -1,5 +1,6 @@
 using DeveloperOverwatch.Agent.Models;
 using DeveloperOverwatch.Agent.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DeveloperOverwatch.Agent.Cli;
 
@@ -17,6 +18,9 @@ public static class CommandDispatcher
     private static readonly IReadOnlyDictionary<string, Verb> Verbs = new Dictionary<string, Verb>(StringComparer.Ordinal)
     {
         ["usage"] = new("Show token usage and estimated cost recorded on this machine", RunUsageAsync),
+        ["backfill"] = new(
+            $"Load usage from earlier Claude Code transcripts [--days N, 1-{BackfillCommand.MaxDays}, default {BackfillCommand.DefaultDays}]",
+            RunBackfillAsync),
     };
 
     public static Task<int> RunAsync(
@@ -44,6 +48,33 @@ public static class CommandDispatcher
 
         using var store = new UsageStore(context.Config.QueueDbPath, context.Time);
         return await UsageCommand.RunAsync(context.Output, context.Error, store, context.Config, context.Time);
+    }
+
+    private static async Task<int> RunBackfillAsync(CliContext context)
+    {
+        if (!BackfillCommand.TryParseDays(context.Args, out var days, out var problem))
+        {
+            context.Error.WriteLine(problem);
+            WriteHelp(context.Error);
+            return UsageErrorExitCode;
+        }
+
+        // Opening queue.db can fail (locked, unwritable); that must end in a short message, not a stack trace.
+        try
+        {
+            using var usage = new UsageStore(context.Config.QueueDbPath, context.Time);
+            using var queue = new EventQueue(context.Config.QueueDbPath, context.Time);
+            var services = new BackfillServices(
+                usage, queue, new ConversationCursorStore(context.Config.OverwatchDir),
+                new ConversationCapture(NullLogger<ConversationCapture>.Instance), new GitRemoteReader(),
+                BackfillServices.DefaultProjectsDir);
+            return await BackfillCommand.RunAsync(context.Output, context.Error, services, context.Config, context.Time, days);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Error.WriteLine($"Backfill failed: {ex.Message}");
+            return 1;
+        }
     }
 
     private static void WriteHelp(TextWriter error)
