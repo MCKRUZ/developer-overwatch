@@ -13,6 +13,7 @@ public sealed class QueueProcessor : BackgroundService
     private readonly IGitFallbackWriter _gitFallback;
     private readonly IConversationCapture _conversationCapture;
     private readonly IConversationCursorStore _cursorStore;
+    private readonly IGitRemoteReader _gitRemote;
     private readonly AgentConfig _config;
     private readonly ILogger<QueueProcessor> _logger;
 
@@ -25,6 +26,7 @@ public sealed class QueueProcessor : BackgroundService
         IGitFallbackWriter gitFallback,
         IConversationCapture conversationCapture,
         IConversationCursorStore cursorStore,
+        IGitRemoteReader gitRemote,
         AgentConfig config,
         ILogger<QueueProcessor> logger)
     {
@@ -34,6 +36,7 @@ public sealed class QueueProcessor : BackgroundService
         _gitFallback = gitFallback;
         _conversationCapture = conversationCapture;
         _cursorStore = cursorStore;
+        _gitRemote = gitRemote;
         _config = config;
         _logger = logger;
     }
@@ -106,7 +109,8 @@ public sealed class QueueProcessor : BackgroundService
 
             var success = evt.EventType switch
             {
-                EventType.SessionStart => await _api.SendSessionStartAsync(redacted, ct),
+                EventType.SessionStart => await _api.SendSessionStartAsync(
+                    await SessionStartPayload.EnrichAsync(evt.PayloadJson, redacted, _gitRemote, ct), ct),
                 EventType.SessionEnd => await _api.SendSessionEndAsync(sessionId, redacted, ct),
                 EventType.ConversationTurn => await CaptureAndShipConversationAsync(sessionId, evt, ct),
                 _ => await _api.SendSessionEventsAsync(sessionId, redacted, ct)
@@ -204,6 +208,8 @@ public sealed class QueueProcessor : BackgroundService
                 cacheCreationInputTokens = t.CacheCreationInputTokens,
                 cacheReadInputTokens = t.CacheReadInputTokens,
                 model = t.Model,
+                gitBranch = ClampLabel(t.GitBranch),
+                subagentName = ClampLabel(t.SubagentName),
                 // Computed from the RAW (pre-redaction) content — by the time this payload is
                 // redacted, the secret itself is gone, so this flag is the only signal the server
                 // ever gets that one was present.
@@ -214,6 +220,12 @@ public sealed class QueueProcessor : BackgroundService
             toolExecutions = Array.Empty<object>(),
             fileChanges = Array.Empty<object>()
         });
+
+    // The server rejects longer values, and a rejected batch would be retried forever.
+    private const int MaxLabelLength = 255;
+
+    private static string? ClampLabel(string? value) =>
+        value is { Length: > MaxLabelLength } ? value[..MaxLabelLength] : value;
 
     // Cache reads and writes are tokens the model processed too — usually most of them.
     private static int TotalTokens(CapturedTurn t) =>

@@ -45,11 +45,14 @@ internal sealed class TurnBuilder
             }
 
             var timestamp = root.TryGetProperty("timestamp", out var tsProp) ? ParseTimestamp(tsProp) : null;
+            // Claude Code writes the checked-out branch on every user and assistant line; it is
+            // empty outside a git repository.
+            var gitBranch = GetString(root, "gitBranch") is { Length: > 0 } branch ? branch : null;
 
             if (role == "assistant")
-                AddResponseLine(message, timestamp, fallbackSourceId);
+                AddResponseLine(message, timestamp, gitBranch, fallbackSourceId);
             else if (!_asSubagent)
-                AddPrompt(root, message, role, timestamp, fallbackSourceId);
+                AddPrompt(root, message, role, timestamp, gitBranch, fallbackSourceId);
 
             return true;
         }
@@ -65,9 +68,10 @@ internal sealed class TurnBuilder
             t.OutputTokens,
             t.CacheCreationInputTokens,
             t.CacheReadInputTokens,
-            t.Model)).ToList();
+            t.Model,
+            t.GitBranch)).ToList();
 
-    private void AddResponseLine(JsonElement message, DateTime? timestamp, string fallbackSourceId)
+    private void AddResponseLine(JsonElement message, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
         var sourceId = GetString(message, "id") is { Length: > 0 } messageId ? $"msg:{messageId}" : fallbackSourceId;
 
@@ -80,6 +84,7 @@ internal sealed class TurnBuilder
 
         turn.Texts.AddRange(ExtractTexts(message));
         turn.Model ??= GetString(message, "model");
+        turn.GitBranch ??= gitBranch;
 
         if (message.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
         {
@@ -92,7 +97,8 @@ internal sealed class TurnBuilder
         }
     }
 
-    private void AddPrompt(JsonElement root, JsonElement message, string role, DateTime? timestamp, string fallbackSourceId)
+    private void AddPrompt(
+        JsonElement root, JsonElement message, string role, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
         // Tool results arrive as "user" lines with no text block; the PostToolUse hook already
         // captures tool activity, so only real prompts become turns.
@@ -101,7 +107,7 @@ internal sealed class TurnBuilder
             return;
 
         var sourceId = GetString(root, "uuid") is { Length: > 0 } uuid ? $"uuid:{uuid}" : fallbackSourceId;
-        var turn = new PendingTurn(sourceId, role, timestamp);
+        var turn = new PendingTurn(sourceId, role, timestamp) { GitBranch = gitBranch };
         turn.Texts.AddRange(texts);
         _turns.Add(turn);
     }
@@ -159,6 +165,7 @@ internal sealed class TurnBuilder
         public DateTime? Timestamp { get; } = timestamp;
         public List<string> Texts { get; } = [];
         public string? Model { get; set; }
+        public string? GitBranch { get; set; }
         public int? InputTokens { get; set; }
         public int? OutputTokens { get; set; }
         public int? CacheCreationInputTokens { get; set; }

@@ -37,10 +37,14 @@ public sealed class QueueProcessorTests
             GitFallbackThreshold = 100
         };
 
+        _gitRemote = Substitute.For<IGitRemoteReader>();
+
         var logger = Substitute.For<ILogger<QueueProcessor>>();
         _sut = new QueueProcessor(
-            _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _config, logger);
+            _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _gitRemote, _config, logger);
     }
+
+    private readonly IGitRemoteReader _gitRemote;
 
     private static QueuedEvent CreateEvent(
         string sessionId = "session-1",
@@ -298,6 +302,94 @@ public sealed class QueueProcessorTests
 
     private static List<JsonElement> TurnsIn(string payload) =>
         JsonDocument.Parse(payload).RootElement.GetProperty("conversationTurns").EnumerateArray().ToList();
+
+    [Fact]
+    public async Task ConversationTurn_BranchAndSubagentName_AreShippedOnEachTurn()
+    {
+        const string transcriptPath = "C:/nowhere/session.jsonl";
+        const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
+        var t0 = DateTime.UtcNow;
+        _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:msg_A", "assistant", "hi", t0, GitBranch: "feat/meter")], 4));
+        _conversationCapture.FindSubagentTranscripts(transcriptPath).Returns([subagentPath]);
+        _conversationCapture.CaptureFromFileAsync(subagentPath, Arg.Any<int>(), true, Arg.Any<CancellationToken>())
+            .Returns(new ConversationCaptureResult(
+                [new CapturedTurn("msg:msg_S1", "subagent", null, t0.AddSeconds(1), GitBranch: "feat/meter", SubagentName: "Explore")], 3));
+        string? payload = null;
+        _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Do<string>(p => payload = p), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await RunOneTickAsync();
+
+        var turns = TurnsIn(payload!);
+        turns.Select(t => t.GetProperty("gitBranch").GetString()).Should().Equal("feat/meter", "feat/meter");
+        turns.Select(t => t.GetProperty("subagentName").GetString()).Should().Equal(null, "Explore");
+    }
+
+    private void ArrangeSessionStart(string payload)
+    {
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new List<QueuedEvent> { CreateEvent(type: EventType.SessionStart, payload: payload) }, []);
+        _api.SendSessionStartAsync(Arg.Do<string>(p => _sentStart = p), Arg.Any<CancellationToken>())
+            .Returns(true);
+    }
+
+    private string? _sentStart;
+
+    [Fact]
+    public async Task SessionStart_WithRepoRemote_CarriesAgentMachineAndCredentialFreeProjectKey()
+    {
+        ArrangeSessionStart("""{"sessionId":"s1","developerEmail":"dev@example.com","repoPath":"C:/Code Repos/widget"}""");
+        _gitRemote.GetOriginUrlAsync("C:/Code Repos/widget", Arg.Any<CancellationToken>())
+            .Returns("https://dev:ghp_secret@GitHub.com/acme/widget.git\n");
+
+        await RunOneTickAsync();
+
+        var body = JsonDocument.Parse(_sentStart!).RootElement;
+        body.GetProperty("agent").GetString().Should().Be("claude-code");
+        body.GetProperty("machineName").GetString().Should().Be(Environment.MachineName);
+        body.GetProperty("projectKey").GetString().Should().Be("github.com/acme/widget");
+        body.GetProperty("sessionId").GetString().Should().Be("s1");
+        body.GetProperty("developerEmail").GetString().Should().Be("dev@example.com");
+        _sentStart.Should().NotContain("ghp_secret");
+    }
+
+    [Fact]
+    public async Task SessionStart_RepoWithoutRemote_FallsBackToFolderName()
+    {
+        ArrangeSessionStart("""{"sessionId":"s1","repoPath":"C:/Code Repos/widget"}""");
+        _gitRemote.GetOriginUrlAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns((string?)null);
+
+        await RunOneTickAsync();
+
+        JsonDocument.Parse(_sentStart!).RootElement.GetProperty("projectKey").GetString().Should().Be("widget");
+    }
+
+    [Fact]
+    public async Task SessionStart_NoRepoPath_NeverRunsGitAndSendsNullProjectKey()
+    {
+        ArrangeSessionStart("""{"sessionId":"s1"}""");
+
+        await RunOneTickAsync();
+
+        await _gitRemote.DidNotReceive().GetOriginUrlAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        var body = JsonDocument.Parse(_sentStart!).RootElement;
+        body.GetProperty("projectKey").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("agent").GetString().Should().Be("claude-code");
+    }
+
+    [Fact]
+    public async Task SessionStart_PayloadNotAnObject_IsStillSentUnchanged()
+    {
+        ArrangeSessionStart("not json");
+
+        await RunOneTickAsync();
+
+        _sentStart.Should().Be("not json");
+    }
 
     [Fact]
     public async Task ConversationTurn_SameSourceIdShippedTwice_GetsTheSameTurnIdBothTimes()
