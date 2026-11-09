@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using DeveloperOverwatch.Agent.Models;
 
@@ -7,7 +8,11 @@ public interface IEventQueue
 {
     Task InitializeAsync(CancellationToken ct = default);
     Task EnqueueAsync(QueuedEvent @event, CancellationToken ct = default);
-    Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default);
+    /// <summary>Up to <paramref name="batchSize"/> pending events: each session's oldest, taken in turn, so one
+    /// session's backlog cannot crowd out the others. Each session's share is a contiguous oldest prefix of its
+    /// pending events. Sessions in <paramref name="skipSessions"/> are left out.</summary>
+    Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(
+        int batchSize, IReadOnlyCollection<string>? skipSessions = null, CancellationToken ct = default);
 
     /// <summary>Whether a start of the session already reached the server, as far as this queue knows.
     /// Pending starts do not count.</summary>
@@ -115,8 +120,8 @@ public sealed class EventQueue : IEventQueue, IDisposable
         _ => value
     };
 
-    /// <summary>The oldest pending events, in the order they happened.</summary>
-    public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default)
+    public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(
+        int batchSize, IReadOnlyCollection<string>? skipSessions = null, CancellationToken ct = default)
     {
         var results = new List<QueuedEvent>();
 
@@ -125,12 +130,17 @@ public sealed class EventQueue : IEventQueue, IDisposable
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = """
                 SELECT rowid, id, session_id, event_type, payload_json, created_at, retry_count, shipped
-                FROM events
-                WHERE shipped = 0
-                ORDER BY created_at, rowid
+                FROM (
+                    SELECT rowid, id, session_id, event_type, payload_json, created_at, retry_count, shipped,
+                        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at, rowid) AS turn
+                    FROM events
+                    WHERE shipped = 0 AND session_id NOT IN (SELECT value FROM json_each($skip))
+                )
+                ORDER BY turn, created_at, rowid
                 LIMIT $batchSize
                 """;
             cmd.Parameters.AddWithValue("$batchSize", batchSize);
+            cmd.Parameters.AddWithValue("$skip", JsonSerializer.Serialize(skipSessions ?? []));
 
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -141,8 +151,9 @@ public sealed class EventQueue : IEventQueue, IDisposable
     }
 
     /// <summary>A resumed session queues another start, so a shipped start anywhere means the session
-    /// is on the server and wins over a dead one. Pending starts are left out: a batch is the oldest
-    /// prefix of the queue, so every pending start older than a batch's events is in that batch.</summary>
+    /// is on the server and wins over a dead one. Pending starts are left out: a batch holds the oldest
+    /// prefix of each session's pending events, so every pending start of a session older than its events in
+    /// a batch is in that batch.</summary>
     public Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default)
     {
         var states = new HashSet<int>();

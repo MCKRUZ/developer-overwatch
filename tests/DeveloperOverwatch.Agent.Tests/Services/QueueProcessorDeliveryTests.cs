@@ -245,7 +245,7 @@ public sealed class QueueProcessorDeliveryTests
 
     private async Task RunOneTickAsync(params QueuedEvent[] events)
     {
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(events.ToList(), []);
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>()).Returns(events.ToList(), []);
         var config = new AgentConfig
         {
             PollIntervalSeconds = 1,

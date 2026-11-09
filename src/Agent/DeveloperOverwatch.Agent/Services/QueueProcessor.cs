@@ -22,8 +22,8 @@ public sealed class QueueProcessor : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<QueueProcessor> _logger;
     private readonly SessionShipper _sessions;
+    private readonly SessionBackoff _backoff;
 
-    private int _consecutiveFailures;
     private int _unreadableConfigPolls;
 
     public QueueProcessor(
@@ -49,12 +49,12 @@ public sealed class QueueProcessor : BackgroundService
         var conversations = new ConversationShipper(
             api, redactor, conversationCapture, cursorStore, usageStore, logger, config.PilotSince);
         _sessions = new SessionShipper(queue, api, redactor, gitRemote, usageStore, conversations, logger);
+        _backoff = new SessionBackoff(config.PollIntervalSeconds);
     }
 
     internal enum PollResult
     {
         Continue,
-        BackOff,
         Stop
     }
 
@@ -75,8 +75,6 @@ public sealed class QueueProcessor : BackgroundService
                 var result = await PollOnceAsync(stoppingToken);
                 if (result == PollResult.Stop)
                     break;
-                if (result == PollResult.BackOff)
-                    await ApplyBackoffAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -105,18 +103,9 @@ public sealed class QueueProcessor : BackgroundService
         }
 
         await FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger, TimeProvider.System);
-        var anyTransient = await ProcessBatchAsync(ct);
+        await ProcessBatchAsync(ct);
         await PurgeOldEventsAsync();
-
-        // Once per poll, so one failing session never delays the others in the batch.
-        if (!anyTransient)
-        {
-            _consecutiveFailures = 0;
-            return PollResult.Continue;
-        }
-
-        _consecutiveFailures++;
-        return PollResult.BackOff;
+        return PollResult.Continue;
     }
 
     /// <summary>The mode is read fresh before every poll: a machine switched to Local must stop shipping
@@ -150,16 +139,15 @@ public sealed class QueueProcessor : BackgroundService
         return null;
     }
 
-    /// <returns>True when something was transient, so the caller backs off.</returns>
-    private async Task<bool> ProcessBatchAsync(CancellationToken ct)
+    /// <summary>A session left transient backs off on its own and is not dequeued until its backoff is over.</summary>
+    private async Task ProcessBatchAsync(CancellationToken ct)
     {
-        var batch = await _queue.DequeueBatchAsync(_config.BatchSize);
+        var batch = await _queue.DequeueBatchAsync(_config.BatchSize, _backoff.NextPoll(), ct);
         if (batch.Count == 0)
-            return false;
+            return;
 
         _logger.LogDebug("Processing batch of {Count} events", batch.Count);
 
-        var anyTransient = false;
         foreach (var sessionGroup in batch.GroupBy(e => e.SessionId))
         {
             var sessionId = sessionGroup.Key;
@@ -169,12 +157,14 @@ public sealed class QueueProcessor : BackgroundService
             // Local first, so a start handled here is already marked when the shipped items ask for it.
             if (local.Count > 0)
                 await _sessions.HandleLocallyAsync(sessionId, local, ct);
+            if (toShip.Count == 0)
+                continue;
             // A transient failure leaves the events queued; the 30-day unshipped purge bounds the wait.
-            if (toShip.Count > 0 && await _sessions.ShipAsync(sessionId, toShip, ct))
-                anyTransient = true;
+            if (await _sessions.ShipAsync(sessionId, toShip, ct))
+                _backoff.Failed(sessionId);
+            else
+                _backoff.Succeeded(sessionId);
         }
-
-        return anyTransient;
     }
 
     /// <summary>The one place that decides, per event, whether it is handled on this machine or shipped.
@@ -186,13 +176,6 @@ public sealed class QueueProcessor : BackgroundService
 
     private static DateTime ToUtc(DateTime value) =>
         value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
-
-    private async Task ApplyBackoffAsync(CancellationToken ct)
-    {
-        var delaySeconds = Math.Min(Math.Pow(2, _consecutiveFailures), 60);
-        _logger.LogDebug("Backing off for {Delay}s (failure #{Count})", delaySeconds, _consecutiveFailures);
-        await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
-    }
 
     private async Task PurgeOldEventsAsync()
     {

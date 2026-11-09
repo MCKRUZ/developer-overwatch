@@ -75,7 +75,7 @@ public sealed class QueueProcessorTests
     {
         var evt = CreateEvent();
         var batch = new List<QueuedEvent> { evt };
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(batch, []);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ApiResult.Success);
@@ -94,7 +94,7 @@ public sealed class QueueProcessorTests
     [Fact]
     public async Task ProcessBatch_EmptyQueue_DoesNothing()
     {
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent>());
 
         await RunOneTickAsync();
@@ -113,7 +113,7 @@ public sealed class QueueProcessorTests
     public async Task ProcessBatch_ApiFailure_IncrementsRetry()
     {
         var evt = CreateEvent();
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ApiResult.Failed);
@@ -134,7 +134,7 @@ public sealed class QueueProcessorTests
         var redactedPayload = "{\"secret\":\"[REDACTED]\"}";
         var evt = CreateEvent(payload: rawPayload);
 
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _redactor.Redact(rawPayload).Returns(redactedPayload);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -153,7 +153,7 @@ public sealed class QueueProcessorTests
     public async Task ProcessBatch_SessionStartEvent_CallsSendSessionStart()
     {
         var evt = CreateEvent(type: EventType.SessionStart, payload: "{\"init\":true}");
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ApiResult.Success);
@@ -170,7 +170,7 @@ public sealed class QueueProcessorTests
     public async Task ProcessBatch_SessionEndEvent_CallsSendSessionEnd()
     {
         var evt = CreateEvent(type: EventType.SessionEnd, payload: "{\"end\":true}");
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt }, []);
         _api.SendSessionEndAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ApiResult.Success);
@@ -190,7 +190,7 @@ public sealed class QueueProcessorTests
         var evt2 = CreateEvent(sessionId: "session-B");
         var evt3 = CreateEvent(sessionId: "session-A");
 
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { evt1, evt2, evt3 }, []);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ApiResult.Success);
@@ -206,7 +206,7 @@ public sealed class QueueProcessorTests
     [Fact]
     public async Task ProcessBatch_InitializesQueueOnStart()
     {
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent>());
 
         await RunOneTickAsync();
@@ -217,7 +217,7 @@ public sealed class QueueProcessorTests
     [Fact]
     public async Task ProcessBatch_PurgesOldEventsAfterBatch()
     {
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent>());
 
         await RunOneTickAsync();
@@ -241,7 +241,7 @@ public sealed class QueueProcessorTests
             var evt = CreateEvent(
                 type: EventType.ConversationTurn,
                 payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
-            _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
                 .Returns(new List<QueuedEvent> { evt }, []);
             _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
                 .Returns(new ConversationCaptureResult(
@@ -274,7 +274,7 @@ public sealed class QueueProcessorTests
             var evt = CreateEvent(
                 type: EventType.ConversationTurn,
                 payload: $"{{\"transcriptPath\":{JsonSerializer.Serialize(transcriptPath)}}}");
-            _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
                 .Returns(new List<QueuedEvent> { evt }, []);
             _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
                 .Returns(new ConversationCaptureResult(
@@ -312,7 +312,7 @@ public sealed class QueueProcessorTests
     {
         const string transcriptPath = "C:/nowhere/session.jsonl";
         const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
         var t0 = DateTime.UtcNow;
         _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
@@ -335,7 +335,7 @@ public sealed class QueueProcessorTests
 
     private void ArrangeSessionStart(string payload)
     {
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { CreateEvent(type: EventType.SessionStart, payload: payload) }, []);
         _api.SendSessionStartAsync(Arg.Do<string>(p => _sentStart = p), Arg.Any<CancellationToken>())
             .Returns(ApiResult.Success);
@@ -403,7 +403,7 @@ public sealed class QueueProcessorTests
         const string transcriptPath = "C:/nowhere/session.jsonl";
         var first = ArrangeConversationEvent(transcriptPath);
         var second = ArrangeConversationEvent(transcriptPath);
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { first, second }, []);
         _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
             .Returns(new ConversationCaptureResult(
@@ -427,7 +427,7 @@ public sealed class QueueProcessorTests
     public async Task ConversationTurn_TokenCount_IncludesCacheTokens()
     {
         const string transcriptPath = "C:/nowhere/session.jsonl";
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
         _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
             .Returns(new ConversationCaptureResult(
@@ -447,7 +447,7 @@ public sealed class QueueProcessorTests
     {
         const string transcriptPath = "C:/nowhere/session.jsonl";
         const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
         _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
             .Returns(new ConversationCaptureResult([new CapturedTurn("msg:msg_A", "assistant", "hi", DateTime.UtcNow)], 4));
@@ -472,7 +472,7 @@ public sealed class QueueProcessorTests
     {
         const string transcriptPath = "C:/nowhere/session.jsonl";
         const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
         _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
             .Returns(new ConversationCaptureResult([new CapturedTurn("msg:msg_A", "assistant", "hi", DateTime.UtcNow)], 4));
@@ -497,7 +497,7 @@ public sealed class QueueProcessorTests
         var from = new DateTime(2026, 11, 2, 0, 0, 0, DateTimeKind.Utc);
         var marker = CreateEvent(type: EventType.ConversationTurn, payload: JsonSerializer.Serialize(
             new { transcriptPath, usageOnly = true, from = from.ToString("o") }));
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { marker }, []);
         _cursorStore.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(5);
         _conversationCapture.CaptureFromFileAsync(transcriptPath, 0, false, Arg.Any<CancellationToken>())
@@ -537,7 +537,7 @@ public sealed class QueueProcessorTests
         const string transcriptPath = "C:/nowhere/session.jsonl";
         const string subagentPath = "C:/nowhere/session/subagents/agent-a1.jsonl";
         var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>())
             .Returns(new List<QueuedEvent> { ArrangeConversationEvent(transcriptPath) }, []);
         _conversationCapture.CaptureFromFileAsync(transcriptPath, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
             .Returns(new ConversationCaptureResult(

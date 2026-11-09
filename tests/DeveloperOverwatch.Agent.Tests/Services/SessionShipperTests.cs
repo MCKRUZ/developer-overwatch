@@ -59,20 +59,19 @@ public sealed class SessionShipperTests : IDisposable
     }
 
     // A 200 whose results leave an item out settles nothing for it. That is a retry, not a quiet skip:
-    // the item counts a retry, the poll backs off, and nothing after it (here the end) is sent.
+    // the item counts a retry, and nothing after it (here the end) is sent.
     [Theory]
     [InlineData(EventType.ToolExecution)]
     [InlineData(EventType.ToolFailed)]
-    public async Task ItemTheServerDidNotAnswer_IsRetried_WithBackoff_AndTheEndWaits(EventType type)
+    public async Task ItemTheServerDidNotAnswer_IsRetried_AndTheEndWaits(EventType type)
     {
         _onEvents = _ => new ApiResult(PostStatus.Ok, new ItemResults(new HashSet<string>(), new HashSet<string>(), new Dictionary<string, string>()));
         var item = type == EventType.ToolExecution ? Event("t1", type, ToolExecution("te-1")) : Event("t1", type, ToolFailed());
         await EnqueueAsync(item, T0);
         await EnqueueAsync(Event("end", EventType.SessionEnd), T0.AddMinutes(1));
 
-        var result = await CreateSut().PollOnceAsync(CancellationToken.None);
+        await CreateSut().PollOnceAsync(CancellationToken.None);
 
-        result.Should().Be(QueueProcessor.PollResult.BackOff);
         _sent.Should().NotContain(s => s.StartsWith("end:"));
         var pending = await _queue.DequeueBatchAsync(10);
         pending.Select(e => e.Id).Should().Equal("t1", "end");
@@ -89,7 +88,7 @@ public sealed class SessionShipperTests : IDisposable
         await EnqueueAsync(Start("S2"), T0.AddMinutes(1));
         var sut = CreateSut();
 
-        (await sut.PollOnceAsync(CancellationToken.None)).Should().Be(QueueProcessor.PollResult.BackOff);
+        await sut.PollOnceAsync(CancellationToken.None);
         _sent.Should().Equal("end:E1");
 
         await sut.PollOnceAsync(CancellationToken.None);
@@ -178,7 +177,7 @@ public sealed class SessionShipperTests : IDisposable
         await EnqueueAsync(Event("E1", EventType.SessionEnd), T0.AddMinutes(2));
         var sut = CreateSut();
 
-        (await sut.PollOnceAsync(CancellationToken.None)).Should().Be(QueueProcessor.PollResult.BackOff);
+        await sut.PollOnceAsync(CancellationToken.None);
         _sent.Should().Equal("start:S1");
 
         await sut.PollOnceAsync(CancellationToken.None);

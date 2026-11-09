@@ -55,7 +55,7 @@ public sealed class QueueProcessorSessionSignalsTests
 
     private async Task RunOneTickAsync(AgentMode mode, params QueuedEvent[] events)
     {
-        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(events.ToList(), []);
+        _queue.DequeueBatchAsync(Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>?>(), Arg.Any<CancellationToken>()).Returns(events.ToList(), []);
         var sut = CreateSut(mode);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         await sut.StartAsync(cts.Token);
