@@ -53,8 +53,8 @@ public sealed class SessionsController : ControllerBase
                 : Conflict(new { error = result.Error });
         }
 
-        await _hub.Clients.All.SessionStarted(
-            command.SessionId, command.DeveloperEmail, command.RepoPath);
+        if (result.Value != IngestOutcome.Duplicate)
+            await _hub.Clients.All.SessionStarted(command.SessionId, command.DeveloperEmail, command.RepoPath);
 
         return Ok(new { sessionId = command.SessionId, outcome = Wire(result.Value) });
     }
@@ -120,10 +120,14 @@ public sealed class SessionsController : ControllerBase
                 : SessionNotFound(result.Error);
         }
 
-        await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
-        await _hub.Clients.All.SessionEnded(sessionId);
+        var outcome = result.Value!.Outcome;
+        if (outcome != IngestOutcome.Duplicate)
+        {
+            await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
+            await _hub.Clients.All.SessionEnded(sessionId);
+        }
 
-        return Ok(new { sessionId, outcome = Wire(result.Value!.Outcome) });
+        return Ok(new { sessionId, outcome = Wire(outcome) });
     }
 
     // Spelled out rather than left to the global enum converter, which keeps PascalCase names for the
