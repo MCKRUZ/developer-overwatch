@@ -123,7 +123,7 @@ public sealed class SessionsController : ControllerBase
         await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
         await _hub.Clients.All.SessionEnded(sessionId);
 
-        return Ok(new { sessionId, outcome = Wire(result.Value) });
+        return Ok(new { sessionId, outcome = Wire(result.Value!.Outcome) });
     }
 
     // Spelled out rather than left to the global enum converter, which keeps PascalCase names for the

@@ -31,6 +31,7 @@ public class IngestSessionEndTests
         var result = await handler.Handle(command, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
+        result.Value!.ClosedSession.Should().BeTrue();
         session.Status.Should().Be(SessionStatus.Completed);
         session.EndedAt.Should().NotBeNull();
         session.SummaryJson.Should().Be(command.SummaryJson);
@@ -74,9 +75,29 @@ public class IngestSessionEndTests
 
         // A redelivered end must not dead-letter the Agent's group, so it succeeds and changes nothing.
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(DeveloperOverwatch.Application.Commands.IngestOutcome.Accepted);
+        result.Value.Should().Be(
+            new IngestSessionEndResult(DeveloperOverwatch.Application.Commands.IngestOutcome.Accepted, ClosedSession: false));
         session.EndedAt.Should().Be(endedAt);
         session.SummaryJson.Should().Be("{}");
         await _uow.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Handle_NewEventIdForAlreadyCompletedSession_RecordsItWithoutClosingAgain()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var session = new Session { Id = sessionId, Status = SessionStatus.Completed };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        var handler = new IngestSessionEndCommandHandler(_repo, _uow);
+
+        var result = await handler.Handle(
+            new IngestSessionEndCommand { SessionId = sessionId, EventId = "e1", EndedAt = DateTime.UtcNow },
+            CancellationToken.None);
+
+        result.Value.Should().Be(
+            new IngestSessionEndResult(DeveloperOverwatch.Application.Commands.IngestOutcome.Accepted, ClosedSession: false));
+        await _repo.Received(1).AddProcessedAgentEventAsync(
+            Arg.Is<ProcessedAgentEvent>(e => e.EventId == "e1"), Arg.Any<CancellationToken>());
+        await _repo.DidNotReceive().UpdateAsync(Arg.Any<Session>(), Arg.Any<CancellationToken>());
     }
 }

@@ -6,8 +6,10 @@ using DeveloperOverwatch.Domain.Interfaces;
 using MediatR;
 using Microsoft.Extensions.Logging;
 
+/// <summary>Evaluates governance once, when a session end actually closes an active session. A
+/// redelivered or no-op end succeeds too, and must not raise the session's violations again.</summary>
 public sealed class GovernanceBehavior
-    : IPipelineBehavior<IngestSessionEndCommand, Result<string>>
+    : IPipelineBehavior<IngestSessionEndCommand, Result<IngestSessionEndResult>>
 {
     private readonly IGovernanceEngine _engine;
     private readonly IOverwatchNotifier _notifier;
@@ -23,14 +25,14 @@ public sealed class GovernanceBehavior
         _logger = logger;
     }
 
-    public async Task<Result<string>> Handle(
+    public async Task<Result<IngestSessionEndResult>> Handle(
         IngestSessionEndCommand request,
-        RequestHandlerDelegate<Result<string>> next,
+        RequestHandlerDelegate<Result<IngestSessionEndResult>> next,
         CancellationToken cancellationToken)
     {
         var result = await next(cancellationToken);
 
-        if (!result.IsSuccess)
+        if (!result.IsSuccess || result.Value?.ClosedSession != true)
             return result;
 
         try

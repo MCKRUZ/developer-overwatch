@@ -7,7 +7,7 @@ using DeveloperOverwatch.Domain.Interfaces;
 using MediatR;
 
 public sealed class IngestSessionEndCommandHandler
-    : IRequestHandler<IngestSessionEndCommand, Result<IngestOutcome>>
+    : IRequestHandler<IngestSessionEndCommand, Result<IngestSessionEndResult>>
 {
     private readonly ISessionRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
@@ -18,25 +18,26 @@ public sealed class IngestSessionEndCommandHandler
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<Result<IngestOutcome>> Handle(
+    public async Task<Result<IngestSessionEndResult>> Handle(
         IngestSessionEndCommand request,
         CancellationToken cancellationToken)
     {
         var session = await _repository.GetByIdAsync(request.SessionId, cancellationToken);
         if (session is null)
-            return Result<IngestOutcome>.Fail($"Session {request.SessionId} not found");
+            return Result<IngestSessionEndResult>.Fail($"Session {request.SessionId} not found");
 
         if (request.EventId is { } eventId
             && await _repository.IsAgentEventProcessedAsync(eventId, cancellationToken))
-            return Result<IngestOutcome>.Success(IngestOutcome.Duplicate);
+            return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Duplicate, ClosedSession: false));
 
         // The Agent delivers at-least-once, and backfill may have closed an idle session first, so an
         // end for a session that is already over succeeds without changing it. Not-found is then this
         // handler's only failure, which the controller relies on.
-        if (session.Status != SessionStatus.Active && request.EventId is null)
-            return Result<IngestOutcome>.Success(IngestOutcome.Accepted);
+        var closesSession = session.Status == SessionStatus.Active;
+        if (!closesSession && request.EventId is null)
+            return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Accepted, ClosedSession: false));
 
-        if (session.Status == SessionStatus.Active)
+        if (closesSession)
         {
             session.Status = SessionStatus.Completed;
             session.EndedAt = request.EndedAt;
@@ -56,6 +57,6 @@ public sealed class IngestSessionEndCommandHandler
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return Result<IngestOutcome>.Success(IngestOutcome.Accepted);
+        return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Accepted, closesSession));
     }
 }

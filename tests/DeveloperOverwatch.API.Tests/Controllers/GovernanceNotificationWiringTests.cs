@@ -70,7 +70,7 @@ public class GovernanceNotificationWiringTests : IClassFixture<OverwatchWebAppli
         services.AddSingleton(typeof(TService), instance);
     }
 
-    private async Task<string> StartAndEndSessionAsync()
+    private async Task<string> StartAndEndSessionAsync(string? endEventId = null)
     {
         var sessionId = Guid.NewGuid().ToString();
 
@@ -84,14 +84,38 @@ public class GovernanceNotificationWiringTests : IClassFixture<OverwatchWebAppli
         });
         start.StatusCode.Should().Be(HttpStatusCode.OK);
 
+        await EndSessionAsync(sessionId, endEventId);
+        return sessionId;
+    }
+
+    private async Task EndSessionAsync(string sessionId, string? eventId)
+    {
         var end = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/end", new
         {
             SessionId = sessionId,
+            EventId = eventId,
             EndedAt = DateTime.UtcNow,
         });
         end.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
 
-        return sessionId;
+    // Governance runs once per real close of an active session. A redelivered end, whether its
+    // event id was already processed or it carries none and the session is already over, must not
+    // raise the session's violations or alert anyone a second time.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SessionEnd_Redelivered_DoesNotAlertASecondTime(bool withEventId)
+    {
+        var eventId = withEventId ? Guid.NewGuid().ToString("N") : null;
+        var sessionId = await StartAndEndSessionAsync(eventId);
+
+        await EndSessionAsync(sessionId, eventId);
+
+        await _slackAndEmail.Received(1).NotifyViolationAsync(
+            "no-secrets", "Critical", "Hardcoded secret", sessionId, "dev@team.dev",
+            Arg.Any<CancellationToken>());
+        await _allClient.Received(1).ViolationCreated(Arg.Any<ViolationDto>());
     }
 
     [Fact]

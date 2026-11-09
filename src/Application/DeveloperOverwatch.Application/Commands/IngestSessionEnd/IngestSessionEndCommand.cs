@@ -3,7 +3,7 @@ namespace DeveloperOverwatch.Application.Commands.IngestSessionEnd;
 using DeveloperOverwatch.Domain.Common;
 using MediatR;
 
-public sealed record IngestSessionEndCommand : IRequest<Result<IngestOutcome>>
+public sealed record IngestSessionEndCommand : IRequest<Result<IngestSessionEndResult>>
 {
     public required string SessionId { get; init; }
 
