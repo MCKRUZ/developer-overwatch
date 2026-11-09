@@ -45,63 +45,76 @@ public sealed class IngestSessionEventsCommandHandler
         if (!string.IsNullOrWhiteSpace(request.SessionTitle) && session.Title != request.SessionTitle)
             session.Title = request.SessionTitle;
 
-        // Each item gets its own outcome: invalid items are rejected without sinking the batch, and
-        // the rest are validated before deduping so a resend reports them the same way.
         var results = new IngestItemResultsBuilder();
-        var validTurns = results.Valid(request.ConversationTurns, t => t.Id, IngestItemRules.Turn);
+        var batch = await ValidateAsync(request, results, cancellationToken);
+        var now = _time.GetUtcNow().UtcDateTime;
+        var totalEvents = await StoreAsync(session, batch, results, now, cancellationToken);
+        if (totalEvents > 0)
+            session.LastActivityAt = LatestActivity(session.LastActivityAt, batch.Stamps, now);
 
-        // The Agent delivers at-least-once: a slow/timed-out response can look like a failure
-        // client-side even though this exact batch already committed, so the same Ids get
-        // resubmitted on retry. Treat resubmission as a no-op rather than double-counting
-        // cost/tokens or crashing EF's change tracker on the identity conflict.
-        //
+        await _repository.UpdateAsync(session, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(totalEvents, results.Build()));
+    }
+
+    // Each item gets its own outcome: invalid items are rejected without sinking the batch, and
+    // the rest are validated before deduping so a resend reports them the same way. Parents are
+    // validated before their children, so a child can be checked against the parents the batch
+    // keeps and the ones already stored.
+    private async Task<ValidatedBatch> ValidateAsync(
+        IngestSessionEventsCommand request, IngestItemResultsBuilder results, CancellationToken cancellationToken)
+    {
+        var turns = results.Valid(request.ConversationTurns, t => t.Id, IngestItemRules.Turn);
+
         // Conversation turn ids are derived from the transcript content (the API message id or
         // line uuid), not generated per send. A resumed Claude Code session copies the earlier
         // session's history, with the same ids, into its own transcript, so the existence check
         // for turns spans every session, not just this one. The same lookup covers the turns the
         // batch's tools reference, so a tool whose turn exists nowhere is rejected, not saved.
         var existingTurnIds = await _repository.GetExistingTurnIdsAsync(
-            validTurns.Select(t => t.Id).Concat(ParentIds(request.ToolExecutions, t => t.TurnId)).ToList(),
+            turns.Select(t => t.Id).Concat(ParentIds(request.ToolExecutions, t => t.TurnId)).ToList(),
             cancellationToken);
-        var knownTurnIds = KnownIds(validTurns.Select(t => t.Id), existingTurnIds);
-        var validTools = results.Valid(
+        var knownTurnIds = KnownIds(turns.Select(t => t.Id), existingTurnIds);
+        var tools = results.Valid(
             request.ToolExecutions, t => t.Id,
             t => IngestItemRules.ToolExecution(t, results.RejectedIds, knownTurnIds));
 
         var existingToolIds = await _repository.GetExistingToolExecutionIdsAsync(
             ParentIds(request.FileChanges, f => f.ToolExecutionId).ToList(), cancellationToken);
-        var knownToolIds = KnownIds(validTools.Select(t => t.Id), existingToolIds);
-        var validFiles = results.Valid(
+        var knownToolIds = KnownIds(tools.Select(t => t.Id), existingToolIds);
+        var files = results.Valid(
             request.FileChanges, f => f.Id,
             f => IngestItemRules.FileChange(f, results.RejectedIds, knownToolIds));
-        var validFailures = results.Valid(request.ToolFailures, f => f.Id, IngestItemRules.ToolFailure);
-        var activity = request.ActivityEvents.Where(IngestItemRules.IsValid).ToList();
 
-        var newConversationTurns = results.New(validTurns, t => t.Id, existingTurnIds);
-        var newToolExecutions = results.New(
-            validTools, t => t.Id, session.ToolExecutions.Select(t => t.Id).ToHashSet());
-        var newFileChanges = results.New(
-            validFiles, f => f.Id, session.FileChanges.Select(f => f.Id).ToHashSet());
+        return new ValidatedBatch(
+            turns, existingTurnIds, tools, files,
+            results.Valid(request.ToolFailures, f => f.Id, IngestItemRules.ToolFailure),
+            request.ActivityEvents.Where(IngestItemRules.IsValid).ToList());
+    }
 
-        var now = _time.GetUtcNow().UtcDateTime;
-        var totalEvents = await AddTurnsAsync(session, newConversationTurns, cancellationToken);
-        totalEvents += await AddToolExecutionsAsync(session, newToolExecutions, cancellationToken);
-        totalEvents += await AddFileChangesAsync(session, newFileChanges, cancellationToken);
-        totalEvents += ApplyActivity(session, activity, now);
-        totalEvents += await ApplyToolFailuresAsync(session, validFailures, results, now, cancellationToken);
+    // The Agent delivers at-least-once: a slow/timed-out response can look like a failure
+    // client-side even though this exact batch already committed, so the same Ids get
+    // resubmitted on retry. Treat resubmission as a no-op rather than double-counting
+    // cost/tokens or crashing EF's change tracker on the identity conflict.
+    private async Task<int> StoreAsync(
+        Session session,
+        ValidatedBatch batch,
+        IngestItemResultsBuilder results,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var newTurns = results.New(batch.Turns, t => t.Id, batch.ExistingTurnIds);
+        var newTools = results.New(
+            batch.Tools, t => t.Id, session.ToolExecutions.Select(t => t.Id).ToHashSet());
+        var newFiles = results.New(
+            batch.Files, f => f.Id, session.FileChanges.Select(f => f.Id).ToHashSet());
 
-        if (totalEvents > 0)
-        {
-            var stamps = validTurns.Select(t => t.Timestamp)
-                .Concat(validTools.Select(t => t.Timestamp))
-                .Concat(activity.Select(a => a.At))
-                .Concat(validFailures.Select(f => f.At));
-            session.LastActivityAt = LatestActivity(session.LastActivityAt, stamps, now);
-        }
-
-        await _repository.UpdateAsync(session, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(totalEvents, results.Build()));
+        var totalEvents = await AddTurnsAsync(session, newTurns, cancellationToken);
+        totalEvents += await AddToolExecutionsAsync(session, newTools, cancellationToken);
+        totalEvents += await AddFileChangesAsync(session, newFiles, cancellationToken);
+        totalEvents += ApplyActivity(session, batch.Activity, now);
+        totalEvents += await ApplyToolFailuresAsync(session, batch.Failures, results, now, cancellationToken);
+        return totalEvents;
     }
 
     private async Task<int> AddTurnsAsync(
@@ -116,7 +129,7 @@ public sealed class IngestSessionEventsCommandHandler
         // transcript LINES (tool calls, thinking blocks, system entries — everything, not
         // just turns) — so its value can run into the hundreds/thousands even for a session
         // with a few dozen real turns. Only the server knows the true sequential turn count
-        // (session.ConversationTurns is already loaded above), so it re-numbers here instead
+        // (session.ConversationTurns is loaded with the session), so it re-numbers here instead
         // of trusting the client-sent value.
         var turnIndexBase = session.ConversationTurns.Count;
 
@@ -125,60 +138,11 @@ public sealed class IngestSessionEventsCommandHandler
             var turnIndex = turnIndexBase + i;
             var cost = _pricing.CalculateCost(
                 t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationInputTokens, t.CacheReadInputTokens);
-
-            session.TotalInputTokens += t.InputTokens ?? 0;
-            session.TotalOutputTokens += t.OutputTokens ?? 0;
-            session.TotalCacheCreationInputTokens += t.CacheCreationInputTokens ?? 0;
-            session.TotalCacheReadInputTokens += t.CacheReadInputTokens ?? 0;
-            session.EstimatedCostUsd += cost;
-
-            // A subagent runs in its own context window, so only main-thread turns set the
-            // session's peak. ContextTokens is still stored on every turn.
             var contextTokens = ContextTokensOf(t);
-            if (t.Role != SubagentRole && contextTokens is long context
-                && (session.PeakContextTokens is null || context > session.PeakContextTokens))
-                session.PeakContextTokens = context;
-
-            // The Agent is the only place that ever sees the raw secret — by the time this
-            // turn's content reaches here it's already redacted, so the server can't
-            // re-detect it. Trust the Agent's flag and create the violation directly instead
-            // of trying (and failing) to pattern-match already-scrubbed text.
+            AccumulateUsage(session, t, cost, contextTokens);
             if (t.ContainsRedactedSecret)
-            {
-                newViolations.Add(new GovernanceViolation
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    SessionId = session.Id,
-                    RuleId = "agent-redacted-secret",
-                    Severity = ViolationSeverity.Critical,
-                    Message = $"Agent redacted a likely secret in conversation turn {turnIndex}",
-                    ConversationTurnId = t.Id,
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-
-            return new ConversationTurn
-            {
-                Id = t.Id,
-                SessionId = session.Id,
-                TurnIndex = turnIndex,
-                Role = t.Role!,
-                Content = t.Content,
-                TokenCount = t.TokenCount,
-                InputTokens = t.InputTokens,
-                OutputTokens = t.OutputTokens,
-                CacheCreationInputTokens = t.CacheCreationInputTokens,
-                CacheReadInputTokens = t.CacheReadInputTokens,
-                Model = t.Model,
-                EstimatedCostUsd = cost,
-                PricesAsOf = _pricing.PricesAsOf,
-                ContainsRedactedSecret = t.ContainsRedactedSecret,
-                Timestamp = t.Timestamp,
-                IsDecision = t.IsDecision,
-                GitBranch = t.GitBranch,
-                SubagentName = t.SubagentName,
-                ContextTokens = contextTokens
-            };
+                newViolations.Add(RedactedSecretViolation(session.Id, t.Id, turnIndex));
+            return ToConversationTurn(session.Id, t, turnIndex, cost, contextTokens);
         }).ToList();
         await _repository.AddTurnsAsync(turns, cancellationToken);
 
@@ -187,6 +151,60 @@ public sealed class IngestSessionEventsCommandHandler
 
         return turns.Count;
     }
+
+    private static void AccumulateUsage(Session session, ConversationTurnDto t, decimal cost, long? contextTokens)
+    {
+        session.TotalInputTokens += t.InputTokens ?? 0;
+        session.TotalOutputTokens += t.OutputTokens ?? 0;
+        session.TotalCacheCreationInputTokens += t.CacheCreationInputTokens ?? 0;
+        session.TotalCacheReadInputTokens += t.CacheReadInputTokens ?? 0;
+        session.EstimatedCostUsd += cost;
+
+        // A subagent runs in its own context window, so only main-thread turns set the
+        // session's peak. ContextTokens is still stored on every turn.
+        if (t.Role != SubagentRole && contextTokens is long context
+            && (session.PeakContextTokens is null || context > session.PeakContextTokens))
+            session.PeakContextTokens = context;
+    }
+
+    // The Agent is the only place that ever sees the raw secret — by the time this
+    // turn's content reaches here it's already redacted, so the server can't
+    // re-detect it. Trust the Agent's flag and create the violation directly instead
+    // of trying (and failing) to pattern-match already-scrubbed text.
+    private static GovernanceViolation RedactedSecretViolation(string sessionId, string turnId, int turnIndex) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        SessionId = sessionId,
+        RuleId = "agent-redacted-secret",
+        Severity = ViolationSeverity.Critical,
+        Message = $"Agent redacted a likely secret in conversation turn {turnIndex}",
+        ConversationTurnId = turnId,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    private ConversationTurn ToConversationTurn(
+        string sessionId, ConversationTurnDto t, int turnIndex, decimal cost, long? contextTokens) => new()
+    {
+        Id = t.Id,
+        SessionId = sessionId,
+        TurnIndex = turnIndex,
+        Role = t.Role!,
+        Content = t.Content,
+        TokenCount = t.TokenCount,
+        InputTokens = t.InputTokens,
+        OutputTokens = t.OutputTokens,
+        CacheCreationInputTokens = t.CacheCreationInputTokens,
+        CacheReadInputTokens = t.CacheReadInputTokens,
+        Model = t.Model,
+        EstimatedCostUsd = cost,
+        PricesAsOf = _pricing.PricesAsOf,
+        ContainsRedactedSecret = t.ContainsRedactedSecret,
+        Timestamp = t.Timestamp,
+        IsDecision = t.IsDecision,
+        GitBranch = t.GitBranch,
+        SubagentName = t.SubagentName,
+        ContextTokens = contextTokens
+    };
 
     private async Task<int> AddToolExecutionsAsync(
         Session session, IReadOnlyList<ToolExecutionDto> newTools, CancellationToken cancellationToken)
@@ -313,5 +331,20 @@ public sealed class IngestSessionEventsCommandHandler
         }
 
         return newFailures.Count;
+    }
+
+    private sealed record ValidatedBatch(
+        IReadOnlyList<ConversationTurnDto> Turns,
+        IReadOnlySet<string> ExistingTurnIds,
+        IReadOnlyList<ToolExecutionDto> Tools,
+        IReadOnlyList<FileChangeDto> Files,
+        IReadOnlyList<ToolFailureDto> Failures,
+        IReadOnlyList<ActivityEventDto> Activity)
+    {
+        public IEnumerable<DateTime> Stamps =>
+            Turns.Select(t => t.Timestamp)
+                .Concat(Tools.Select(t => t.Timestamp))
+                .Concat(Activity.Select(a => a.At))
+                .Concat(Failures.Select(f => f.At));
     }
 }
