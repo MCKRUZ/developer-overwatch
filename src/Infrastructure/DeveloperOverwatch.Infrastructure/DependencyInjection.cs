@@ -9,6 +9,7 @@ using DeveloperOverwatch.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 public static class DependencyInjection
 {
@@ -53,8 +54,13 @@ public static class DependencyInjection
         services.Configure<GitHubConfig>(configuration.GetSection("GitHub"));
         services.AddHttpClient<IGitHostingService, GitHubService>();
 
-        services.Configure<TokenPricingConfig>(configuration.GetSection("TokenPricing"));
-        services.AddSingleton<ITokenPricingCalculator, TokenPricingCalculator>();
+        services.Configure<TokenPricingOptions>(configuration.GetSection("TokenPricing"));
+        services.AddSingleton<ITokenPricingCalculator>(sp =>
+            sp.GetRequiredService<IOptions<TokenPricingOptions>>().Value.ToPriceTable());
+
+        services.Configure<ModelContextWindowsOptions>(configuration.GetSection("ModelContextWindows"));
+        services.AddSingleton<IModelContextWindowProvider>(sp =>
+            sp.GetRequiredService<IOptions<ModelContextWindowsOptions>>().Value.ToTable());
 
         services.Configure<CostAlertsConfig>(configuration.GetSection("CostAlerts"));
         services.AddSingleton<ICostThresholdProvider, CostThresholdProvider>();

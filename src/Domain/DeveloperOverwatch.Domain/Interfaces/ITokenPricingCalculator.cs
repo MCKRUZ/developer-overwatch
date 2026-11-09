@@ -2,6 +2,9 @@ namespace DeveloperOverwatch.Domain.Interfaces;
 
 public interface ITokenPricingCalculator
 {
+    /// <summary>Date the configured rates were taken from the published price list.</summary>
+    DateOnly PricesAsOf { get; }
+
     /// <summary>
     /// Estimated USD cost for a single turn's token usage, priced according to the given model's
     /// configured rates (falls back to a default rate when <paramref name="model"/> is null or
