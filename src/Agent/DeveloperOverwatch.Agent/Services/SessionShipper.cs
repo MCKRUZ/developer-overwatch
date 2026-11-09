@@ -91,7 +91,8 @@ internal sealed class SessionShipper
             case EventType.SessionStart:
                 return await FlushSignalsAsync(sessionId, run, ct) && await ShipStartAsync(sessionId, run, evt, ct);
             case EventType.SessionEnd:
-                return await FlushSignalsAsync(sessionId, run, ct) && await ShipEndAsync(sessionId, run, evt, ct);
+                return await FlushSignalsAsync(sessionId, run, ct)
+                    && (run.IsMarked(evt) || await ShipEndAsync(sessionId, run, evt, ct));
             case EventType.ToolExecution or EventType.FileChange or EventType.ConversationTurn:
                 run.Signals.Add(evt);
                 var outcome = await ShipItemAsync(sessionId, evt, ct);

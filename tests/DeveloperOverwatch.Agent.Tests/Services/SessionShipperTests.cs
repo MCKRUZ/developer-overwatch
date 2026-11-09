@@ -114,6 +114,32 @@ public sealed class SessionShipperTests : IDisposable
     }
 
     [Fact]
+    public async Task SessionGoneOnTheSignalsBeforeAnEnd_TheDroppedEndIsNeverSent()
+    {
+        _onEvents = _ => ApiResult.NotFound;
+        await EnqueueAsync(Event("f1", EventType.ToolFailed, ToolFailed()), T0);
+        await EnqueueAsync(Event("E1", EventType.SessionEnd), T0.AddMinutes(1));
+
+        await CreateSut().PollOnceAsync(CancellationToken.None);
+
+        _sent.Should().NotContain(s => s.StartsWith("end:"));
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SessionGoneOnTheSignalsBeforeAStart_TheStartIsStillSent()
+    {
+        _onEvents = _ => ApiResult.NotFound;
+        await EnqueueAsync(Event("f1", EventType.ToolFailed, ToolFailed()), T0);
+        await EnqueueAsync(Start("S2"), T0.AddMinutes(1));
+
+        await CreateSut().PollOnceAsync(CancellationToken.None);
+
+        _sent.Should().Equal("start:S2");
+        (await _queue.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
+    [Fact]
     public async Task RejectedStart_DropsOnlyUpToTheNextStart()
     {
         _onStart = n => n == 1 ? ApiResult.Rejected : ApiResult.Success;
