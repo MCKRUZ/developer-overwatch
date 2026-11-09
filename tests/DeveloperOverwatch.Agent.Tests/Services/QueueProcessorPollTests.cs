@@ -276,8 +276,32 @@ public sealed class QueueProcessorPollTests : IDisposable
         {
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
             _bodies.Enqueue(body);
-            var status = Respond(request.RequestUri!.AbsolutePath, body);
-            return new HttpResponseMessage(status) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            var path = request.RequestUri!.AbsolutePath;
+            var status = Respond(path, body);
+            var reply = status == HttpStatusCode.OK ? OkReply(path, body) : "{}";
+            return new HttpResponseMessage(status) { Content = new StringContent(reply, Encoding.UTF8, "application/json") };
+        }
+
+        /// <summary>What the server answers: a start or end names its outcome, and <c>/events</c> lists
+        /// every item it was sent as accepted.</summary>
+        private static string OkReply(string path, string body)
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (path == "/api/sessions/start")
+                return JsonSerializer.Serialize(new { sessionId = doc.RootElement.GetProperty("sessionId").GetString(), outcome = "accepted" });
+            if (path.EndsWith("/end", StringComparison.Ordinal))
+                return JsonSerializer.Serialize(new { sessionId = path.Split('/')[3], outcome = "accepted" });
+
+            var accepted = new[] { "conversationTurns", "toolExecutions", "fileChanges", "toolFailures" }
+                .Where(list => doc.RootElement.TryGetProperty(list, out _))
+                .SelectMany(list => doc.RootElement.GetProperty(list).EnumerateArray())
+                .Select(item => item.GetProperty("id").GetString())
+                .ToList();
+            return JsonSerializer.Serialize(new
+            {
+                eventsIngested = accepted.Count,
+                results = new { accepted, duplicate = Array.Empty<string>(), rejected = Array.Empty<object>() }
+            });
         }
     }
 

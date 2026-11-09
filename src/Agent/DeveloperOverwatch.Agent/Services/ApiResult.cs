@@ -18,7 +18,8 @@ public enum PostStatus
     /// sent again; one item too large alone is held and retried, never rejected.</summary>
     TooLarge,
 
-    /// <summary>Anything else (network error, timeout, 5xx, 401/403, a 404 without the code): retried later.</summary>
+    /// <summary>Anything else (network error, timeout, 5xx, 401/403, a 404 without the code, a 2xx whose reply is
+    /// not one the server sends, a reply over 1 MB): retried later.</summary>
     Transient
 }
 

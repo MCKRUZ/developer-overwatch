@@ -29,7 +29,7 @@ public class ApiClientTests : IDisposable
     [Fact]
     public async Task SendSessionStart_Success_ReturnsTrue()
     {
-        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, """{"sessionId":"s-1","outcome":"accepted"}""");
 
         var result = await _sut.SendSessionStartAsync("{}", CancellationToken.None);
 
@@ -47,24 +47,104 @@ public class ApiClientTests : IDisposable
     }
 
     [Fact]
-    public async Task SendSessionEvents_Success_ReturnsTrue()
-    {
-        _handler.StatusCode = HttpStatusCode.OK;
-
-        var result = await _sut.SendSessionEventsAsync("session-1", "{}", CancellationToken.None);
-
-        result.Should().Be(ApiResult.Success);
-    }
-
-    [Fact]
     public async Task SendSessionEnd_Success_ReturnsTrue()
     {
-        _handler.StatusCode = HttpStatusCode.OK;
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, """{"sessionId":"session-1","outcome":"accepted"}""");
 
         var result = await _sut.SendSessionEndAsync("session-1", "{}", CancellationToken.None);
 
         result.Should().Be(ApiResult.Success);
     }
+
+    // A captive portal or a misrouted proxy also answers 200. Counting that as delivered would drop the items.
+    [Theory]
+    [InlineData("")]
+    [InlineData("[]")]
+    [InlineData("<html>Sign in to the network</html>")]
+    [InlineData("{}")]
+    [InlineData("""{"results":[]}""")]
+    [InlineData("""{"sessionId":"s-1","outcome":"accepted"}""")]
+    public async Task SendSessionEvents_200WithoutResultsOrEventsIngested_IsTransient(string body)
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, body);
+
+        var result = await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
+
+        result.Status.Should().Be(PostStatus.Transient);
+    }
+
+    [Theory]
+    [InlineData("start", "accepted")]
+    [InlineData("start", "duplicate")]
+    [InlineData("end", "duplicate")]
+    public async Task SendStartOrEnd_OutcomeAcceptedOrDuplicate_IsOk(string action, string outcome)
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, $$"""{"sessionId":"s-1","outcome":"{{outcome}}"}""");
+
+        var result = await SendStartOrEndAsync(action);
+
+        result.Status.Should().Be(PostStatus.Ok);
+    }
+
+    // A server older than outcomes answers a plain 200 naming the session.
+    [Theory]
+    [InlineData("start")]
+    [InlineData("end")]
+    public async Task SendStartOrEnd_LegacyReplyWithSessionId_IsOk(string action)
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, """{"sessionId":"s-1"}""");
+
+        var result = await SendStartOrEndAsync(action);
+
+        result.Status.Should().Be(PostStatus.Ok);
+    }
+
+    [Theory]
+    [InlineData("start", HttpStatusCode.OK, "")]
+    [InlineData("start", HttpStatusCode.OK, "<html>Sign in</html>")]
+    [InlineData("start", HttpStatusCode.OK, "[]")]
+    [InlineData("start", HttpStatusCode.OK, "{}")]
+    [InlineData("start", HttpStatusCode.OK, """{"sessionId":"s-1","outcome":"queued"}""")]
+    [InlineData("start", HttpStatusCode.OK, """{"sessionId":"s-1","outcome":null}""")]
+    [InlineData("start", HttpStatusCode.Created, """{"sessionId":"s-1"}""")]
+    [InlineData("end", HttpStatusCode.NoContent, "")]
+    [InlineData("end", HttpStatusCode.OK, """{"eventsIngested":1}""")]
+    public async Task SendStartOrEnd_UnrecognisedReply_IsTransient(string action, HttpStatusCode status, string body)
+    {
+        _handler.Handler = _ => Respond(status, body);
+
+        var result = await SendStartOrEndAsync(action);
+
+        result.Status.Should().Be(PostStatus.Transient);
+    }
+
+    [Fact]
+    public async Task SendSessionEvents_ReplyOverOneMegabyte_IsTransient()
+    {
+        var padding = new string('x', 1024 * 1024);
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, $$"""{"eventsIngested":1,"pad":"{{padding}}"}""");
+
+        var result = await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
+
+        result.Status.Should().Be(PostStatus.Transient);
+    }
+
+    // The typed-client factory and the invariant test both hand an already-used HttpClient to a new ApiClient.
+    [Fact]
+    public async Task Constructor_OnAnHttpClientThatHasSentARequest_DoesNotThrow()
+    {
+        _handler.Handler = _ => Respond(HttpStatusCode.OK, """{"eventsIngested":1}""");
+        await _sut.SendSessionEventsAsync("s-1", "{}", CancellationToken.None);
+
+        var second = () => new ApiClient(_httpClient, Substitute.For<ILogger<ApiClient>>());
+
+        second.Should().NotThrow();
+    }
+
+    private Task<ApiResult> SendStartOrEndAsync(string action) =>
+        action == "end"
+            ? _sut.SendSessionEndAsync("s-1", "{}", CancellationToken.None)
+            : _sut.SendSessionStartAsync("{}", CancellationToken.None);
 
     [Fact]
     public async Task SendSessionStart_HttpException_ReturnsFalse()
