@@ -29,17 +29,20 @@ public static class DependencyInjection
             services.AddSingleton(new SqlManagedIdentityConnectionInterceptor(credential));
         }
 
-        services.AddDbContext<OverwatchDbContext>((sp, options) =>
+        if (isSqlServer)
         {
-            if (isSqlServer)
+            services.AddDbContext<OverwatchDbContext>((sp, options) =>
             {
                 options.UseSqlServer(connectionString);
                 if (dbConfig.UseManagedIdentityAuth)
                     options.AddInterceptors(sp.GetRequiredService<SqlManagedIdentityConnectionInterceptor>());
-            }
-            else
-                options.UseSqlite(connectionString);
-        });
+            });
+        }
+        else
+        {
+            // SQLite has its own migration set, keyed to this subclass.
+            services.AddDbContext<OverwatchDbContext, SqliteOverwatchDbContext>(options => options.UseSqlite(connectionString));
+        }
 
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<ICommitSessionLinkRepository, CommitSessionLinkRepository>();

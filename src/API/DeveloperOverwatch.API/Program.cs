@@ -238,10 +238,7 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
-    if (string.Equals(dbProvider, "sqlserver", StringComparison.OrdinalIgnoreCase))
-        await db.Database.MigrateAsync();
-    else
-        await db.Database.EnsureCreatedAsync();
+    await DatabaseInitializer.InitializeAsync(db);
 }
 
 app.UseMiddleware<GlobalExceptionMiddleware>();

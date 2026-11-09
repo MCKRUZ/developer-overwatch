@@ -4,7 +4,7 @@ using DeveloperOverwatch.Domain.Entities;
 using DeveloperOverwatch.Domain.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
-public sealed class OverwatchDbContext : DbContext, IUnitOfWork
+public class OverwatchDbContext : DbContext, IUnitOfWork
 {
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<ConversationTurn> ConversationTurns => Set<ConversationTurn>();
@@ -16,6 +16,9 @@ public sealed class OverwatchDbContext : DbContext, IUnitOfWork
     public DbSet<ArchitectAnnotation> ArchitectAnnotations => Set<ArchitectAnnotation>();
 
     public OverwatchDbContext(DbContextOptions<OverwatchDbContext> options) : base(options) { }
+
+    /// <summary>For provider-specific subclasses such as <see cref="SqliteOverwatchDbContext"/>.</summary>
+    protected OverwatchDbContext(DbContextOptions options) : base(options) { }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
