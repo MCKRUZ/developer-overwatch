@@ -17,7 +17,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -144,6 +144,8 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("SessionId");
+
+                    b.HasIndex("Timestamp");
 
                     b.ToTable("ConversationTurns");
                 });
@@ -315,17 +317,17 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Title")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<int>("TotalCacheCreationInputTokens")
-                        .HasColumnType("int");
+                    b.Property<long>("TotalCacheCreationInputTokens")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("TotalCacheReadInputTokens")
-                        .HasColumnType("int");
+                    b.Property<long>("TotalCacheReadInputTokens")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("TotalInputTokens")
-                        .HasColumnType("int");
+                    b.Property<long>("TotalInputTokens")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("TotalOutputTokens")
-                        .HasColumnType("int");
+                    b.Property<long>("TotalOutputTokens")
+                        .HasColumnType("bigint");
 
                     b.HasKey("Id");
 

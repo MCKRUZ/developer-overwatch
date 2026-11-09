@@ -60,10 +60,10 @@ public sealed class GetTeamAnalyticsQueryHandler
             .OrderBy(g => g.Key)
             .Select(g => new DailyCostUsage(
                 g.Key,
-                g.Sum(r => r.InputTokens ?? 0),
-                g.Sum(r => r.OutputTokens ?? 0),
-                g.Sum(r => r.CacheCreationInputTokens ?? 0),
-                g.Sum(r => r.CacheReadInputTokens ?? 0),
+                g.Sum(r => (long)(r.InputTokens ?? 0)),
+                g.Sum(r => (long)(r.OutputTokens ?? 0)),
+                g.Sum(r => (long)(r.CacheCreationInputTokens ?? 0)),
+                g.Sum(r => (long)(r.CacheReadInputTokens ?? 0)),
                 g.Sum(r => r.EstimatedCostUsd ?? 0m)))
             .ToList()
             .AsReadOnly();

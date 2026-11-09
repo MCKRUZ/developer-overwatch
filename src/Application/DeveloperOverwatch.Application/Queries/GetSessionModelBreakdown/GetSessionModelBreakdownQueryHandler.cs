@@ -22,10 +22,10 @@ public sealed class GetSessionModelBreakdownQueryHandler
             .Select(g => new ModelUsage(
                 g.Key,
                 g.Count(),
-                g.Sum(r => r.InputTokens ?? 0),
-                g.Sum(r => r.OutputTokens ?? 0),
-                g.Sum(r => r.CacheCreationInputTokens ?? 0),
-                g.Sum(r => r.CacheReadInputTokens ?? 0),
+                g.Sum(r => (long)(r.InputTokens ?? 0)),
+                g.Sum(r => (long)(r.OutputTokens ?? 0)),
+                g.Sum(r => (long)(r.CacheCreationInputTokens ?? 0)),
+                g.Sum(r => (long)(r.CacheReadInputTokens ?? 0)),
                 g.Sum(r => r.EstimatedCostUsd ?? 0m)))
             // Synthetic/decision-marker turns and turns ingested without model metadata land in
             // an "unknown"/"<synthetic>" bucket with zero cost and zero tokens — real rows, but

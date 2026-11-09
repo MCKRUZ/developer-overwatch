@@ -16,5 +16,6 @@ public class ConversationTurnConfiguration : IEntityTypeConfiguration<Conversati
                .WithMany(s => s.ConversationTurns)
                .HasForeignKey(t => t.SessionId);
         builder.HasIndex(t => t.SessionId);
+        builder.HasIndex(t => t.Timestamp);
     }
 }

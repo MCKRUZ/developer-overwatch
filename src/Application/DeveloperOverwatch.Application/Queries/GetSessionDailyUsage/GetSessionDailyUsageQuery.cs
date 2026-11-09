@@ -8,8 +8,8 @@ public sealed record GetSessionDailyUsageQuery(string SessionId) : IRequest<Resu
 public sealed record DailyUsage(
     DateOnly Date,
     int TurnCount,
-    int InputTokens,
-    int OutputTokens,
-    int CacheCreationInputTokens,
-    int CacheReadInputTokens,
+    long InputTokens,
+    long OutputTokens,
+    long CacheCreationInputTokens,
+    long CacheReadInputTokens,
     decimal EstimatedCostUsd);

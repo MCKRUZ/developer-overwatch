@@ -21,10 +21,10 @@ public sealed record SessionListItem(
     DateTime StartedAt,
     DateTime? EndedAt,
     DateTime CreatedAt,
-    int TotalInputTokens,
-    int TotalOutputTokens,
-    int TotalCacheCreationInputTokens,
-    int TotalCacheReadInputTokens,
+    long TotalInputTokens,
+    long TotalOutputTokens,
+    long TotalCacheCreationInputTokens,
+    long TotalCacheReadInputTokens,
     decimal EstimatedCostUsd,
     int ViolationCount,
     IReadOnlyDictionary<string, DailyTokenCost> DailyUsage);
@@ -33,8 +33,8 @@ public sealed record SessionListItem(
 /// dictionary) — lets the sessions list show "what did this session cost today/on this day"
 /// instead of its lifetime total, which is what actually matters for daily cost control.</summary>
 public sealed record DailyTokenCost(
-    int InputTokens,
-    int OutputTokens,
-    int CacheCreationInputTokens,
-    int CacheReadInputTokens,
+    long InputTokens,
+    long OutputTokens,
+    long CacheCreationInputTokens,
+    long CacheReadInputTokens,
     decimal EstimatedCostUsd);

@@ -243,4 +243,30 @@ public class GetSessionsTests
 
         result.Value!.Should().ContainSingle().Which.Id.Should().Be("stale");
     }
+
+    [Fact]
+    public async Task Handle_DailyUsageBeyondInt32_SumsAsLongWithoutOverflow()
+    {
+        const int big = 1_500_000_000;
+        var day = new DateTime(2026, 9, 20, 8, 0, 0, DateTimeKind.Utc);
+        _repo.GetAllAsync(null, null, null, null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Session> { new() { Id = "s1", DeveloperEmail = "dev@team.dev" } });
+        _repo.GetViolationCountsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, int>());
+        _repo.GetTurnUsageRowsForSessionsAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<SessionTurnUsageRow>
+            {
+                new("s1", day, big, big, big, big, 0m),
+                new("s1", day.AddHours(1), big, big, big, big, 0m),
+            });
+
+        var handler = new GetSessionsQueryHandler(_repo, _staleThreshold);
+        var result = await handler.Handle(new GetSessionsQuery(), CancellationToken.None);
+
+        var usage = result.Value!.Single().DailyUsage["2026-09-20"];
+        usage.InputTokens.Should().Be(3_000_000_000L);
+        usage.OutputTokens.Should().Be(3_000_000_000L);
+        usage.CacheCreationInputTokens.Should().Be(3_000_000_000L);
+        usage.CacheReadInputTokens.Should().Be(3_000_000_000L);
+    }
 }

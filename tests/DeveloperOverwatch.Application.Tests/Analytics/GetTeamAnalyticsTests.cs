@@ -166,4 +166,30 @@ public class GetTeamAnalyticsTests
         await _sessionRepo.Received(1).GetTurnUsageRowsForDateRangeAsync(
             null, null, "alice@test.com", Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task Handle_DailyCostTrendBeyondInt32_SumsAsLongWithoutOverflow()
+    {
+        _sessionRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<Session>().AsReadOnly());
+        _prRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<PullRequestReview>().AsReadOnly());
+        _violationRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<GovernanceViolation>().AsReadOnly());
+        _commitRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<CommitSessionLink>().AsReadOnly());
+        const int big = 1_500_000_000;
+        var day = new DateTime(2026, 9, 23, 8, 0, 0, DateTimeKind.Utc);
+        _sessionRepo.GetTurnUsageRowsForDateRangeAsync(
+            Arg.Any<DateTime?>(), Arg.Any<DateTime?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TurnUsageRow>
+            {
+                new(day, "claude-opus", big, big, big, big, 0m),
+                new(day.AddHours(1), "claude-opus", big, big, big, big, 0m),
+            });
+
+        var result = await _handler.Handle(new GetTeamAnalyticsQuery(), CancellationToken.None);
+
+        var only = result.Value!.DailyCostTrend.Single();
+        only.InputTokens.Should().Be(3_000_000_000L);
+        only.OutputTokens.Should().Be(3_000_000_000L);
+        only.CacheCreationInputTokens.Should().Be(3_000_000_000L);
+        only.CacheReadInputTokens.Should().Be(3_000_000_000L);
+    }
 }

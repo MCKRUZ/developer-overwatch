@@ -43,10 +43,10 @@ public sealed class GetSessionsQueryHandler
                     .ToDictionary(
                         dayGroup => dayGroup.Key,
                         dayGroup => new DailyTokenCost(
-                            dayGroup.Sum(r => r.InputTokens ?? 0),
-                            dayGroup.Sum(r => r.OutputTokens ?? 0),
-                            dayGroup.Sum(r => r.CacheCreationInputTokens ?? 0),
-                            dayGroup.Sum(r => r.CacheReadInputTokens ?? 0),
+                            dayGroup.Sum(r => (long)(r.InputTokens ?? 0)),
+                            dayGroup.Sum(r => (long)(r.OutputTokens ?? 0)),
+                            dayGroup.Sum(r => (long)(r.CacheCreationInputTokens ?? 0)),
+                            dayGroup.Sum(r => (long)(r.CacheReadInputTokens ?? 0)),
                             dayGroup.Sum(r => r.EstimatedCostUsd ?? 0m))));
 
         var emptyDailyUsage = (IReadOnlyDictionary<string, DailyTokenCost>)

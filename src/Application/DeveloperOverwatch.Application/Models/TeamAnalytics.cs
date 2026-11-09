@@ -15,8 +15,8 @@ public sealed record TeamAnalytics(
 
 public sealed record DailyCostUsage(
     DateOnly Date,
-    int InputTokens,
-    int OutputTokens,
-    int CacheCreationInputTokens,
-    int CacheReadInputTokens,
+    long InputTokens,
+    long OutputTokens,
+    long CacheCreationInputTokens,
+    long CacheReadInputTokens,
     decimal EstimatedCostUsd);

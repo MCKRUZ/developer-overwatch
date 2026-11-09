@@ -36,8 +36,7 @@ public sealed class DatabaseInitializerTests : IDisposable
         await DatabaseInitializer.InitializeAsync(db);
 
         await AssertSchemaMatchesModelAsync(db);
-        (await AppliedMigrationsAsync(db)).Should().Equal(
-            DatabaseInitializer.SqliteBaselineMigrationId, DatabaseInitializer.SqliteUpgradeMigrationId);
+        (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
     }
 
     [Fact]
@@ -68,10 +67,10 @@ public sealed class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
-    public async Task InitializeAsync_DatabaseCreatedByCurrentCode_RecordsHistoryWithoutChanges()
+    public async Task InitializeAsync_DatabaseCreatedByTokenUsageEraCode_RecordsHistoryAndAppliesNewerMigrations()
     {
         await using (var legacy = NewContext())
-            await legacy.Database.EnsureCreatedAsync();
+            await CreateTokenUsageEraDatabaseAsync(legacy);
         await ExecAsync("""
             INSERT INTO Sessions (Id, DeveloperEmail, Status, StartedAt, CreatedAt, LastActivityAt,
                                   TotalInputTokens, TotalOutputTokens, TotalCacheCreationInputTokens,
@@ -83,11 +82,29 @@ public sealed class DatabaseInitializerTests : IDisposable
         await using var db = NewContext();
         await DatabaseInitializer.InitializeAsync(db);
 
-        (await AppliedMigrationsAsync(db)).Should().Equal(
-            DatabaseInitializer.SqliteBaselineMigrationId, DatabaseInitializer.SqliteUpgradeMigrationId);
+        await AssertSchemaMatchesModelAsync(db);
+        (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
+        (await IndexNamesAsync("ConversationTurns")).Should().Contain("IX_ConversationTurns_Timestamp");
         var session = await db.Sessions.AsNoTracking().SingleAsync();
         session.TotalCacheReadInputTokens.Should().Be(40);
         session.LastActivityAt.Should().Be(new DateTime(2026, 10, 1, 9, 30, 0));
+    }
+
+    [Fact]
+    public async Task InitializeAsync_SessionTokenTotalsBeyondInt32_RoundTrip()
+    {
+        await using (var db = NewContext())
+        {
+            await DatabaseInitializer.InitializeAsync(db);
+            db.Sessions.Add(new Domain.Entities.Session
+            {
+                Id = "s1", DeveloperEmail = "dev@test.com", TotalCacheReadInputTokens = 3_000_000_000L,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using var reader = NewContext();
+        (await reader.Sessions.AsNoTracking().SingleAsync()).TotalCacheReadInputTokens.Should().Be(3_000_000_000L);
     }
 
     [Fact]
@@ -112,7 +129,7 @@ public sealed class DatabaseInitializerTests : IDisposable
         await using var db = NewContext();
         await DatabaseInitializer.InitializeAsync(db);
 
-        (await AppliedMigrationsAsync(db)).Should().HaveCount(2);
+        (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
     }
 
     // Every model change needs a migration in BOTH sets; a missing SQLite one would leave deployed
@@ -136,6 +153,25 @@ public sealed class DatabaseInitializerTests : IDisposable
     {
         await db.GetService<IMigrator>().MigrateAsync(DatabaseInitializer.SqliteBaselineMigrationId);
         await ExecAsync("DROP TABLE __EFMigrationsHistory;");
+    }
+
+    // A database EnsureCreated by the code that added token usage: the upgrade migration's schema
+    // with no history, and none of the migrations that came after it.
+    private async Task CreateTokenUsageEraDatabaseAsync(SqliteOverwatchDbContext db)
+    {
+        await db.GetService<IMigrator>().MigrateAsync(DatabaseInitializer.SqliteUpgradeMigrationId);
+        await ExecAsync("DROP TABLE __EFMigrationsHistory;");
+    }
+
+    private async Task<IReadOnlyList<string>> IndexNamesAsync(string table)
+    {
+        var names = new List<string>();
+        await using var command = _connection.CreateCommand();
+        command.CommandText = $"SELECT name FROM pragma_index_list('{table}')";
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            names.Add(reader.GetString(0));
+        return names;
     }
 
     private async Task ExecAsync(string sql)
