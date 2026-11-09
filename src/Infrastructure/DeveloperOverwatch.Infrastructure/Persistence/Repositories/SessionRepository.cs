@@ -284,8 +284,8 @@ public sealed class SessionRepository : ISessionRepository
     public async Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default) =>
         await _db.SessionToolFailures.AddRangeAsync(failures, ct);
 
-    public Task<bool> IsAgentEventProcessedAsync(string eventId, CancellationToken ct = default) =>
-        _db.ProcessedAgentEvents.AnyAsync(e => e.EventId == eventId, ct);
+    public Task<bool> IsAgentEventProcessedAsync(string sessionId, string eventId, CancellationToken ct = default) =>
+        _db.ProcessedAgentEvents.AnyAsync(e => e.SessionId == sessionId && e.EventId == eventId, ct);
 
     public async Task AddProcessedAgentEventAsync(ProcessedAgentEvent processedEvent, CancellationToken ct = default) =>
         await _db.ProcessedAgentEvents.AddAsync(processedEvent, ct);

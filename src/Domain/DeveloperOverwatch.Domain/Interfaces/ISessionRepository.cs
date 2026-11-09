@@ -74,8 +74,9 @@ public interface ISessionRepository
 
     Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default);
 
-    /// <summary>Whether a session start or end with this Agent event id was already processed.</summary>
-    Task<bool> IsAgentEventProcessedAsync(string eventId, CancellationToken ct = default);
+    /// <summary>Whether this session already processed a start or end with this Agent event id. Scoped
+    /// to the session, so an id recorded for one session never makes another's event a duplicate.</summary>
+    Task<bool> IsAgentEventProcessedAsync(string sessionId, string eventId, CancellationToken ct = default);
 
     /// <summary>Records a processed start or end; committed by the same unit of work as its effect.</summary>
     Task AddProcessedAgentEventAsync(ProcessedAgentEvent processedEvent, CancellationToken ct = default);

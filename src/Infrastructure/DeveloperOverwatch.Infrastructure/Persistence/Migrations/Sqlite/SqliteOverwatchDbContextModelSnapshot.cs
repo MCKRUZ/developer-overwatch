@@ -255,6 +255,10 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ProcessedAgentEvent", b =>
                 {
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("EventId")
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
@@ -267,14 +271,8 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<DateTime>("ProcessedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("SessionId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("EventId");
-
-                    b.HasIndex("SessionId");
+                    b.HasKey("SessionId", "EventId")
+                        .HasAnnotation("SqlServer:Clustered", false);
 
                     b.ToTable("ProcessedAgentEvents", (string)null);
                 });

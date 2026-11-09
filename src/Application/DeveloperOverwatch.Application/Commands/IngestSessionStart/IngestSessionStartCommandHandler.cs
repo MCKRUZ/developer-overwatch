@@ -25,7 +25,7 @@ public sealed class IngestSessionStartCommandHandler
         // A redelivered start must change nothing. Without this, a resent start for a session that
         // has since ended would reopen it. Checked before any write, including the gap fills below.
         if (request.EventId is { } eventId
-            && await _repository.IsAgentEventProcessedAsync(eventId, cancellationToken))
+            && await _repository.IsAgentEventProcessedAsync(request.SessionId, eventId, cancellationToken))
             return Result<IngestOutcome>.Success(IngestOutcome.Duplicate);
 
         var existing = await _repository.GetByIdAsync(request.SessionId, cancellationToken);

@@ -9,13 +9,14 @@ public class ProcessedAgentEventConfiguration : IEntityTypeConfiguration<Process
     public void Configure(EntityTypeBuilder<ProcessedAgentEvent> builder)
     {
         builder.ToTable("ProcessedAgentEvents");
-        builder.HasKey(e => e.EventId);
+        // An event id dedupes within its session only, so the key is the pair. Nonclustered because
+        // 450 + 64 characters exceeds SQL Server's 900-byte clustered key limit.
+        builder.HasKey(e => new { e.SessionId, e.EventId }).IsClustered(false);
         builder.Property(e => e.EventId).HasMaxLength(64);
         // No foreign key, so nothing sizes this column from Sessions.Id; 450 matches that key's
-        // SQL Server width and keeps the column indexable.
+        // SQL Server width.
         builder.Property(e => e.SessionId).IsRequired().HasMaxLength(450);
         builder.Property(e => e.Kind).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(e => e.ProcessedAt).IsRequired();
-        builder.HasIndex(e => e.SessionId);
     }
 }

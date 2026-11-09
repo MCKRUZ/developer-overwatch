@@ -260,6 +260,10 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ProcessedAgentEvent", b =>
                 {
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<string>("EventId")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
@@ -272,14 +276,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("ProcessedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("SessionId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)");
+                    b.HasKey("SessionId", "EventId");
 
-                    b.HasKey("EventId");
-
-                    b.HasIndex("SessionId");
+                    SqlServerKeyBuilderExtensions.IsClustered(b.HasKey("SessionId", "EventId"), false);
 
                     b.ToTable("ProcessedAgentEvents", (string)null);
                 });

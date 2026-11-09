@@ -27,7 +27,7 @@ public sealed class IngestSessionEndCommandHandler
             return Result<IngestSessionEndResult>.Fail($"Session {request.SessionId} not found");
 
         if (request.EventId is { } eventId
-            && await _repository.IsAgentEventProcessedAsync(eventId, cancellationToken))
+            && await _repository.IsAgentEventProcessedAsync(request.SessionId, eventId, cancellationToken))
             return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Duplicate, ClosedSession: false));
 
         // The Agent delivers at-least-once, and backfill may have closed an idle session first, so an

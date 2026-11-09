@@ -62,6 +62,31 @@ public class StartEndDeliveryTests : IClassFixture<OverwatchWebApplicationFactor
         await _groupClient.Received(1).SessionEnded(sessionId);
     }
 
+    // An event id dedupes within its own session only. One recorded for session A must not make
+    // session B's start or end look already processed, or B would never be created or closed.
+    [Theory]
+    [InlineData("start")]
+    [InlineData("end")]
+    public async Task StartOrEnd_EventIdAlreadyUsedByAnotherSession_IsAcceptedThenDuplicate(string action)
+    {
+        var (a, b, eventId) = (NewId(), NewId(), NewId());
+        await PostOk("/api/sessions/start", StartBody(a, action == "start" ? eventId : NewId()));
+        if (action == "end")
+        {
+            await PostOk($"/api/sessions/{a}/end", new { sessionId = a, eventId, endedAt = _past });
+            await PostOk("/api/sessions/start", StartBody(b, NewId()));
+        }
+        var (path, body) = action == "start"
+            ? ("/api/sessions/start", StartBody(b, eventId))
+            : ($"/api/sessions/{b}/end", (object)new { sessionId = b, eventId, endedAt = _past });
+
+        var first = await PostOutcome(path, body);
+        var second = await PostOutcome(path, body);
+
+        first.Should().Be("accepted");
+        second.Should().Be("duplicate");
+    }
+
     [Theory]
     [InlineData("start", "")]
     [InlineData("start", "   ")]
@@ -91,6 +116,14 @@ public class StartEndDeliveryTests : IClassFixture<OverwatchWebApplicationFactor
     {
         var response = await _client.PostAsJsonAsync(path, body);
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+    }
+
+    private async Task<string?> PostOutcome(string path, object body)
+    {
+        var response = await _client.PostAsJsonAsync(path, body);
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, text);
+        return System.Text.Json.JsonDocument.Parse(text).RootElement.GetProperty("outcome").GetString();
     }
 
     private static string NewId() => Guid.NewGuid().ToString("N");
