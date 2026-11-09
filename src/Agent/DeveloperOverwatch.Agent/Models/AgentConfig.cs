@@ -14,7 +14,6 @@ public sealed class AgentConfig
     /// <summary>Clamped to 1..500: the server takes at most 500 items per list, and 0 never drains.</summary>
     public int BatchSize { get => _batchSize; init => _batchSize = Math.Clamp(value, 1, 500); }
     private readonly int _batchSize = 50;
-    public int GitFallbackThreshold { get; init; } = 100;
     public IReadOnlyList<string> RedactionPatterns { get; init; } = DefaultRedactionPatterns;
     public bool PrivateSession { get; init; }
 

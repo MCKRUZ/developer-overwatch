@@ -13,7 +13,6 @@ public sealed class QueueProcessorTests
     private readonly IEventQueue _queue;
     private readonly IApiClient _api;
     private readonly IPrivacyRedactor _redactor;
-    private readonly IGitFallbackWriter _gitFallback;
     private readonly IConversationCapture _conversationCapture;
     private readonly IConversationCursorStore _cursorStore;
     private readonly AgentConfig _config;
@@ -24,7 +23,6 @@ public sealed class QueueProcessorTests
         _queue = Substitute.For<IEventQueue>();
         _api = Substitute.For<IApiClient>();
         _redactor = Substitute.For<IPrivacyRedactor>();
-        _gitFallback = Substitute.For<IGitFallbackWriter>();
         _conversationCapture = Substitute.For<IConversationCapture>();
         _cursorStore = Substitute.For<IConversationCursorStore>();
 
@@ -34,7 +32,6 @@ public sealed class QueueProcessorTests
         {
             PollIntervalSeconds = 1,
             BatchSize = 50,
-            GitFallbackThreshold = 100,
             // Never the real ~/.overwatch: the processor imports and deletes its fallback file.
             OverwatchDir = Path.Combine(Path.GetTempPath(), $"ow-qp-{Guid.NewGuid():N}")
         };
@@ -43,7 +40,7 @@ public sealed class QueueProcessorTests
 
         var logger = Substitute.For<ILogger<QueueProcessor>>();
         _sut = new QueueProcessor(
-            _queue, _api, _redactor, _gitFallback, _conversationCapture, _cursorStore, _gitRemote,
+            _queue, _api, _redactor, _conversationCapture, _cursorStore, _gitRemote,
             Substitute.For<IUsageStore>(), _config, QueueProcessorLifecycleTests.Fixed(_config.Mode),
             Substitute.For<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), logger);
     }

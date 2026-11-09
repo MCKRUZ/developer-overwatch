@@ -35,11 +35,10 @@ public sealed class QueueProcessorSessionSignalsTests
             Mode = mode,
             PollIntervalSeconds = 1,
             BatchSize = 50,
-            GitFallbackThreshold = 100,
             OverwatchDir = Path.Combine(Path.GetTempPath(), $"ow-sig-{Guid.NewGuid():N}")
         };
         return new QueueProcessor(
-            _queue, _api, redactor, Substitute.For<IGitFallbackWriter>(), Substitute.For<IConversationCapture>(),
+            _queue, _api, redactor, Substitute.For<IConversationCapture>(),
             Substitute.For<IConversationCursorStore>(), Substitute.For<IGitReader>(),
             Substitute.For<IUsageStore>(), config, QueueProcessorLifecycleTests.Fixed(mode),
             Substitute.For<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), Substitute.For<ILogger<QueueProcessor>>());

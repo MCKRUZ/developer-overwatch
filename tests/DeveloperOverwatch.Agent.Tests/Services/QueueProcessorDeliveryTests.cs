@@ -248,11 +248,10 @@ public sealed class QueueProcessorDeliveryTests
         {
             PollIntervalSeconds = 1,
             BatchSize = 50,
-            GitFallbackThreshold = 100,
             OverwatchDir = Path.Combine(Path.GetTempPath(), $"ow-qp-delivery-{Guid.NewGuid():N}")
         };
         var sut = new QueueProcessor(
-            _queue, _api, PassThroughRedactor(), Substitute.For<IGitFallbackWriter>(), _capture, _cursors, _git,
+            _queue, _api, PassThroughRedactor(), _capture, _cursors, _git,
             Substitute.For<IUsageStore>(), config, QueueProcessorLifecycleTests.Fixed(config.Mode),
             Substitute.For<IHostApplicationLifetime>(), _logger);
 

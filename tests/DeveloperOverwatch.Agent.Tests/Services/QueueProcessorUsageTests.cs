@@ -19,7 +19,6 @@ public sealed class QueueProcessorUsageTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), $"ow-qp-usage-{Guid.NewGuid():N}");
     private readonly EventQueue _queue;
     private readonly UsageStore _usage;
-    private readonly IGitFallbackWriter _gitFallback = Substitute.For<IGitFallbackWriter>();
     private readonly IGitReader _gitRemote = Substitute.For<IGitReader>();
 
     public QueueProcessorUsageTests()
@@ -49,7 +48,6 @@ public sealed class QueueProcessorUsageTests : IDisposable
             new HttpClient(handler) { BaseAddress = new Uri("http://overwatch.invalid/") },
             Substitute.For<ILogger<ApiClient>>());
         await SeedSessionAsync();
-        // Well past the git fallback threshold (100), which must still never fire.
         for (var i = 0; i < 150; i++)
             await EnqueueAsync($"tool-{i:D3}", "other-session", EventType.ToolExecution, "{}", DateTime.UtcNow.AddMinutes(-2));
 
@@ -57,8 +55,6 @@ public sealed class QueueProcessorUsageTests : IDisposable
         await RunUntilAsync(sut, async () => await _queue.GetUnshippedCountAsync() == 0);
 
         handler.Calls.Should().Be(0);
-        await _gitFallback.DidNotReceiveWithAnyArgs().WriteFallbackAsync(default!, default!, default, default);
-        await _gitFallback.DidNotReceiveWithAnyArgs().AddGitTrailerAsync(default!, default!, default);
         (await _queue.GetUnshippedCountAsync()).Should().Be(0, "local mode marks events handled once recorded");
         File.Exists(Path.Combine(_dir, "queue-fallback.jsonl")).Should().BeFalse("the hook fallback file is still imported");
         await AssertUsageRecordedAsync();
@@ -86,7 +82,6 @@ public sealed class QueueProcessorUsageTests : IDisposable
             _queue,
             api,
             new PrivacyRedactor(new AgentConfig().RedactionPatterns),
-            _gitFallback,
             new ConversationCapture(Substitute.For<ILogger<ConversationCapture>>()),
             Substitute.For<IConversationCursorStore>(),
             _gitRemote,
@@ -96,8 +91,7 @@ public sealed class QueueProcessorUsageTests : IDisposable
                 Mode = mode,
                 OverwatchDir = _dir,
                 PollIntervalSeconds = 1,
-                BatchSize = 500,
-                GitFallbackThreshold = 100
+                BatchSize = 500
             },
             QueueProcessorLifecycleTests.Fixed(mode),
             Substitute.For<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),

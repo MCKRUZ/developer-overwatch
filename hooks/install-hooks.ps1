@@ -55,7 +55,7 @@ $syncEvents = @("SessionStart")
 # argument. A user's own script such as C:\tools\overwatch-lint.ps1 does not match.
 $overwatchHookPattern = '[\\/](?:' + (@($hookScripts.Values | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')"'
 
-$configDefaults = [ordered]@{ pollIntervalSeconds = 5; batchSize = 50; gitFallbackThreshold = 100 }
+$configDefaults = [ordered]@{ pollIntervalSeconds = 5; batchSize = 50 }
 
 $agentName = "overwatch-agent"
 
@@ -239,6 +239,8 @@ $config["mode"] = $mode
 foreach ($key in $configDefaults.Keys) {
     if (-not $config.Contains($key)) { $config[$key] = $configDefaults[$key] }
 }
+# The git fallback is gone; an older install's key would only mislead whoever reads the config.
+$config.Remove("gitFallbackThreshold")
 $configWritten = $false
 try {
     New-Item -ItemType Directory -Path $overwatchDir -Force | Out-Null

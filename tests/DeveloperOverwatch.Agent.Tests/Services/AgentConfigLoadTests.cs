@@ -26,6 +26,16 @@ public sealed class AgentConfigLoadTests : IDisposable
         AgentConfig.Load(ConfigPath).OverwatchDir.Should().Be(AgentConfig.DefaultOverwatchDir);
     }
 
+    // The git fallback is gone, but every older install's config still carries its key. A parse failure
+    // here would fail closed to Local and silently stop every pilot machine.
+    [Fact]
+    public void Load_RetiredGitFallbackThresholdKey_StillLoadsAsPilot()
+    {
+        File.WriteAllText(ConfigPath, """{"mode":"pilot","apiUrl":"https://overwatch.example.com","gitFallbackThreshold":100}""");
+
+        AgentConfig.TryLoad(ConfigPath)!.Mode.Should().Be(AgentMode.Pilot);
+    }
+
     // A machine nobody enrolled has no config file; its usage must stay on the machine.
     [Fact]
     public void Load_NoConfigFile_IsLocal() =>

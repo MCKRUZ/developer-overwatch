@@ -206,11 +206,10 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
             Mode = mode,
             PollIntervalSeconds = 1,
             BatchSize = 50,
-            GitFallbackThreshold = 100,
             OverwatchDir = _dir
         };
         return new QueueProcessor(
-            _queue, _api, redactor, Substitute.For<IGitFallbackWriter>(), Substitute.For<IConversationCapture>(),
+            _queue, _api, redactor, Substitute.For<IConversationCapture>(),
             Substitute.For<IConversationCursorStore>(), Substitute.For<IGitReader>(), Substitute.For<IUsageStore>(),
             config, modeSource, _lifetime, Substitute.For<ILogger<QueueProcessor>>());
     }

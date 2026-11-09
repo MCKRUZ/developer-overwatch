@@ -13,7 +13,6 @@ public sealed class QueueProcessor : BackgroundService
     private static readonly TimeSpan LocalRetention = TimeSpan.FromDays(30);
 
     private readonly IEventQueue _queue;
-    private readonly IGitFallbackWriter _gitFallback;
     private readonly IUsageStore _usageStore;
     private readonly AgentConfig _config;
     private readonly IAgentModeSource _modeSource;
@@ -27,7 +26,6 @@ public sealed class QueueProcessor : BackgroundService
         IEventQueue queue,
         IApiClient api,
         IPrivacyRedactor redactor,
-        IGitFallbackWriter gitFallback,
         IConversationCapture conversationCapture,
         IConversationCursorStore cursorStore,
         IGitReader gitRemote,
@@ -38,7 +36,6 @@ public sealed class QueueProcessor : BackgroundService
         ILogger<QueueProcessor> logger)
     {
         _queue = queue;
-        _gitFallback = gitFallback;
         _usageStore = usageStore;
         _config = config;
         _modeSource = modeSource;
@@ -127,11 +124,9 @@ public sealed class QueueProcessor : BackgroundService
             // Local first, so a start handled here is already marked when the shipped items ask for it.
             if (local.Count > 0)
                 await _sessions.HandleLocallyAsync(sessionId, local, ct);
-            if (toShip.Count == 0 || !await _sessions.ShipAsync(sessionId, toShip, ct))
-                continue;
-
-            anyTransient = true;
-            await CheckGitFallbackAsync(sessionId, ct);
+            // A transient failure leaves the events queued; the 30-day unshipped purge bounds the wait.
+            if (toShip.Count > 0 && await _sessions.ShipAsync(sessionId, toShip, ct))
+                anyTransient = true;
         }
 
         // Once per poll, so one failing session never delays the others in the batch.
@@ -149,35 +144,6 @@ public sealed class QueueProcessor : BackgroundService
     /// Local mode handles every event here and sends nothing: Pilot capture starts at enrolment, and
     /// Local-era data leaves the machine only through an explicit usage-only backfill.</summary>
     private bool HandlesLocally(QueuedEvent evt) => _config.Mode == AgentMode.Local;
-
-    private async Task CheckGitFallbackAsync(string sessionId, CancellationToken ct)
-    {
-        // The fallback commits events into the repository, and a push would carry them off the
-        // machine — so it never runs in local mode, whoever calls it.
-        if (_config.Mode == AgentMode.Local)
-            return;
-
-        var unshipped = await _queue.GetUnshippedCountAsync();
-        if (unshipped < _config.GitFallbackThreshold)
-            return;
-
-        _logger.LogWarning(
-            "Queue has {Count} unshipped events (threshold: {Threshold}), writing git fallback",
-            unshipped, _config.GitFallbackThreshold);
-
-        var allUnshipped = await _queue.DequeueBatchAsync(unshipped);
-        var repoPath = await SessionMappings.FindRepoPathAsync(_config.OverwatchDir, sessionId);
-
-        if (repoPath is not null)
-        {
-            var written = await _gitFallback.WriteFallbackAsync(sessionId, allUnshipped, repoPath, ct);
-            if (written)
-            {
-                await _gitFallback.AddGitTrailerAsync(sessionId, repoPath, ct);
-                await _queue.MarkShippedAsync(allUnshipped.Select(e => e.Id).ToList());
-            }
-        }
-    }
 
     private async Task ApplyBackoffAsync(CancellationToken ct)
     {
