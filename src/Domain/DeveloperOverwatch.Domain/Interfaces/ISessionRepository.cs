@@ -72,6 +72,11 @@ public interface ISessionRepository
     Task<IReadOnlySet<string>> GetExistingToolExecutionIdsAsync(
         IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default);
 
+    /// <summary>Which of these file change ids are already stored, in any session. The id is the
+    /// primary key, so an id stored under another session is a duplicate, not a new row.</summary>
+    Task<IReadOnlySet<string>> GetExistingFileChangeIdsAsync(
+        IReadOnlyCollection<string> fileChangeIds, CancellationToken ct = default);
+
     /// <summary>Which of these tool failure ids are already stored, in any session. The id is the
     /// primary key, so the check is global.</summary>
     Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(

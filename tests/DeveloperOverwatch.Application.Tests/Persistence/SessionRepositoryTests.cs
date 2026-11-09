@@ -403,6 +403,23 @@ public sealed class SessionRepositoryTests : IDisposable
     }
 
     [Fact]
+    public async Task GetExistingFileChangeIdsAsync_ReturnsMatchingIdsFromEverySession()
+    {
+        await _repo.AddAsync(NewSession("s1"));
+        await _repo.AddAsync(NewSession("s2"));
+        await _repo.AddFileChangesAsync(
+        [
+            new FileChange { Id = "c-in-s1", SessionId = "s1", FilePath = "a.cs" },
+            new FileChange { Id = "c-in-s2", SessionId = "s2", FilePath = "b.cs" },
+        ]);
+        await _db.SaveChangesAsync();
+
+        var existing = await _repo.GetExistingFileChangeIdsAsync(["c-in-s1", "c-in-s2", "c-new"]);
+
+        existing.Should().BeEquivalentTo(["c-in-s1", "c-in-s2"]);
+    }
+
+    [Fact]
     public async Task GetExistingToolFailureIdsAsync_StoredFailures_ReturnsOnlyStoredIds()
     {
         await _repo.AddAsync(NewSession("s1"));

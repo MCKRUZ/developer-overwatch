@@ -79,15 +79,20 @@ public sealed class IngestSessionEventsCommandHandler
             request.ToolExecutions, t => t.Id,
             t => IngestItemRules.ToolExecution(t, results.RejectedIds, knownTurnIds));
 
+        // Tool and file ids are primary keys, so the lookups span every session: an id stored under
+        // another session is a duplicate, and inserting it again would fail the whole save.
         var existingToolIds = await _repository.GetExistingToolExecutionIdsAsync(
-            ParentIds(request.FileChanges, f => f.ToolExecutionId).ToList(), cancellationToken);
+            tools.Select(t => t.Id).Concat(ParentIds(request.FileChanges, f => f.ToolExecutionId)).ToList(),
+            cancellationToken);
         var knownToolIds = KnownIds(tools.Select(t => t.Id), existingToolIds);
         var files = results.Valid(
             request.FileChanges, f => f.Id,
             f => IngestItemRules.FileChange(f, results.RejectedIds, knownToolIds));
+        var existingFileIds = await _repository.GetExistingFileChangeIdsAsync(
+            files.Select(f => f.Id).ToList(), cancellationToken);
 
         return new ValidatedBatch(
-            turns, existingTurnIds, tools, files,
+            turns, existingTurnIds, tools, existingToolIds, files, existingFileIds,
             results.Valid(request.ToolFailures, f => f.Id, IngestItemRules.ToolFailure),
             request.ActivityEvents.Where(IngestItemRules.IsValid).ToList());
     }
@@ -104,10 +109,8 @@ public sealed class IngestSessionEventsCommandHandler
         CancellationToken cancellationToken)
     {
         var newTurns = results.New(batch.Turns, t => t.Id, batch.ExistingTurnIds);
-        var newTools = results.New(
-            batch.Tools, t => t.Id, session.ToolExecutions.Select(t => t.Id).ToHashSet());
-        var newFiles = results.New(
-            batch.Files, f => f.Id, session.FileChanges.Select(f => f.Id).ToHashSet());
+        var newTools = results.New(batch.Tools, t => t.Id, batch.ExistingToolIds);
+        var newFiles = results.New(batch.Files, f => f.Id, batch.ExistingFileIds);
 
         var totalEvents = await AddTurnsAsync(session, newTurns, cancellationToken);
         totalEvents += await AddToolExecutionsAsync(session, newTools, cancellationToken);
@@ -337,7 +340,9 @@ public sealed class IngestSessionEventsCommandHandler
         IReadOnlyList<ConversationTurnDto> Turns,
         IReadOnlySet<string> ExistingTurnIds,
         IReadOnlyList<ToolExecutionDto> Tools,
+        IReadOnlySet<string> ExistingToolIds,
         IReadOnlyList<FileChangeDto> Files,
+        IReadOnlySet<string> ExistingFileIds,
         IReadOnlyList<ToolFailureDto> Failures,
         IReadOnlyList<ActivityEventDto> Activity)
     {

@@ -281,6 +281,21 @@ public sealed class SessionRepository : ISessionRepository
         return existing;
     }
 
+    public async Task<IReadOnlySet<string>> GetExistingFileChangeIdsAsync(
+        IReadOnlyCollection<string> fileChangeIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in fileChangeIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.FileChanges
+                .Where(f => chunk.Contains(f.Id))
+                .Select(f => f.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
     public async Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(
         IReadOnlyCollection<string> failureIds, CancellationToken ct = default)
     {

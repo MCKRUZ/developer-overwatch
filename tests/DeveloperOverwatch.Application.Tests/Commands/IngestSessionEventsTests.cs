@@ -290,6 +290,8 @@ public class IngestSessionEventsTests
             ToolExecutions = [new ToolExecution { Id = "tool-1", SessionId = sessionId, ToolName = "Read", Timestamp = DateTime.UtcNow }],
         };
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        _repo.GetExistingToolExecutionIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new HashSet<string> { "tool-1" });
 
         var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
         var command = new IngestSessionEventsCommand
