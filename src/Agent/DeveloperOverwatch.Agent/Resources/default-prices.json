@@ -1,0 +1,39 @@
+{
+  "Source": "Mirrors TokenPricing in src/API/DeveloperOverwatch.API/appsettings.json. DefaultPricesTests fails if the two drift.",
+  "AsOf": "2026-11-09",
+  "Models": {
+    "default": { "InputPerMillionUsd": 2.0, "OutputPerMillionUsd": 10.0, "CacheWritePerMillionUsd": 2.5, "CacheReadPerMillionUsd": 0.1 },
+    "claude-fable": { "InputPerMillionUsd": 10.0, "OutputPerMillionUsd": 50.0, "CacheWritePerMillionUsd": 12.5, "CacheReadPerMillionUsd": 0.25 },
+    "claude-fable-5-1": { "InputPerMillionUsd": 10.0, "OutputPerMillionUsd": 50.0, "CacheWritePerMillionUsd": 12.5, "CacheReadPerMillionUsd": 0.25 },
+    "claude-fable-5": { "InputPerMillionUsd": 10.0, "OutputPerMillionUsd": 50.0, "CacheWritePerMillionUsd": 12.5, "CacheReadPerMillionUsd": 1.0 },
+    "claude-mythos": { "InputPerMillionUsd": 10.0, "OutputPerMillionUsd": 50.0, "CacheWritePerMillionUsd": 12.5, "CacheReadPerMillionUsd": 0.25 },
+    "claude-mythos-5-1": { "InputPerMillionUsd": 10.0, "OutputPerMillionUsd": 50.0, "CacheWritePerMillionUsd": 12.5, "CacheReadPerMillionUsd": 0.25 },
+    "claude-mythos-5": { "InputPerMillionUsd": 10.0, "OutputPerMillionUsd": 50.0, "CacheWritePerMillionUsd": 12.5, "CacheReadPerMillionUsd": 1.0 },
+    "claude-opus": { "InputPerMillionUsd": 4.0, "OutputPerMillionUsd": 20.0, "CacheWritePerMillionUsd": 5.0, "CacheReadPerMillionUsd": 0.2 },
+    "claude-opus-5-5": { "InputPerMillionUsd": 4.0, "OutputPerMillionUsd": 20.0, "CacheWritePerMillionUsd": 5.0, "CacheReadPerMillionUsd": 0.2 },
+    "claude-opus-5": { "InputPerMillionUsd": 5.0, "OutputPerMillionUsd": 25.0, "CacheWritePerMillionUsd": 6.25, "CacheReadPerMillionUsd": 0.5 },
+    "claude-opus-4-8": { "InputPerMillionUsd": 5.0, "OutputPerMillionUsd": 25.0, "CacheWritePerMillionUsd": 6.25, "CacheReadPerMillionUsd": 0.5 },
+    "claude-opus-4-7": { "InputPerMillionUsd": 5.0, "OutputPerMillionUsd": 25.0, "CacheWritePerMillionUsd": 6.25, "CacheReadPerMillionUsd": 0.5 },
+    "claude-opus-4-6": { "InputPerMillionUsd": 5.0, "OutputPerMillionUsd": 25.0, "CacheWritePerMillionUsd": 6.25, "CacheReadPerMillionUsd": 0.5 },
+    "claude-opus-4-5": { "InputPerMillionUsd": 5.0, "OutputPerMillionUsd": 25.0, "CacheWritePerMillionUsd": 6.25, "CacheReadPerMillionUsd": 0.5 },
+    "claude-opus-4-1": { "InputPerMillionUsd": 15.0, "OutputPerMillionUsd": 75.0, "CacheWritePerMillionUsd": 18.75, "CacheReadPerMillionUsd": 1.5 },
+    "claude-opus-4": { "InputPerMillionUsd": 15.0, "OutputPerMillionUsd": 75.0, "CacheWritePerMillionUsd": 18.75, "CacheReadPerMillionUsd": 1.5 },
+    "claude-sonnet": { "InputPerMillionUsd": 2.0, "OutputPerMillionUsd": 10.0, "CacheWritePerMillionUsd": 2.5, "CacheReadPerMillionUsd": 0.1 },
+    "claude-sonnet-5-5": { "InputPerMillionUsd": 2.0, "OutputPerMillionUsd": 10.0, "CacheWritePerMillionUsd": 2.5, "CacheReadPerMillionUsd": 0.1 },
+    "claude-sonnet-5": { "InputPerMillionUsd": 2.0, "OutputPerMillionUsd": 10.0, "CacheWritePerMillionUsd": 2.5, "CacheReadPerMillionUsd": 0.2 },
+    "claude-sonnet-4-6": { "InputPerMillionUsd": 3.0, "OutputPerMillionUsd": 15.0, "CacheWritePerMillionUsd": 3.75, "CacheReadPerMillionUsd": 0.3 },
+    "claude-sonnet-4-5": { "InputPerMillionUsd": 3.0, "OutputPerMillionUsd": 15.0, "CacheWritePerMillionUsd": 3.75, "CacheReadPerMillionUsd": 0.3 },
+    "claude-sonnet-4": { "InputPerMillionUsd": 3.0, "OutputPerMillionUsd": 15.0, "CacheWritePerMillionUsd": 3.75, "CacheReadPerMillionUsd": 0.3 },
+    "claude-haiku": {
+      "InputPerMillionUsd": 0.1, "OutputPerMillionUsd": 0.5, "CacheWritePerMillionUsd": 0.125, "CacheReadPerMillionUsd": 0.01,
+      "LongPromptThresholdTokens": 100000,
+      "LongPrompt": { "InputPerMillionUsd": 0.5, "OutputPerMillionUsd": 2.5, "CacheWritePerMillionUsd": 0.625, "CacheReadPerMillionUsd": 0.05 }
+    },
+    "claude-haiku-5-5": {
+      "InputPerMillionUsd": 0.1, "OutputPerMillionUsd": 0.5, "CacheWritePerMillionUsd": 0.125, "CacheReadPerMillionUsd": 0.01,
+      "LongPromptThresholdTokens": 100000,
+      "LongPrompt": { "InputPerMillionUsd": 0.5, "OutputPerMillionUsd": 2.5, "CacheWritePerMillionUsd": 0.625, "CacheReadPerMillionUsd": 0.05 }
+    },
+    "claude-haiku-4-5": { "InputPerMillionUsd": 1.0, "OutputPerMillionUsd": 5.0, "CacheWritePerMillionUsd": 1.25, "CacheReadPerMillionUsd": 0.1 }
+  }
+}

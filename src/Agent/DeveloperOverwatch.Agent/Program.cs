@@ -1,3 +1,4 @@
+using DeveloperOverwatch.Agent.Cli;
 using DeveloperOverwatch.Agent.Models;
 using DeveloperOverwatch.Agent.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,9 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 var config = AgentConfig.Load(Path.Combine(AgentConfig.DefaultOverwatchDir, "config.json"));
+
+if (args.Length > 0)
+    return await CommandDispatcher.RunAsync(args, Console.Out, Console.Error, config, TimeProvider.System);
 
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureLogging(logging =>
@@ -42,3 +46,4 @@ Console.WriteLine($"Queue: {config.QueueDbPath}");
 Console.WriteLine($"Poll interval: {config.PollIntervalSeconds}s, Batch size: {config.BatchSize}");
 
 await host.RunAsync();
+return 0;

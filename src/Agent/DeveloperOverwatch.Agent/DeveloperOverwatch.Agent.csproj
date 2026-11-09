@@ -15,4 +15,12 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.*" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Pure Domain: no package dependencies, so it adds one small DLL to the tool. -->
+    <ProjectReference Include="..\..\Domain\DeveloperOverwatch.Domain\DeveloperOverwatch.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Resources\default-prices.json" />
+    <EmbeddedResource Include="Resources\default-prices.json" LogicalName="DeveloperOverwatch.Agent.default-prices.json" />
+  </ItemGroup>
 </Project>

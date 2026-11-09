@@ -16,6 +16,15 @@ public sealed class AgentConfig
     public IReadOnlyList<string> RedactionPatterns { get; init; } = DefaultRedactionPatterns;
     public bool PrivateSession { get; init; }
 
+    /// <summary>
+    /// Optional replacement for the built-in price list, in the server's TokenPricing shape. Kept as raw
+    /// JSON so a malformed block can only fail the usage command, never <see cref="Load"/>'s mode decision.
+    /// </summary>
+    public JsonElement? Pricing { get; init; }
+
+    /// <summary>Optional <c>{ "dailyUsd": n, "monthlyUsd": n }</c>; raw for the same reason as <see cref="Pricing"/>.</summary>
+    public JsonElement? Budget { get; init; }
+
     public static string DefaultOverwatchDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".overwatch");
 
