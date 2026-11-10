@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace DeveloperOverwatch.Agent.Services;
@@ -9,6 +10,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// a new transcript, so the server can recognise a resend and count it once.</param>
 /// <param name="Content">Conversational text, or null for a response that only called tools or
 /// only thought — those still carry token usage and must be counted.</param>
+/// <param name="IsCompactSummary">A compaction summary: dated when the session was compacted, but its
+/// text restates the earlier prompts it replaces.</param>
 public sealed record CapturedTurn(
     string SourceId,
     string Role,
@@ -18,9 +21,14 @@ public sealed record CapturedTurn(
     int? OutputTokens = null,
     int? CacheCreationInputTokens = null,
     int? CacheReadInputTokens = null,
-    string? Model = null);
+    string? Model = null,
+    string? GitBranch = null,
+    string? SubagentName = null,
+    int StartLine = 0,
+    bool IsCompactSummary = false);
 
-public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines);
+/// <param name="ParseErrors">Lines read that were not valid JSON.</param>
+public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines, int ParseErrors = 0);
 
 public interface IConversationCapture
 {
@@ -70,6 +78,7 @@ public sealed class ConversationCapture : IConversationCapture
             var builder = new TurnBuilder(asSubagent);
             var lineIndex = 0;
             var lastLineFailedToParse = false;
+            var parseErrors = 0;
 
             using var stream = new FileStream(
                 transcriptPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -78,7 +87,11 @@ public sealed class ConversationCapture : IConversationCapture
             while (await reader.ReadLineAsync(ct) is { } line)
             {
                 if (lineIndex >= fromLineIndex && !string.IsNullOrWhiteSpace(line))
-                    lastLineFailedToParse = !builder.TryAdd(line, $"{fileName}:line:{lineIndex}");
+                {
+                    lastLineFailedToParse = !builder.TryAdd(line, lineIndex, $"{fileName}:line:{lineIndex}");
+                    if (lastLineFailedToParse)
+                        parseErrors++;
+                }
 
                 lineIndex++;
             }
@@ -86,12 +99,42 @@ public sealed class ConversationCapture : IConversationCapture
             // Claude Code may still be writing the transcript. A final line that does not parse
             // is most likely half-written, so leave the cursor on it to re-read it next time.
             var nextCursor = lastLineFailedToParse ? lineIndex - 1 : lineIndex;
-            return new ConversationCaptureResult(builder.Build(), Math.Max(nextCursor, fromLineIndex));
+            var turns = builder.Build();
+            if (asSubagent && await ReadSubagentNameAsync(transcriptPath, ct) is { } subagentName)
+                turns = turns.Select(t => t with { SubagentName = subagentName }).ToList();
+
+            return new ConversationCaptureResult(turns, Math.Max(nextCursor, fromLineIndex), parseErrors);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Conversation capture failed for {Path} — returning empty", transcriptPath);
             return new ConversationCaptureResult([], fromLineIndex);
+        }
+    }
+
+    /// <summary>Claude Code writes <c>agent-&lt;id&gt;.meta.json</c> beside each subagent transcript.
+    /// Only its <c>agentType</c> is read — the task description stays on this machine. A missing
+    /// or malformed file yields null rather than failing capture, which would stall the cursor.</summary>
+    private async Task<string?> ReadSubagentNameAsync(string transcriptPath, CancellationToken ct)
+    {
+        try
+        {
+            var metaPath = Path.ChangeExtension(transcriptPath, ".meta.json");
+            if (!File.Exists(metaPath))
+                return null;
+
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(metaPath, ct));
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("agentType", out var type)
+                && type.ValueKind == JsonValueKind.String
+                && type.GetString() is { Length: > 0 } name
+                    ? name
+                    : null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Unreadable subagent meta beside {Path}", transcriptPath);
+            return null;
         }
     }
 

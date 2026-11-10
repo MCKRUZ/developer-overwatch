@@ -18,7 +18,7 @@ try { $hookInput = $stdinJson | ConvertFrom-Json } catch { }
 if (-not $hookInput) { exit 0 }
 
 $claudeSessionId = $hookInput.session_id
-if (-not $claudeSessionId) { exit 0 }
+if ($claudeSessionId -notmatch '^[A-Za-z0-9-]{1,100}$') { exit 0 }
 
 $mappingPath = Join-Path $overwatchDir "sessions\$claudeSessionId.json"
 if (-not (Test-Path $mappingPath)) { exit 0 }
@@ -52,21 +52,11 @@ $payload = @{
     conversationTurns = @()
 } | ConvertTo-Json -Depth 4 -Compress
 
-$dbPath = Join-Path $overwatchDir "queue.db"
+# Hooks run under pwsh, which cannot load the SQLite library, so they only append to this file;
+# the Agent imports it into its queue on each poll.
 $eventId = [guid]::NewGuid().ToString()
 $now = (Get-Date).ToUniversalTime().ToString("o")
-$escapedPayload = $payload.Replace("'", "''")
-
-try {
-    $connStr = "Data Source=$dbPath"
-    $conn = New-Object Microsoft.Data.Sqlite.SqliteConnection($connStr)
-    $conn.Open()
-    $cmd = $conn.CreateCommand()
-    $cmd.CommandText = "INSERT OR IGNORE INTO events (id, session_id, event_type, payload_json, created_at) VALUES ('$eventId', '$sessionId', 'ToolExecution', '$escapedPayload', '$now')"
-    $cmd.ExecuteNonQuery() | Out-Null
-    $conn.Close()
-} catch {
-    $fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
-    $line = @{ id = $eventId; sessionId = $sessionId; eventType = "ToolExecution"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
-    $line | Add-Content $fallbackFile
-}
+$fallbackFile = Join-Path $overwatchDir "queue-fallback.jsonl"
+$line = @{ id = $eventId; sessionId = $sessionId; eventType = "ToolExecution"; payload = $payload; createdAt = $now } | ConvertTo-Json -Compress
+try { . (Join-Path $PSScriptRoot "overwatch-common.ps1"); Add-OverwatchLine $fallbackFile $line } catch { }
+exit 0

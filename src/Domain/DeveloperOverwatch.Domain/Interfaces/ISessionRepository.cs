@@ -67,6 +67,35 @@ public interface ISessionRepository
     Task<IReadOnlySet<string>> GetExistingTurnIdsAsync(
         IReadOnlyCollection<string> turnIds, CancellationToken ct = default);
 
+    /// <summary>Which of these tool execution ids are already stored, in any session. A file change
+    /// references its tool execution by foreign key, and the key does not depend on the session.</summary>
+    Task<IReadOnlySet<string>> GetExistingToolExecutionIdsAsync(
+        IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default);
+
+    /// <summary>Which of these tool execution ids are stored under this session. A file change may name
+    /// only its own session's tool as its parent.</summary>
+    Task<IReadOnlySet<string>> GetToolExecutionIdsInSessionAsync(
+        string sessionId, IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default);
+
+    /// <summary>Which of these file change ids are already stored, in any session. The id is the
+    /// primary key, so an id stored under another session is a duplicate, not a new row.</summary>
+    Task<IReadOnlySet<string>> GetExistingFileChangeIdsAsync(
+        IReadOnlyCollection<string> fileChangeIds, CancellationToken ct = default);
+
+    /// <summary>Which of these tool failure ids are already stored, in any session. The id is the
+    /// primary key, so the check is global.</summary>
+    Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(
+        IReadOnlyCollection<string> failureIds, CancellationToken ct = default);
+
+    Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default);
+
+    /// <summary>Whether this session already processed a start or end with this Agent event id. Scoped
+    /// to the session, so an id recorded for one session never makes another's event a duplicate.</summary>
+    Task<bool> IsAgentEventProcessedAsync(string sessionId, string eventId, CancellationToken ct = default);
+
+    /// <summary>Records a processed start or end; committed by the same unit of work as its effect.</summary>
+    Task AddProcessedAgentEventAsync(ProcessedAgentEvent processedEvent, CancellationToken ct = default);
+
     Task AddAsync(Session session, CancellationToken ct = default);
     Task UpdateAsync(Session session, CancellationToken ct = default);
     Task AddTurnAsync(ConversationTurn turn, CancellationToken ct = default);

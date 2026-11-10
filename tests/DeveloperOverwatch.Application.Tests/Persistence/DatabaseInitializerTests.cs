@@ -132,6 +132,33 @@ public sealed class DatabaseInitializerTests : IDisposable
         (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
     }
 
+    // Once event ids are scoped to a session two sessions may share one, which the old PK(EventId) forbids.
+    [Fact]
+    public async Task ScopeProcessedAgentEventsDown_SessionsShareAnEventId_RollsBackKeepingOneRowPerId()
+    {
+        await using var db = NewContext();
+        await DatabaseInitializer.InitializeAsync(db);
+        await ExecAsync("""
+            INSERT INTO ProcessedAgentEvents (SessionId, EventId, Kind, ProcessedAt)
+            VALUES ('a', 'shared', 'Start', '2026-11-09 10:00:00'),
+                   ('b', 'shared', 'Start', '2026-11-09 10:01:00'),
+                   ('a', 'own', 'End', '2026-11-09 10:02:00');
+            """);
+        var migrations = db.Database.GetMigrations().ToList();
+        var scoped = migrations.IndexOf("20261109210452_ScopeProcessedAgentEventsToSessionSqlite");
+
+        await db.GetService<IMigrator>().MigrateAsync(migrations[scoped - 1]);
+
+        (await AppliedMigrationsAsync(db)).Should().NotContain(migrations[scoped]);
+        await using var command = _connection.CreateCommand();
+        command.CommandText = "SELECT EventId FROM ProcessedAgentEvents ORDER BY EventId";
+        var ids = new List<string>();
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync())
+                ids.Add(reader.GetString(0));
+        ids.Should().Equal("own", "shared");
+    }
+
     // Every model change needs a migration in BOTH sets; a missing SQLite one would leave deployed
     // SQLite databases without the new columns.
     [Fact]

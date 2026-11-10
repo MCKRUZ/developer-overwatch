@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using DeveloperOverwatch.Agent.Models;
 
@@ -7,20 +8,59 @@ public interface IEventQueue
 {
     Task InitializeAsync(CancellationToken ct = default);
     Task EnqueueAsync(QueuedEvent @event, CancellationToken ct = default);
-    Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default);
+    /// <summary>Up to <paramref name="batchSize"/> pending events: each session's oldest, taken in turn, so one
+    /// session's backlog cannot crowd out the others. Each session's share is a contiguous oldest prefix of its
+    /// pending events. Sessions in <paramref name="skipSessions"/> are left out.</summary>
+    Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(
+        int batchSize, IReadOnlyCollection<string>? skipSessions = null, CancellationToken ct = default);
+
+    /// <summary>When the session's first start queued after <paramref name="after"/> that may open a held
+    /// session (see <see cref="SessionStartPayload.MayOpen"/>) was queued, whatever its state; null when
+    /// the queue holds none.</summary>
+    Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default);
+
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
+
+    /// <summary>Never dequeued again: the server refused it or does not know the session. Purged like shipped
+    /// events.</summary>
+    Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
+
     Task IncrementRetryAsync(string id, CancellationToken ct = default);
     Task<int> GetUnshippedCountAsync(CancellationToken ct = default);
     Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default);
+
+    /// <summary>Pending events this machine could not send. A session's access outlives every purge.</summary>
+    Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default);
+
+    /// <summary>Whether the session may ship, and from which instant; New when no start has decided it yet.</summary>
+    Task<SessionAccess> GetAccessAsync(string sessionId, CancellationToken ct = default);
+
+    /// <summary>Settles <paramref name="start"/> and opens its session from <paramref name="openFrom"/> unless it
+    /// is open already; returns the instant the session is open from, since the first opening wins.</summary>
+    Task<DateTime> MarkOpenedAsync(QueuedEvent start, DateTime openFrom, CancellationToken ct = default);
+
+    /// <summary>Settles <paramref name="start"/> and closes its session, unless the session opened after the
+    /// start was queued.</summary>
+    Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default);
+
+    /// <summary>Marks <paramref name="start"/> dead and closes its session like <see cref="MarkClosedAsync"/>, in
+    /// one transaction.</summary>
+    Task MarkDeadAndClosedAsync(QueuedEvent start, CancellationToken ct = default);
+
+    /// <summary>Closes every session opened before <paramref name="pilotSince"/>: it was opened in an earlier
+    /// enrolment, or with no cutoff, and may have been used in Local mode since.</summary>
+    Task CloseOpenedBeforeAsync(DateTime pilotSince, CancellationToken ct = default);
 }
 
-public sealed class EventQueue : IEventQueue, IDisposable
+public sealed partial class EventQueue : IEventQueue, IDisposable
 {
     private readonly SqliteConnection _connection;
+    private readonly TimeProvider _time;
     private readonly Lock _lock = new();
 
-    public EventQueue(string dbPath)
+    public EventQueue(string dbPath, TimeProvider? timeProvider = null)
     {
+        _time = timeProvider ?? TimeProvider.System;
         var directory = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
@@ -52,8 +92,13 @@ public sealed class EventQueue : IEventQueue, IDisposable
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_unshipped
                     ON events (shipped, created_at) WHERE shipped = 0;
+                CREATE TABLE IF NOT EXISTS session_access (
+                    session_id TEXT PRIMARY KEY,
+                    open_from TEXT NULL
+                );
                 """;
             cmd.ExecuteNonQuery();
+            SeedAccess();
         }
 
         return Task.CompletedTask;
@@ -72,7 +117,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
             cmd.Parameters.AddWithValue("$sessionId", @event.SessionId);
             cmd.Parameters.AddWithValue("$eventType", @event.EventType.ToString());
             cmd.Parameters.AddWithValue("$payloadJson", @event.PayloadJson);
-            cmd.Parameters.AddWithValue("$createdAt", @event.CreatedAt.ToString("o"));
+            cmd.Parameters.AddWithValue("$createdAt", UtcInstant.Utc(@event.CreatedAt).ToString("o"));
             cmd.Parameters.AddWithValue("$retryCount", @event.RetryCount);
             cmd.Parameters.AddWithValue("$shipped", @event.Shipped ? 1 : 0);
             cmd.ExecuteNonQuery();
@@ -81,7 +126,8 @@ public sealed class EventQueue : IEventQueue, IDisposable
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(int batchSize, CancellationToken ct = default)
+    public Task<IReadOnlyList<QueuedEvent>> DequeueBatchAsync(
+        int batchSize, IReadOnlyCollection<string>? skipSessions = null, CancellationToken ct = default)
     {
         var results = new List<QueuedEvent>();
 
@@ -90,12 +136,17 @@ public sealed class EventQueue : IEventQueue, IDisposable
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = """
                 SELECT rowid, id, session_id, event_type, payload_json, created_at, retry_count, shipped
-                FROM events
-                WHERE shipped = 0
-                ORDER BY created_at
+                FROM (
+                    SELECT rowid, id, session_id, event_type, payload_json, created_at, retry_count, shipped,
+                        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at, rowid) AS turn
+                    FROM events
+                    WHERE shipped = 0 AND session_id NOT IN (SELECT value FROM json_each($skip))
+                )
+                ORDER BY turn, created_at, rowid
                 LIMIT $batchSize
                 """;
             cmd.Parameters.AddWithValue("$batchSize", batchSize);
+            cmd.Parameters.AddWithValue("$skip", JsonSerializer.Serialize(skipSessions ?? []));
 
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -105,7 +156,45 @@ public sealed class EventQueue : IEventQueue, IDisposable
         return Task.FromResult<IReadOnlyList<QueuedEvent>>(results);
     }
 
-    public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default)
+    public Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = """
+                SELECT created_at, payload_json FROM events
+                WHERE session_id = $sessionId AND event_type = $eventType AND created_at > $after
+                ORDER BY created_at
+                """;
+            cmd.Parameters.AddWithValue("$sessionId", sessionId);
+            cmd.Parameters.AddWithValue("$eventType", nameof(EventType.SessionStart));
+            cmd.Parameters.AddWithValue("$after", UtcInstant.Utc(after).ToString("o"));
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                if (SessionStartPayload.MayOpen(reader.GetString(1), AccessState.Closed))
+                    return Task.FromResult<DateTime?>(
+                        ParseInstant(reader.GetString(0)));
+            }
+
+            return Task.FromResult<DateTime?>(null);
+        }
+    }
+
+    // Values of the `shipped` column. Only Pending is ever dequeued.
+    private const int Pending = 0;
+    private const int Shipped = 1;
+    private const int Dead = 2;
+
+    // Written only by earlier builds of this branch, for a start held in Local mode; never written now.
+    private const int LegacyLocal = 3;
+
+    public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Shipped);
+
+    public Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Dead);
+
+    private Task SetStateAsync(IReadOnlyList<string> ids, int state)
     {
         if (ids.Count == 0)
             return Task.CompletedTask;
@@ -116,7 +205,8 @@ public sealed class EventQueue : IEventQueue, IDisposable
 
             using var cmd = _connection.CreateCommand();
             cmd.Transaction = transaction;
-            cmd.CommandText = "UPDATE events SET shipped = 1 WHERE id = $id";
+            cmd.CommandText = "UPDATE events SET shipped = $state WHERE id = $id";
+            cmd.Parameters.AddWithValue("$state", state);
             var param = cmd.Parameters.Add("$id", SqliteType.Text);
             cmd.Prepare();
 
@@ -156,14 +246,21 @@ public sealed class EventQueue : IEventQueue, IDisposable
         }
     }
 
-    public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default)
+    public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
+        PurgeAsync($"shipped IN ({Shipped}, {Dead}, {LegacyLocal})", olderThan);
+
+    public Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
+        PurgeAsync($"shipped = {Pending}", olderThan);
+
+    /// <param name="stateFilter">Built only from this class's state constants, never from input.</param>
+    private Task PurgeAsync(string stateFilter, TimeSpan olderThan)
     {
-        var threshold = DateTime.UtcNow.Subtract(olderThan).ToString("o");
+        var threshold = _time.GetUtcNow().UtcDateTime.Subtract(olderThan).ToString("o");
 
         lock (_lock)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = "DELETE FROM events WHERE shipped = 1 AND created_at < $threshold";
+            cmd.CommandText = $"DELETE FROM events WHERE {stateFilter} AND created_at < $threshold";
             cmd.Parameters.AddWithValue("$threshold", threshold);
             cmd.ExecuteNonQuery();
         }
@@ -178,7 +275,7 @@ public sealed class EventQueue : IEventQueue, IDisposable
         SessionId = reader.GetString(2),
         EventType = Enum.Parse<EventType>(reader.GetString(3)),
         PayloadJson = reader.GetString(4),
-        CreatedAt = DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
+        CreatedAt = ParseInstant(reader.GetString(5)),
         RetryCount = reader.GetInt32(6),
         Shipped = reader.GetInt32(7) == 1
     };

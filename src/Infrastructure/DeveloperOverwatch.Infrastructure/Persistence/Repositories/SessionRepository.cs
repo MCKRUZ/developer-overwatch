@@ -266,6 +266,75 @@ public sealed class SessionRepository : ISessionRepository
         return existing;
     }
 
+    public async Task<IReadOnlySet<string>> GetToolExecutionIdsInSessionAsync(
+        string sessionId, IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in toolExecutionIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.ToolExecutions
+                .Where(t => t.SessionId == sessionId && chunk.Contains(t.Id))
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
+    public async Task<IReadOnlySet<string>> GetExistingToolExecutionIdsAsync(
+        IReadOnlyCollection<string> toolExecutionIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in toolExecutionIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.ToolExecutions
+                .Where(t => chunk.Contains(t.Id))
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
+    public async Task<IReadOnlySet<string>> GetExistingFileChangeIdsAsync(
+        IReadOnlyCollection<string> fileChangeIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in fileChangeIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.FileChanges
+                .Where(f => chunk.Contains(f.Id))
+                .Select(f => f.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
+    public async Task<IReadOnlySet<string>> GetExistingToolFailureIdsAsync(
+        IReadOnlyCollection<string> failureIds, CancellationToken ct = default)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in failureIds.Distinct().Chunk(TurnIdLookupChunkSize))
+        {
+            var found = await _db.SessionToolFailures
+                .Where(f => chunk.Contains(f.Id))
+                .Select(f => f.Id)
+                .ToListAsync(ct);
+            existing.UnionWith(found);
+        }
+        return existing;
+    }
+
+    public async Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default) =>
+        await _db.SessionToolFailures.AddRangeAsync(failures, ct);
+
+    public Task<bool> IsAgentEventProcessedAsync(string sessionId, string eventId, CancellationToken ct = default) =>
+        _db.ProcessedAgentEvents.AnyAsync(e => e.SessionId == sessionId && e.EventId == eventId, ct);
+
+    public async Task AddProcessedAgentEventAsync(ProcessedAgentEvent processedEvent, CancellationToken ct = default) =>
+        await _db.ProcessedAgentEvents.AddAsync(processedEvent, ct);
+
     public Task UpdateAsync(Session session, CancellationToken ct = default)
     {
         _db.Sessions.Update(session);

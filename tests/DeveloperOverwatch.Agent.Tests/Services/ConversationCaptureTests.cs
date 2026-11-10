@@ -41,6 +41,71 @@ public sealed class ConversationCaptureTests : IDisposable
     private static string UserToolResult(string uuid) =>
         $$"""{"type":"user","uuid":"{{uuid}}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"file.txt"}]},"timestamp":"2026-01-01T00:00:02Z"}""";
 
+    // Claude Code writes a top-level "gitBranch" on user and assistant lines.
+    private static string OnBranch(string line, string branch) =>
+        line.Insert(1, $"\"gitBranch\":\"{branch}\",");
+
+    [Fact]
+    public async Task CaptureFromFileAsync_GitBranchOnLines_IsCarriedOnPromptAndResponse()
+    {
+        var path = WriteTranscript("s.jsonl",
+            OnBranch(UserPrompt("u1", "go"), "main"),
+            OnBranch(Assistant("msg_A", ThinkingBlock), "feat/meter"),
+            OnBranch(Assistant("msg_A", TextBlock), "feat/meter"),
+            Assistant("msg_B", TextBlock));
+
+        var result = await _sut.CaptureFromFileAsync(path, 0);
+
+        result.Turns.Select(t => t.GitBranch).Should().Equal("main", "feat/meter", null);
+    }
+
+    [Fact]
+    public async Task CaptureFromFileAsync_EmptyGitBranch_IsNull()
+    {
+        var path = WriteTranscript("s.jsonl", OnBranch(UserPrompt("u1", "go"), ""));
+
+        var result = await _sut.CaptureFromFileAsync(path, 0);
+
+        result.Turns.Single().GitBranch.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CaptureFromFileAsync_SubagentWithMeta_NamesEveryTurnAndNeverShipsDescription()
+    {
+        var path = WriteTranscript("agent-a1.jsonl",
+            Assistant("msg_S1", TextBlock),
+            Assistant("msg_S2", ToolUseBlock));
+        File.WriteAllText(Path.Combine(_dir.FullName, "agent-a1.meta.json"),
+            """{"agentType":"Explore","description":"find X"}""");
+
+        var result = await _sut.CaptureFromFileAsync(path, 0, asSubagent: true);
+
+        result.Turns.Should().HaveCount(2).And.OnlyContain(t => t.SubagentName == "Explore");
+        System.Text.Json.JsonSerializer.Serialize(result.Turns).Should().NotContain("find X");
+    }
+
+    [Fact]
+    public async Task CaptureFromFileAsync_SubagentWithoutMeta_HasNullName()
+    {
+        var path = WriteTranscript("agent-a1.jsonl", Assistant("msg_S1", TextBlock));
+
+        var result = await _sut.CaptureFromFileAsync(path, 0, asSubagent: true);
+
+        result.Turns.Single().SubagentName.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CaptureFromFileAsync_SubagentWithMalformedMeta_StillReturnsTurnsWithNullName()
+    {
+        var path = WriteTranscript("agent-a1.jsonl", Assistant("msg_S1", TextBlock));
+        File.WriteAllText(Path.Combine(_dir.FullName, "agent-a1.meta.json"), "{\"agentType\":");
+
+        var result = await _sut.CaptureFromFileAsync(path, 0, asSubagent: true);
+
+        result.TotalLines.Should().Be(1);
+        result.Turns.Single().SubagentName.Should().BeNull();
+    }
+
     [Fact]
     public void FindProjectDir_PathThatMatchesNoProjectDir_ReturnsNull()
     {
@@ -274,5 +339,18 @@ public sealed class ConversationCaptureTests : IDisposable
         var result = await _sut.CaptureFromFileAsync(path, fromLineIndex: 0, ct: CancellationToken.None);
 
         result.Turns.Should().BeEmpty();
+    }
+
+    // A summary restates prompts from before compaction, so the shipper must be able to tell it apart.
+    [Fact]
+    public async Task CaptureFromFileAsync_CompactSummaryLine_IsFlagged()
+    {
+        var path = WriteTranscript("s.jsonl",
+            """{"type":"user","isCompactSummary":true,"uuid":"u-s","message":{"role":"user","content":"SUMMARY"},"timestamp":"2026-01-01T00:00:00Z"}""",
+            UserPrompt("u-p", "plain prompt"));
+
+        var result = await _sut.CaptureFromFileAsync(path, 0);
+
+        result.Turns.Select(t => t.IsCompactSummary).Should().Equal(true, false);
     }
 }

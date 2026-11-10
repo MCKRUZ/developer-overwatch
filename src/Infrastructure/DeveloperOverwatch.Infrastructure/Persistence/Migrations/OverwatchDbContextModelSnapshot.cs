@@ -108,9 +108,16 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Content")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<long?>("ContextTokens")
+                        .HasColumnType("bigint");
+
                     b.Property<decimal?>("EstimatedCostUsd")
                         .HasPrecision(18, 6)
                         .HasColumnType("decimal(18,6)");
+
+                    b.Property<string>("GitBranch")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<int?>("InputTokens")
                         .HasColumnType("int");
@@ -134,6 +141,10 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("SessionId")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("SubagentName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<DateTime>("Timestamp")
                         .HasColumnType("datetime2");
@@ -247,6 +258,31 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.ToTable("GovernanceViolations");
                 });
 
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ProcessedAgentEvent", b =>
+                {
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("EventId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime>("ProcessedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("SessionId", "EventId");
+
+                    SqlServerKeyBuilderExtensions.IsClustered(b.HasKey("SessionId", "EventId"), false);
+
+                    b.ToTable("ProcessedAgentEvents", (string)null);
+                });
+
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.PullRequestReview", b =>
                 {
                     b.Property<string>("Id")
@@ -284,6 +320,20 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("nvarchar(450)");
 
+                    b.Property<string>("ActivityState")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime?>("ActivityStateAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Agent")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasDefaultValue("claude-code");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -304,6 +354,24 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("LastActivityAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("LastToolErrorAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LastToolErrorName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<string>("MachineName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long?>("PeakContextTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ProjectKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
                     b.Property<string>("RepoPath")
                         .HasColumnType("nvarchar(max)");
 
@@ -319,6 +387,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Title")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("ToolErrorCount")
+                        .HasColumnType("int");
 
                     b.Property<long>("TotalCacheCreationInputTokens")
                         .HasColumnType("bigint");
@@ -339,6 +410,31 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("Sessions");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ToolName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("SessionToolFailures");
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>
@@ -449,6 +545,15 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
+                {
+                    b.HasOne("DeveloperOverwatch.Domain.Entities.Session", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>

@@ -1,20 +1,82 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace DeveloperOverwatch.Agent.Models;
 
 public sealed class AgentConfig
 {
+    /// <summary>Pilot unless a config says otherwise: every install from before modes existed has a
+    /// config file with no <c>mode</c> key, and must keep shipping.</summary>
+    public AgentMode Mode { get; init; } = AgentMode.Pilot;
     public string ApiUrl { get; init; } = "http://localhost:5000";
     public string? ApiKey { get; init; }
     public int PollIntervalSeconds { get; init; } = 5;
-    public int BatchSize { get; init; } = 50;
-    public int GitFallbackThreshold { get; init; } = 100;
+    /// <summary>Clamped to 1..500: the server takes at most 500 items per list, and 0 never drains.</summary>
+    public int BatchSize { get => _batchSize; init => _batchSize = Math.Clamp(value, 1, 500); }
+    private readonly int _batchSize = 50;
+
+    /// <summary>When this machine enrolled in Pilot (UTC), written by the installer. An event queued before it
+    /// is handled locally and never sent. Absent on installs from before the cutoff existed: no cutoff.</summary>
+    public DateTime? PilotSince
+    {
+        get => _pilotSince;
+        init => _pilotSince = value is { Kind: DateTimeKind.Local } local ? local.ToUniversalTime() : value;
+    }
+    private readonly DateTime? _pilotSince;
     public IReadOnlyList<string> RedactionPatterns { get; init; } = DefaultRedactionPatterns;
     public bool PrivateSession { get; init; }
 
-    public string OverwatchDir => Path.Combine(
+    /// <summary>
+    /// Optional replacement for the built-in price list, in the server's TokenPricing shape. Kept as raw
+    /// JSON so a malformed block can only fail the usage command, never <see cref="Load"/>'s mode decision.
+    /// </summary>
+    public JsonElement? Pricing { get; init; }
+
+    /// <summary>Optional <c>{ "dailyUsd": n, "monthlyUsd": n }</c>; raw for the same reason as <see cref="Pricing"/>.</summary>
+    public JsonElement? Budget { get; init; }
+
+    public static string DefaultOverwatchDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".overwatch");
+
+    /// <summary>Never read from config.json: the hooks always write to ~/.overwatch, so an agent pointed
+    /// elsewhere would ignore every hook event. Settable in code, for tests.</summary>
+    [JsonIgnore]
+    public string OverwatchDir { get; init; } = DefaultOverwatchDir;
 
     public string QueueDbPath => Path.Combine(OverwatchDir, "queue.db");
     public string ConfigPath => Path.Combine(OverwatchDir, "config.json");
+
+    private static readonly JsonSerializerOptions LoadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
+    };
+
+    /// <summary>
+    /// No config file means a machine nobody enrolled, so <see cref="AgentMode.Local"/>. A file
+    /// without <c>mode</c> is an existing install, so <see cref="AgentMode.Pilot"/>. An explicit
+    /// <c>mode</c> wins. A file that cannot be read fails closed to Local: when the agent cannot
+    /// tell what the machine was enrolled as, nothing leaves it.
+    /// </summary>
+    public static AgentConfig Load(string configPath) =>
+        TryLoad(configPath) ?? new AgentConfig { Mode = AgentMode.Local };
+
+    /// <summary>As <see cref="Load"/>, except that a file which exists but cannot be read or parsed gives
+    /// null rather than Local, so a running agent can tell "unreadable right now" from "Local".</summary>
+    public static AgentConfig? TryLoad(string configPath)
+    {
+        if (!File.Exists(configPath))
+            return new AgentConfig { Mode = AgentMode.Local };
+
+        try
+        {
+            return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(configPath), LoadOptions);
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     private static readonly string[] DefaultRedactionPatterns =
     [

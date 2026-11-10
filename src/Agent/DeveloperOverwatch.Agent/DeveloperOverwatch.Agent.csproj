@@ -15,4 +15,18 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.*" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Pure Domain: no package dependencies, so it adds one small DLL to the tool. -->
+    <ProjectReference Include="..\..\Domain\DeveloperOverwatch.Domain\DeveloperOverwatch.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Tests drive QueueProcessor one poll at a time, without the timer or the backoff delay. -->
+    <InternalsVisibleTo Include="DeveloperOverwatch.Agent.Tests" />
+    <!-- The real-server delivery test drives the same poll against the API in memory. -->
+    <InternalsVisibleTo Include="DeveloperOverwatch.API.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Resources\default-prices.json" />
+    <EmbeddedResource Include="Resources\default-prices.json" LogicalName="DeveloperOverwatch.Agent.default-prices.json" />
+  </ItemGroup>
 </Project>

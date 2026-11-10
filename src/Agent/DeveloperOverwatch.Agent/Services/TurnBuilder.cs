@@ -14,14 +14,18 @@ internal sealed class TurnBuilder
     private readonly List<PendingTurn> _turns = [];
     private readonly Dictionary<string, PendingTurn> _responsesBySourceId = new(StringComparer.Ordinal);
 
+    // The line being added: a turn starts on the line that creates it.
+    private int _lineIndex;
+
     public TurnBuilder(bool asSubagent)
     {
         _asSubagent = asSubagent;
     }
 
     /// <summary>Adds one transcript line. Returns false only when the line is not valid JSON.</summary>
-    public bool TryAdd(string line, string fallbackSourceId)
+    public bool TryAdd(string line, int lineIndex, string fallbackSourceId)
     {
+        _lineIndex = lineIndex;
         JsonDocument doc;
         try
         {
@@ -45,11 +49,14 @@ internal sealed class TurnBuilder
             }
 
             var timestamp = root.TryGetProperty("timestamp", out var tsProp) ? ParseTimestamp(tsProp) : null;
+            // Claude Code writes the checked-out branch on every user and assistant line; it is
+            // empty outside a git repository.
+            var gitBranch = GetString(root, "gitBranch") is { Length: > 0 } branch ? branch : null;
 
             if (role == "assistant")
-                AddResponseLine(message, timestamp, fallbackSourceId);
+                AddResponseLine(message, timestamp, gitBranch, fallbackSourceId);
             else if (!_asSubagent)
-                AddPrompt(root, message, role, timestamp, fallbackSourceId);
+                AddPrompt(root, message, role, timestamp, gitBranch, fallbackSourceId);
 
             return true;
         }
@@ -65,21 +72,25 @@ internal sealed class TurnBuilder
             t.OutputTokens,
             t.CacheCreationInputTokens,
             t.CacheReadInputTokens,
-            t.Model)).ToList();
+            t.Model,
+            t.GitBranch,
+            StartLine: t.StartLine,
+            IsCompactSummary: t.IsCompactSummary)).ToList();
 
-    private void AddResponseLine(JsonElement message, DateTime? timestamp, string fallbackSourceId)
+    private void AddResponseLine(JsonElement message, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
         var sourceId = GetString(message, "id") is { Length: > 0 } messageId ? $"msg:{messageId}" : fallbackSourceId;
 
         if (!_responsesBySourceId.TryGetValue(sourceId, out var turn))
         {
-            turn = new PendingTurn(sourceId, _asSubagent ? "subagent" : "assistant", timestamp);
+            turn = new PendingTurn(sourceId, _asSubagent ? "subagent" : "assistant", timestamp) { StartLine = _lineIndex };
             _responsesBySourceId[sourceId] = turn;
             _turns.Add(turn);
         }
 
         turn.Texts.AddRange(ExtractTexts(message));
         turn.Model ??= GetString(message, "model");
+        turn.GitBranch ??= gitBranch;
 
         if (message.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
         {
@@ -92,7 +103,8 @@ internal sealed class TurnBuilder
         }
     }
 
-    private void AddPrompt(JsonElement root, JsonElement message, string role, DateTime? timestamp, string fallbackSourceId)
+    private void AddPrompt(
+        JsonElement root, JsonElement message, string role, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
         // Tool results arrive as "user" lines with no text block; the PostToolUse hook already
         // captures tool activity, so only real prompts become turns.
@@ -101,7 +113,12 @@ internal sealed class TurnBuilder
             return;
 
         var sourceId = GetString(root, "uuid") is { Length: > 0 } uuid ? $"uuid:{uuid}" : fallbackSourceId;
-        var turn = new PendingTurn(sourceId, role, timestamp);
+        var turn = new PendingTurn(sourceId, role, timestamp)
+        {
+            GitBranch = gitBranch,
+            StartLine = _lineIndex,
+            IsCompactSummary = root.TryGetProperty("isCompactSummary", out var flag) && flag.ValueKind == JsonValueKind.True
+        };
         turn.Texts.AddRange(texts);
         _turns.Add(turn);
     }
@@ -155,10 +172,13 @@ internal sealed class TurnBuilder
     private sealed class PendingTurn(string sourceId, string role, DateTime? timestamp)
     {
         public string SourceId { get; } = sourceId;
+        public int StartLine { get; init; }
+        public bool IsCompactSummary { get; init; }
         public string Role { get; } = role;
         public DateTime? Timestamp { get; } = timestamp;
         public List<string> Texts { get; } = [];
         public string? Model { get; set; }
+        public string? GitBranch { get; set; }
         public int? InputTokens { get; set; }
         public int? OutputTokens { get; set; }
         public int? CacheCreationInputTokens { get; set; }

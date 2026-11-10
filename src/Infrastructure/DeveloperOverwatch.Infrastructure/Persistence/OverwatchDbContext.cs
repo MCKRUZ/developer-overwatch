@@ -14,6 +14,8 @@ public class OverwatchDbContext : DbContext, IUnitOfWork
     public DbSet<CommitSessionLink> CommitSessionLinks => Set<CommitSessionLink>();
     public DbSet<PullRequestReview> PullRequestReviews => Set<PullRequestReview>();
     public DbSet<ArchitectAnnotation> ArchitectAnnotations => Set<ArchitectAnnotation>();
+    public DbSet<SessionToolFailure> SessionToolFailures => Set<SessionToolFailure>();
+    public DbSet<ProcessedAgentEvent> ProcessedAgentEvents => Set<ProcessedAgentEvent>();
 
     public OverwatchDbContext(DbContextOptions<OverwatchDbContext> options) : base(options) { }
 

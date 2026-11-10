@@ -24,7 +24,7 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 |                   |  PostToolUse  |                   |               |                   |
 |                   |  SessionEnd   | - SQLite queue    |               | - MediatR CQRS    |
 +-------------------+               | - Privacy redact  |               | - EF Core + SQLite|
-                                    | - Git fallback    |               | - Governance Eng. |
+                                    | - Usage meter     |               | - Governance Eng. |
                                     +-------------------+               | - SignalR hub     |
                                                                         +--------+----------+
                                                                                  |
@@ -48,7 +48,7 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 | `DeveloperOverwatch.Application` | Application | MediatR commands/queries (CQRS), FluentValidation, pipeline behaviors (request tracing, idempotency, validation, logging, governance), session-commit correlation |
 | `DeveloperOverwatch.Infrastructure` | Infrastructure | EF Core persistence (SQLite/SQL Server), repository implementations, GitHub service, governance engine (pattern rules, semantic rules, drift detection, LLM client), Slack/email notifications |
 | `DeveloperOverwatch.API` | Presentation | ASP.NET Core controllers, SignalR hub (`/hubs/overwatch`), middleware (global exception handling, security headers, request logging, webhook signature verification), dual auth (API key + JWT), rate limiting, Swagger/OpenAPI |
-| `DeveloperOverwatch.Agent` | Agent | .NET global tool (`overwatch-agent`), local SQLite queue, privacy redaction, decision detection, conversation capture, git fallback writer, background queue processor |
+| `DeveloperOverwatch.Agent` | Agent | .NET global tool (`overwatch-agent`), local SQLite queue, privacy redaction, decision detection, conversation capture, background queue processor |
 | `dashboard` | Frontend | React 19 + Vite + Tailwind CSS + Recharts, OIDC authentication, SignalR real-time updates, session timeline, governance violations, analytics charts, PDF/CSV export |
 
 ## Features
@@ -63,7 +63,6 @@ A React dashboard provides live session monitoring via SignalR, filterable viola
 - **Architect Annotations** -- Attach notes to sessions, specific turns, or tool executions
 - **Dual Authentication** -- API key auth for agents, OIDC/JWT for dashboard users
 - **Privacy Redaction** -- Agent strips sensitive content before shipping events
-- **Git Fallback** -- Agent writes events to git notes when the API is unreachable
 - **Export** -- PDF and CSV export of session data and analytics
 - **Dark Mode** -- Tailwind-based dark theme support
 - **Notifications** -- Slack webhooks and email alerts for governance violations
@@ -128,7 +127,7 @@ The install script:
 2. Registers three hooks in `~/.claude/settings.json`: `SessionStart`, `PostToolUse`, and `SessionEnd`
 3. Hooks write events to a local SQLite queue at `~/.overwatch/queue.db`
 
-The agent polls the queue and ships events in batches to the API. If the API is unreachable, events accumulate locally. When the queue exceeds the git fallback threshold, events are also written to git notes as a safety net.
+The agent polls the queue and ships events in batches to the API. If the API is unreachable, events wait in the local queue and ship once it is back; events that never ship are purged after 30 days.
 
 ## Configuration
 
@@ -210,7 +209,6 @@ When OIDC variables are not set, the dashboard runs without authentication.
 | `apiKey` | `""` | API key for authentication |
 | `pollIntervalSeconds` | `5` | Queue polling interval |
 | `batchSize` | `50` | Events per batch |
-| `gitFallbackThreshold` | `100` | Queue depth before writing git fallback |
 
 ## Testing
 
@@ -231,7 +229,7 @@ dotnet test tests/DeveloperOverwatch.Application.Tests
 | `DeveloperOverwatch.Domain.Tests` | `Result<T>` behavior |
 | `DeveloperOverwatch.Application.Tests` | Commands (ingest, webhooks, review, resolve, annotate), queries (violations, analytics), behaviors (validation, governance), services (correlation, notifications), governance engine (policy loader, pattern evaluator, semantic evaluator, drift detector, LLM client) |
 | `DeveloperOverwatch.API.Tests` | Controller integration tests (sessions, analytics, governance, annotations, PRs, webhooks), webhook signature middleware |
-| `DeveloperOverwatch.Agent.Tests` | Event queue, privacy redactor, decision detector, API client, queue processor, git fallback writer |
+| `DeveloperOverwatch.Agent.Tests` | Event queue, privacy redactor, decision detector, API client, queue processor |
 
 ### Frontend
 
@@ -392,7 +390,7 @@ developer-overwatch/
 |   +-- Agent/DeveloperOverwatch.Agent/
 |       +-- Models/              # AgentConfig, EventType, QueuedEvent
 |       +-- Services/            # EventQueue, PrivacyRedactor, DecisionDetector,
-|                                # ConversationCapture, GitFallbackWriter, ApiClient,
+|                                # ConversationCapture, ApiClient,
 |                                # QueueProcessor
 +-- tests/
 |   +-- DeveloperOverwatch.Domain.Tests/

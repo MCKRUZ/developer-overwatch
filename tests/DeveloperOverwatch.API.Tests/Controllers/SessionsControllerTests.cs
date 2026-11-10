@@ -136,6 +136,43 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
         body.Should().Contain("Program.cs");
     }
 
+    // The Agent redelivers an end whose response it never saw, then ships the session's signals.
+    [Fact]
+    public async Task EndTwice_BothSucceed_AndEventsAfterTheEndAreStillAccepted()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var start = new { SessionId = sessionId, DeveloperEmail = "redeliver@team.dev", RepoPath = "C:/repos/test", StartedAt = DateTime.UtcNow };
+        (await _client.PostAsJsonAsync("/api/sessions/start", start)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var end = new { SessionId = sessionId, EndedAt = DateTime.UtcNow };
+        (await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/end", end)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/end", end)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var signals = new
+        {
+            SessionId = sessionId,
+            ToolFailures = new[] { new { Id = "f-1", ToolName = "Bash", At = DateTime.UtcNow } }
+        };
+        (await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", signals)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // The Agent dead-letters a session's events only on this code; any other 404 stays retryable.
+    [Theory]
+    [InlineData("events")]
+    [InlineData("end")]
+    public async Task UnknownSession_Returns404WithSessionNotFoundCode(string action)
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        object body = action == "end"
+            ? new { SessionId = sessionId, EndedAt = DateTime.UtcNow }
+            : new { SessionId = sessionId };
+
+        var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/{action}", body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"code\":\"session_not_found\"");
+    }
+
     [Fact]
     public async Task GetSessions_FilterByDeveloper_ReturnsFiltered()
     {
@@ -153,6 +190,55 @@ public class SessionsControllerTests : IClassFixture<OverwatchWebApplicationFact
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("filter-test@team.dev");
+    }
+
+    [Fact]
+    public async Task StartAndEvents_WithCaptureFields_GetSessionReturnsThem()
+    {
+        var sessionId = Guid.NewGuid().ToString();
+        var now = DateTime.UtcNow;
+
+        var startResponse = await _client.PostAsJsonAsync("/api/sessions/start", new
+        {
+            sessionId,
+            developerEmail = "capture@team.dev",
+            startedAt = now,
+            agent = "claude-code",
+            machineName = "build-box-7",
+            projectKey = "github.com/mckruz/overwatch"
+        });
+        startResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var eventsResponse = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", new
+        {
+            sessionId,
+            conversationTurns = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid().ToString(),
+                    role = "assistant",
+                    inputTokens = 10,
+                    cacheReadInputTokens = 4000,
+                    cacheCreationInputTokens = 90,
+                    gitBranch = "feat/meter",
+                    subagentName = "explorer",
+                    timestamp = now
+                }
+            },
+            activityEvents = new[] { new { state = "waiting", at = now } },
+            toolFailures = new[] { new { id = Guid.NewGuid().ToString(), toolName = "Bash", at = now } }
+        });
+        eventsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await (await _client.GetAsync($"/api/sessions/{sessionId}")).Content.ReadAsStringAsync();
+        body.Should().Contain("\"agent\":\"claude-code\"");
+        body.Should().Contain("\"machineName\":\"build-box-7\"");
+        body.Should().Contain("\"projectKey\":\"github.com/mckruz/overwatch\"");
+        body.Should().Contain("\"peakContextTokens\":4100");
+        body.Should().Contain("\"activityState\":\"Waiting\"");
+        body.Should().Contain("\"toolErrorCount\":1");
+        body.Should().Contain("\"lastToolErrorName\":\"Bash\"");
     }
 
     [Fact]

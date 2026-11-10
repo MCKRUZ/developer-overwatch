@@ -7,6 +7,7 @@ public sealed class IngestSessionEndCommandValidator : AbstractValidator<IngestS
     public IngestSessionEndCommandValidator()
     {
         RuleFor(x => x.SessionId).NotEmpty();
+        RuleFor(x => x.EventId).NotEmpty().MaximumLength(64).When(x => x.EventId is not null);
         RuleFor(x => x.EndedAt).NotEmpty();
     }
 }

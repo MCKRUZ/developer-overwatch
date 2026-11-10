@@ -103,8 +103,15 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<string>("Content")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("ContextTokens")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("EstimatedCostUsd")
                         .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GitBranch")
+                        .HasMaxLength(255)
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("InputTokens")
@@ -128,6 +135,10 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.Property<string>("SessionId")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubagentName")
+                        .HasMaxLength(255)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("Timestamp")
@@ -242,6 +253,30 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.ToTable("GovernanceViolations");
                 });
 
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ProcessedAgentEvent", b =>
+                {
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ProcessedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SessionId", "EventId")
+                        .HasAnnotation("SqlServer:Clustered", false);
+
+                    b.ToTable("ProcessedAgentEvents", (string)null);
+                });
+
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.PullRequestReview", b =>
                 {
                     b.Property<string>("Id")
@@ -279,6 +314,20 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ActivityState")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ActivityStateAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Agent")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("claude-code");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -299,6 +348,24 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<DateTime>("LastActivityAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("LastToolErrorAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastToolErrorName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MachineName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("PeakContextTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProjectKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RepoPath")
                         .HasColumnType("TEXT");
 
@@ -314,6 +381,9 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.Property<string>("Title")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("ToolErrorCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("TotalCacheCreationInputTokens")
                         .HasColumnType("INTEGER");
@@ -334,6 +404,31 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.HasIndex("Status");
 
                     b.ToTable("Sessions");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ToolName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("SessionToolFailures");
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>
@@ -444,6 +539,15 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                         .IsRequired();
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
+                {
+                    b.HasOne("DeveloperOverwatch.Domain.Entities.Session", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>

@@ -13,4 +13,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Agent\DeveloperOverwatch.Agent\DeveloperOverwatch.Agent.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- DefaultPricesTests compares the agent's built-in prices with the server's. -->
+    <None Include="..\..\src\API\DeveloperOverwatch.API\appsettings.json" Link="server-appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

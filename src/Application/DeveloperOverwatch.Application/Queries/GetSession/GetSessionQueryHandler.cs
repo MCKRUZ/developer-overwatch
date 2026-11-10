@@ -50,7 +50,16 @@ public sealed class GetSessionQueryHandler
             projection.ToolExecutionCount,
             projection.FileChangeCount,
             s.GovernanceViolations.ToList(),
-            s.ArchitectAnnotations.ToList());
+            s.ArchitectAnnotations.ToList(),
+            s.Agent,
+            s.MachineName,
+            s.ProjectKey,
+            s.PeakContextTokens,
+            s.ActivityState,
+            s.ActivityStateAt,
+            s.ToolErrorCount,
+            s.LastToolErrorName,
+            s.LastToolErrorAt);
 
         return Result<SessionDetail>.Success(detail);
     }

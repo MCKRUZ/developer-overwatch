@@ -74,7 +74,16 @@ public sealed class GetSessionsQueryHandler
             s.TotalCacheReadInputTokens,
             s.EstimatedCostUsd,
             violationCounts.GetValueOrDefault(s.Id, 0),
-            dailyUsageBySession.GetValueOrDefault(s.Id, emptyDailyUsage)))
+            dailyUsageBySession.GetValueOrDefault(s.Id, emptyDailyUsage),
+            s.Agent,
+            s.MachineName,
+            s.ProjectKey,
+            s.PeakContextTokens,
+            s.ActivityState,
+            s.ActivityStateAt,
+            s.ToolErrorCount,
+            s.LastToolErrorName,
+            s.LastToolErrorAt))
             .ToList();
 
         if (request.Status is not null)

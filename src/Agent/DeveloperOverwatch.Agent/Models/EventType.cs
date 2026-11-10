@@ -6,5 +6,7 @@ public enum EventType
     ToolExecution,
     FileChange,
     ConversationTurn,
-    SessionEnd
+    SessionEnd,
+    ActivityChanged,
+    ToolFailed
 }

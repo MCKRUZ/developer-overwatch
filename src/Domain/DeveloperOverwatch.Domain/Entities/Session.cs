@@ -30,6 +30,30 @@ public class Session
     public long TotalCacheReadInputTokens { get; set; }
     public decimal EstimatedCostUsd { get; set; }
 
+    public const string DefaultAgent = "claude-code";
+
+    // Agents that predate this field never sent one, and every one of them was Claude Code — so
+    // that is the default here and the backfill for existing rows, and every row carries an agent.
+    public string Agent { get; set; } = DefaultAgent;
+    public string? MachineName { get; set; }
+
+    // A stable identity for the repository (e.g. a normalized remote), so the same project groups
+    // together across machines and clone paths. The Agent strips credentials before sending.
+    public string? ProjectKey { get; set; }
+
+    // Largest single-request context (input + cache read + cache creation) seen on the main thread.
+    // Subagent turns have their own context window and never set it. Only ever raised as turns arrive.
+    public long? PeakContextTokens { get; set; }
+
+    public ActivityState? ActivityState { get; set; }
+    public DateTime? ActivityStateAt { get; set; }
+
+    // Cached from the SessionToolFailure rows: each failure is stored once by id, and these move
+    // only when a new id arrives, so a redelivered batch is not counted twice.
+    public int ToolErrorCount { get; set; }
+    public string? LastToolErrorName { get; set; }
+    public DateTime? LastToolErrorAt { get; set; }
+
     public IList<ConversationTurn> ConversationTurns { get; set; } = new List<ConversationTurn>();
     public IList<ToolExecution> ToolExecutions { get; set; } = new List<ToolExecution>();
     public IList<FileChange> FileChanges { get; set; } = new List<FileChange>();

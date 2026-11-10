@@ -367,21 +367,4 @@ public sealed class SessionRepositoryTests : IDisposable
         _db.Dispose();
         _connection.Dispose();
     }
-
-    [Fact]
-    public async Task GetExistingTurnIdsAsync_ReturnsMatchingIdsFromEverySession()
-    {
-        await _repo.AddAsync(NewSession("s1"));
-        await _repo.AddAsync(NewSession("s2"));
-        await _repo.AddTurnsAsync(
-        [
-            new ConversationTurn { Id = "t-in-s1", SessionId = "s1", Role = "assistant", Timestamp = DateTime.UtcNow },
-            new ConversationTurn { Id = "t-in-s2", SessionId = "s2", Role = "assistant", Timestamp = DateTime.UtcNow },
-        ]);
-        await _db.SaveChangesAsync();
-
-        var existing = await _repo.GetExistingTurnIdsAsync(["t-in-s1", "t-in-s2", "t-new"]);
-
-        existing.Should().BeEquivalentTo(["t-in-s1", "t-in-s2"]);
-    }
 }

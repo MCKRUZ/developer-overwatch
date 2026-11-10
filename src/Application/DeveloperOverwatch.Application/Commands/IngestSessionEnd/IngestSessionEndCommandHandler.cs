@@ -1,12 +1,13 @@
 namespace DeveloperOverwatch.Application.Commands.IngestSessionEnd;
 
 using DeveloperOverwatch.Domain.Common;
+using DeveloperOverwatch.Domain.Entities;
 using DeveloperOverwatch.Domain.Enums;
 using DeveloperOverwatch.Domain.Interfaces;
 using MediatR;
 
 public sealed class IngestSessionEndCommandHandler
-    : IRequestHandler<IngestSessionEndCommand, Result<string>>
+    : IRequestHandler<IngestSessionEndCommand, Result<IngestSessionEndResult>>
 {
     private readonly ISessionRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
@@ -17,24 +18,45 @@ public sealed class IngestSessionEndCommandHandler
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<Result<string>> Handle(
+    public async Task<Result<IngestSessionEndResult>> Handle(
         IngestSessionEndCommand request,
         CancellationToken cancellationToken)
     {
         var session = await _repository.GetByIdAsync(request.SessionId, cancellationToken);
         if (session is null)
-            return Result<string>.Fail($"Session {request.SessionId} not found");
+            return Result<IngestSessionEndResult>.Fail($"Session {request.SessionId} not found");
 
-        if (session.Status != SessionStatus.Active)
-            return Result<string>.Fail($"Session {request.SessionId} is not active");
+        if (request.EventId is { } eventId
+            && await _repository.IsAgentEventProcessedAsync(request.SessionId, eventId, cancellationToken))
+            return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Duplicate, ClosedSession: false));
 
-        session.Status = SessionStatus.Completed;
-        session.EndedAt = request.EndedAt;
-        session.SummaryJson = request.SummaryJson;
+        // The Agent delivers at-least-once, and backfill may have closed an idle session first, so an
+        // end for a session that is already over succeeds without changing it. Not-found is then this
+        // handler's only failure, which the controller relies on.
+        var closesSession = session.Status == SessionStatus.Active;
+        if (!closesSession && request.EventId is null)
+            return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Accepted, ClosedSession: false));
 
-        await _repository.UpdateAsync(session, cancellationToken);
+        if (closesSession)
+        {
+            session.Status = SessionStatus.Completed;
+            session.EndedAt = request.EndedAt;
+            session.SummaryJson = request.SummaryJson;
+            await _repository.UpdateAsync(session, cancellationToken);
+        }
+
+        if (request.EventId is not null)
+        {
+            await _repository.AddProcessedAgentEventAsync(new ProcessedAgentEvent
+            {
+                EventId = request.EventId,
+                SessionId = request.SessionId,
+                Kind = ProcessedAgentEventKind.SessionEnd,
+                ProcessedAt = DateTime.UtcNow
+            }, cancellationToken);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return Result<string>.Success(session.Id);
+        return Result<IngestSessionEndResult>.Success(new(IngestOutcome.Accepted, closesSession));
     }
 }

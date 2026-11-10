@@ -20,6 +20,12 @@ public class ConversationTurn
     public bool ContainsRedactedSecret { get; set; }
     public DateTime Timestamp { get; set; }
     public bool IsDecision { get; set; }
+    public string? GitBranch { get; set; }
+    public string? SubagentName { get; set; }
+
+    /// <summary>Context size of this request: input + cache read + cache creation tokens.
+    /// Null when the turn reported none of them (e.g. a user turn).</summary>
+    public long? ContextTokens { get; set; }
 
     public Session? Session { get; set; }
 }
