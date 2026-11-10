@@ -70,6 +70,9 @@ export interface UsageSummaryParams {
   project?: string;
 }
 
+/** The running list depends on who and which project, never on the period. */
+export type UsageRunningFilters = Pick<UsageSummaryParams, "developer" | "project">;
+
 export const api = {
   sessions: {
     list(filters?: SessionListFilters): Promise<SessionListItem[]> {
@@ -179,8 +182,12 @@ export const api = {
       if (params.project) qs.set("project", params.project);
       return fetchJson(`${BASE}/usage/summary?${qs.toString()}`);
     },
-    running(): Promise<RunningSession[]> {
-      return fetchJson(`${BASE}/usage/running`);
+    running(filters: UsageRunningFilters = {}): Promise<RunningSession[]> {
+      const qs = new URLSearchParams();
+      if (filters.developer) qs.set("developer", filters.developer);
+      if (filters.project) qs.set("project", filters.project);
+      const query = qs.toString();
+      return fetchJson(`${BASE}/usage/running${query ? `?${query}` : ""}`);
     },
   },
 

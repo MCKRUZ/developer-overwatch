@@ -235,6 +235,12 @@ describe("api", () => {
       await expect(api.usage.running()).resolves.toEqual([{ id: "s1" }]);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/running", undefined);
     });
+
+    it("should pass the developer and project filters to the running list, so it matches the filtered totals", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.usage.running({ developer: "alice@x.io", project: "over watch" });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/running?developer=alice%40x.io&project=over+watch", undefined);
+    });
   });
 
   describe("pricing", () => {

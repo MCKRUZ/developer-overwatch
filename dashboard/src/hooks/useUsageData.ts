@@ -30,9 +30,10 @@ export function useUsageData(params: UsageSummaryParams) {
   const paramsKey = JSON.stringify(params);
   const summary = useCoalescedFetch(paramsKey, () => api.usage.summary(params));
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const running = useCoalescedFetch(paramsKey, () => {
+  const filters = { developer: params.developer, project: params.project };
+  const running = useCoalescedFetch(JSON.stringify(filters), () => {
     armStaleTimer();
-    return api.usage.running();
+    return api.usage.running(filters);
   });
   const { refresh: refreshRunning } = running;
 

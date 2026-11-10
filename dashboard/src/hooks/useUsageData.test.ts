@@ -51,8 +51,8 @@ describe("useUsageData", () => {
       initialProps: dayParams,
     });
 
-    rerender({ ...dayParams, granularity: "week" });
-    await waitFor(() => expect(result.current.running[0]?.id).toBe("new"));
+    rerender({ ...dayParams, developer: "bob@x.io" });
+    await waitFor(() => expect(result.current.running?.[0]?.id).toBe("new"));
 
     await act(async () => {
       oldSummary.reject(new Error("old summary failed"));
@@ -60,7 +60,7 @@ describe("useUsageData", () => {
     });
 
     expect(result.current.error).toBeNull();
-    expect(result.current.running[0]?.id).toBe("new");
+    expect(result.current.running?.[0]?.id).toBe("new");
   });
 
   it("should drop a superseded running-list failure", async () => {
@@ -71,7 +71,7 @@ describe("useUsageData", () => {
       initialProps: dayParams,
     });
 
-    rerender({ ...dayParams, granularity: "month" });
+    rerender({ ...dayParams, project: "overwatch" });
     await waitFor(() => expect(mockApi.usage.running).toHaveBeenCalledTimes(2));
     await act(async () => oldRunning.reject(new Error("old running failed")));
 
@@ -175,5 +175,20 @@ describe("useUsageData", () => {
 
       expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("should load the running list with only the developer and project filters, and not reload it for a date change it does not depend on", async () => {
+    mockApi.usage.summary.mockResolvedValue(buildUsageSummary());
+    mockApi.usage.running.mockResolvedValue([]);
+    const { rerender } = renderHook((params: UsageSummaryParams) => useUsageData(params), {
+      initialProps: { ...dayParams, developer: "alice@x.io", project: "overwatch" },
+    });
+    await waitFor(() => expect(mockApi.usage.running).toHaveBeenCalledTimes(1));
+
+    rerender({ ...dayParams, granularity: "week", developer: "alice@x.io", project: "overwatch" });
+    await waitFor(() => expect(mockApi.usage.summary).toHaveBeenCalledTimes(2));
+
+    expect(mockApi.usage.running).toHaveBeenCalledTimes(1);
+    expect(mockApi.usage.running).toHaveBeenCalledWith({ developer: "alice@x.io", project: "overwatch" });
   });
 });
