@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using DeveloperOverwatch.Agent.Services;
@@ -15,7 +14,7 @@ namespace DeveloperOverwatch.Agent.Tests.Services;
 
 /// <summary>Drives the processor one poll at a time over a real queue and the real ApiClient, so the
 /// enrolment cutoff, 413 handling, created_at dequeue order and the unreadable-config warning are tested end to end.</summary>
-public sealed class QueueProcessorPollTests : IDisposable
+public sealed partial class QueueProcessorPollTests : IDisposable
 {
     private static readonly DateTime PilotSince = DateTime.UtcNow.AddMinutes(-30);
     private const string Transcript = "C:/transcripts/poll.jsonl";
@@ -112,17 +111,20 @@ public sealed class QueueProcessorPollTests : IDisposable
     }
 
     // A marker queued before enrolment is handled here, but its transcript may already hold turns from after
-    // enrolment. Moving the cursor past them would mean no later marker ever sends them.
+    // enrolment, so the cursor stops at the first of them. A session that existed before enrolment comes back
+    // through a resume, which opens it at the resume: the turns from the held stretch still never leave, and the
+    // turn after the resume, already in the transcript at the first poll, is sent by the later marker.
     [Fact]
-    public async Task Pilot_PreEnrolmentMarker_KeepsTheCursorAtTheFirstPostEnrolmentTurn_SoALaterMarkerSendsIt()
+    public async Task Pilot_PreEnrolmentMarker_KeepsTheCursorAtTheFirstPostEnrolmentTurn_SoAMarkerAfterAResumeSendsOnlyTheTurnAfterIt()
     {
         var cursors = TrackCursors();
         var captured = new List<CapturedTurn>
         {
             new("uuid:pre", "user", "pre-enrolment turn", PilotSince.AddMinutes(-5), StartLine: 0),
-            new("uuid:post1", "user", "first post-enrolment turn", PilotSince.AddMinutes(5), StartLine: 1),
+            new("uuid:held5", "user", "held turn five", PilotSince.AddMinutes(5), StartLine: 1),
             new("uuid:undated", "user", "turn without a timestamp", null, StartLine: 2),
-            new("uuid:post2", "user", "second post-enrolment turn", PilotSince.AddMinutes(7), StartLine: 3)
+            new("uuid:held7", "user", "held turn seven", PilotSince.AddMinutes(7), StartLine: 3),
+            new("uuid:resumed", "user", "post-resume turn", PilotSince.AddMinutes(8.5), StartLine: 4)
         };
         _capture.CaptureFromFileAsync(Transcript, Arg.Any<int>(), false, Arg.Any<CancellationToken>())
             .Returns(ci => new ConversationCaptureResult(captured.Where(t => t.StartLine >= ci.ArgAt<int>(1)).ToList(), captured.Count));
@@ -134,14 +136,15 @@ public sealed class QueueProcessorPollTests : IDisposable
         _http.Bodies.Should().BeEmpty();
         cursors.GetValueOrDefault("s").Should().Be(1, "the cursor stops at the first turn from after enrolment");
 
-        await EnqueueAsync(Start("start", "s"), PilotSince.AddMinutes(8));
+        await EnqueueAsync(Start("resume", "s", source: "resume"), PilotSince.AddMinutes(8));
         await EnqueueAsync(Event("m-new", "s", EventType.ConversationTurn, MarkerPayload()), PilotSince.AddMinutes(9));
         await sut.PollOnceAsync(CancellationToken.None);
 
         var sent = string.Join("\n", _http.Bodies);
-        sent.Should().Contain("first post-enrolment turn").And.Contain("second post-enrolment turn")
+        sent.Should().Contain("post-resume turn")
+            .And.NotContain("held turn five").And.NotContain("held turn seven")
             .And.NotContain("pre-enrolment turn").And.NotContain("turn without a timestamp");
-        cursors["s"].Should().Be(4);
+        cursors["s"].Should().Be(5);
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
@@ -305,11 +308,11 @@ public sealed class QueueProcessorPollTests : IDisposable
     private static QueuedEvent Event(string id, string sessionId, EventType type, string payload = "{}") =>
         new() { Id = id, SessionId = sessionId, EventType = type, PayloadJson = payload };
 
-    private static QueuedEvent Start(string id, string sessionId) =>
+    private static QueuedEvent Start(string id, string sessionId, string source = "startup") =>
         Event(id, sessionId, EventType.SessionStart,
             JsonSerializer.Serialize(new
             {
-                sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow, source = "startup"
+                sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow, source
             }));
 
     private static string MarkerPayload() => JsonSerializer.Serialize(new { transcriptPath = Transcript });
@@ -328,47 +331,6 @@ public sealed class QueueProcessorPollTests : IDisposable
     {
         using var doc = JsonDocument.Parse(body);
         return doc.RootElement.TryGetProperty("conversationTurns", out var turns) ? turns.GetArrayLength() : 0;
-    }
-
-    internal sealed class RecordingHandler : HttpMessageHandler
-    {
-        private readonly ConcurrentQueue<string> _bodies = new();
-
-        public Func<string, string, HttpStatusCode> Respond { get; set; } = (_, _) => HttpStatusCode.OK;
-
-        public IReadOnlyList<string> Bodies => _bodies.ToList();
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-        {
-            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
-            _bodies.Enqueue(body);
-            var path = request.RequestUri!.AbsolutePath;
-            var status = Respond(path, body);
-            var reply = status == HttpStatusCode.OK ? OkReply(path, body) : "{}";
-            return new HttpResponseMessage(status) { Content = new StringContent(reply, Encoding.UTF8, "application/json") };
-        }
-
-        /// <summary>What the server answers: a start or end names its outcome, and <c>/events</c> lists
-        /// every item it was sent as accepted.</summary>
-        private static string OkReply(string path, string body)
-        {
-            using var doc = JsonDocument.Parse(body);
-            if (path == "/api/sessions/start")
-                return JsonSerializer.Serialize(new { sessionId = doc.RootElement.GetProperty("sessionId").GetString(), outcome = "accepted" });
-            if (path.EndsWith("/end", StringComparison.Ordinal))
-                return JsonSerializer.Serialize(new { sessionId = path.Split('/')[3], outcome = "accepted" });
-
-            var accepted = new[] { "conversationTurns", "toolExecutions", "fileChanges", "toolFailures" }
-                .Where(list => doc.RootElement.TryGetProperty(list, out _))
-                .SelectMany(list => doc.RootElement.GetProperty(list).EnumerateArray())
-                .Select(item => item.GetProperty("id").GetString())
-                .ToList();
-            return JsonSerializer.Serialize(new
-            {
-                eventsIngested = accepted.Count,
-                results = new { accepted, duplicate = Array.Empty<string>(), rejected = Array.Empty<object>() }
-            });
-        }
     }
 
     private sealed class CapturingLogger : ILogger<QueueProcessor>
