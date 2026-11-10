@@ -123,7 +123,7 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
         {
             var result = await services.Capture.CaptureFromFileAsync(path, 0, asSubagent, ct);
             _parseErrors += result.ParseErrors;
-            inWindow.AddRange(result.Turns.Where(t => t.Timestamp is { } ts && ToUtc(ts) >= cutoffUtc));
+            inWindow.AddRange(result.Turns.Where(t => t.Timestamp is { } ts && UtcInstant.Utc(ts) >= cutoffUtc));
         }
 
         return inWindow;
@@ -144,7 +144,7 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
             await BackfillSessionIds.WriteMappingAsync(config.OverwatchDir, claudeSessionId, session.Id, repo.Root, ct);
 
         var lastWriteUtc = File.GetLastWriteTimeUtc(transcript);
-        var lastActiveUtc = ToUtc(await TranscriptHeader.ReadLastTimestampAsync(transcript, ct) ?? lastWriteUtc);
+        var lastActiveUtc = UtcInstant.Utc(await TranscriptHeader.ReadLastTimestampAsync(transcript, ct) ?? lastWriteUtc);
         var lastActiveAt = Iso(lastActiveUtc);
         var stillActive = nowUtc - lastActiveUtc < StillActiveWindow || nowUtc - lastWriteUtc < StillActiveWindow;
         // The processor reads the marker as "idle", dated by "at": when the session was last active.
@@ -198,8 +198,5 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
     };
 
     private static string Iso(DateTime value) =>
-        DateTime.SpecifyKind(ToUtc(value), DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture);
-
-    private static DateTime ToUtc(DateTime value) =>
-        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
+        UtcInstant.Utc(value).ToString("o", CultureInfo.InvariantCulture);
 }

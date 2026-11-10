@@ -166,7 +166,7 @@ public sealed class QueueProcessorCompactionTests : IDisposable
         sent.Should().Contain("post-resume text").And.NotContain("between text").And.NotContain("pre-enrolment prompt");
     }
 
-    // Guards against over-blocking: only a session that was Local has a reopen floor.
+    // Guards against over-blocking: a session opened after enrolment keeps its floor when it is resumed.
     [Fact]
     public async Task PostEnrolmentSession_Resumed_ShipsItsTurnsFromBeforeTheResume()
     {
@@ -181,22 +181,6 @@ public sealed class QueueProcessorCompactionTests : IDisposable
 
         string.Join("\n", _http.Bodies).Should().Contain("before resume text").And.Contain("post-resume text");
     }
-
-    [Theory]
-    [InlineData("""{"sessionId":"s"}""", true)]
-    [InlineData("""{"sessionId":"s","source":null}""", true)]
-    [InlineData("""{"source":"startup"}""", true)]
-    [InlineData("""{"source":"Resume"}""", true)]
-    [InlineData("""{"source":"clear"}""", false)]
-    [InlineData("""{"source":"compact"}""", false)]
-    [InlineData("""{"source":"something-new"}""", false)]
-    [InlineData("""{"source":"unknown"}""", false)]
-    [InlineData("""{"source":""}""", false)]
-    [InlineData("""{"source":7}""", false)]
-    [InlineData("not json", false)]
-    [InlineData("""["startup"]""", false)]
-    public void MayReopen_AllowsOnlyANewSessionOrAResume(string payload, bool expected) =>
-        SessionStartPayload.MayReopen(payload).Should().Be(expected);
 
     private async Task DrainAsync(QueueProcessor sut)
     {

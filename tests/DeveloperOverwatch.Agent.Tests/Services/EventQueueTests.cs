@@ -133,25 +133,6 @@ public sealed class EventQueueTests : IDisposable
     }
 
     [Fact]
-    public async Task MarkShipped_StartOfALocalSession_RecordsTheFirstReopenOnly()
-    {
-        await _sut.InitializeAsync();
-        var reopened = new DateTime(2026, 5, 1, 10, 0, 0, DateTimeKind.Utc);
-        await _sut.EnqueueAsync(CreateEvent("local", "s", EventType.SessionStart, reopened.AddHours(-1)));
-        await _sut.EnqueueAsync(CreateEvent("resume", "s", EventType.SessionStart, reopened));
-        await _sut.EnqueueAsync(CreateEvent("again", "s", EventType.SessionStart, reopened.AddHours(1)));
-        await _sut.EnqueueAsync(CreateEvent("other", "t", EventType.SessionStart, reopened));
-        await _sut.MarkLocalAsync(["local"]);
-
-        await _sut.MarkShippedAsync(["resume"]);
-        await _sut.MarkShippedAsync(["again"]);
-        await _sut.MarkShippedAsync(["other"]);
-
-        (await _sut.GetReopenedAtAsync("s")).Should().Be(reopened);
-        (await _sut.GetReopenedAtAsync("t")).Should().BeNull();
-    }
-
-    [Fact]
     public async Task IncrementRetry_IncrementsCount()
     {
         await _sut.InitializeAsync();

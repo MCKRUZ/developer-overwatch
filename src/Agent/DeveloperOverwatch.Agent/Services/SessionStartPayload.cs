@@ -62,30 +62,6 @@ internal static class SessionStartPayload
     private static DateTime? WrittenAt(string? writtenAt) =>
         DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at) ? at : null;
 
-    /// <summary>Whether this start may reopen a session kept on this machine. Only a new session or a
-    /// resume is the developer coming back to it; a compact or clear start is the same sitting continuing.
-    /// A start with no source is from a hook that predates the field. Any other source, including the hook's
-    /// "unknown" for a value it could not forward, keeps the session here.</summary>
-    public static bool MayReopen(string payloadJson)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                return false;
-            if (!doc.RootElement.TryGetProperty("source", out var source) || source.ValueKind == JsonValueKind.Null)
-                return true;
-            return source.ValueKind == JsonValueKind.String
-                && source.GetString() is { } value
-                && (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("resume", StringComparison.OrdinalIgnoreCase));
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
     /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session or a resume is
     /// the developer coming to it, as is a start from a hook that predates the source field. A clear opens only a
     /// session this machine has never decided on; in a known session it is the same sitting continuing. Any other

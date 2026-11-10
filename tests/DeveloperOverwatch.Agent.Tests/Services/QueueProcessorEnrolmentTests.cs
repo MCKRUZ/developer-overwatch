@@ -41,8 +41,8 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { /* best-effort cleanup */ }
     }
 
-    // The invariant: once the shipped rows are purged, the queue must still know the session began before
-    // enrolment, or it reads as Unknown and its content is POSTed.
+    // The invariant: once the shipped rows are purged, the session's access must still record that it began
+    // before enrolment, so none of its later items is sent.
     [Fact]
     public async Task PreEnrolmentSession_AfterTheShippedPurge_ItsLaterItemsAreNeverSent()
     {
@@ -70,7 +70,7 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
     }
 
     // A start from after enrolment is a fresh opt-in: the session is captured from its next start or /resume.
-    // Items between enrolment and that start stay here. The reopening outlives the purge of the shipped start.
+    // Items between enrolment and that start stay here. The session stays open from that start after the purge.
     [Fact]
     public async Task PreEnrolmentSession_ResumedAfterEnrolment_ShipsFromTheResume_AndStaysOpenAfterThePurge()
     {

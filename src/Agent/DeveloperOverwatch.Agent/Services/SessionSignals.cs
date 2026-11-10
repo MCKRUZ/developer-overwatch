@@ -87,6 +87,5 @@ internal static class SessionSignals
             : evt.CreatedAt;
 
     private static string Iso(DateTime value) =>
-        DateTime.SpecifyKind(value, value.Kind == DateTimeKind.Unspecified ? DateTimeKind.Utc : value.Kind)
-            .ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
+        UtcInstant.Utc(value).ToString("o", CultureInfo.InvariantCulture);
 }

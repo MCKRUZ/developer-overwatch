@@ -174,10 +174,7 @@ public sealed class QueueProcessor : BackgroundService
     /// (<see cref="AgentConfig.PilotSince"/>) is handled here too, so Local-era data never ships; it leaves
     /// the machine only through an explicit usage-only backfill. No PilotSince means no cutoff.</summary>
     private bool HandlesLocally(QueuedEvent evt) =>
-        _config.Mode == AgentMode.Local || (_config.PilotSince is { } since && ToUtc(evt.CreatedAt) < since);
-
-    private static DateTime ToUtc(DateTime value) =>
-        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
+        _config.Mode == AgentMode.Local || (_config.PilotSince is { } since && UtcInstant.Utc(evt.CreatedAt) < since);
 
     private async Task PurgeOldEventsAsync()
     {

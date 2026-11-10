@@ -174,12 +174,7 @@ public sealed class UsageStore : IUsageStore, IDisposable
         && (t.InputTokens ?? t.OutputTokens ?? t.CacheReadInputTokens ?? t.CacheCreationInputTokens) is not null;
 
     // Range queries and purges compare these strings, so every value must be UTC in one format.
-    private static string ToUtcIso(DateTime value) => (value.Kind switch
-    {
-        DateTimeKind.Local => value.ToUniversalTime(),
-        DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
-        _ => value
-    }).ToString("o");
+    private static string ToUtcIso(DateTime value) => UtcInstant.Utc(value).ToString("o");
 
     private void Execute(string sql, params (string Name, object? Value)[] parameters)
     {

@@ -79,20 +79,30 @@ public sealed class EventQueueRetentionTests : IDisposable
         (await AllIdsAsync()).Should().Equal("shipped-recent", "unshipped-old");
     }
 
-    // A start handled here is what keeps its session's later items here; it must outlive the 24-hour purge.
+    // A session's access is what keeps its later items here, or lets them ship from its floor; it must outlive
+    // every purge of the starts that decided it.
     [Fact]
-    public async Task LocalStart_OutlivesTheShippedPurge_AndGoesWithTheThirtyDayOne()
+    public async Task SessionAccess_OutlivesBothPurgesOfTheStartsThatDecidedIt()
     {
-        await _sut.EnqueueAsync(new QueuedEvent
-        {
-            Id = "local-start", SessionId = "s1", EventType = EventType.SessionStart, PayloadJson = "{}", CreatedAt = Now.AddDays(-29)
-        });
-        await _sut.MarkLocalAsync(["local-start"]);
+        var openFrom = Now.AddDays(-29);
+        await _sut.MarkClosedAsync(await EnqueueStartAsync("closing-start", "closed", Now.AddDays(-29)));
+        await _sut.MarkOpenedAsync(await EnqueueStartAsync("opening-start", "open", openFrom), openFrom);
 
         await _sut.PurgeShippedAsync(TimeSpan.FromHours(24));
-        (await _sut.GetStartStateAsync("s1")).Should().Be(StartState.Local);
-
         await _sut.PurgeUnshippedAsync(TimeSpan.FromDays(28));
+
         (await AllIdsAsync()).Should().BeEmpty();
+        (await _sut.GetAccessAsync("closed")).Should().Be(new SessionAccess(AccessState.Closed, null));
+        (await _sut.GetAccessAsync("open")).Should().Be(new SessionAccess(AccessState.Open, openFrom));
+    }
+
+    private async Task<QueuedEvent> EnqueueStartAsync(string id, string sessionId, DateTime createdAt)
+    {
+        var start = new QueuedEvent
+        {
+            Id = id, SessionId = sessionId, EventType = EventType.SessionStart, PayloadJson = "{}", CreatedAt = createdAt
+        };
+        await _sut.EnqueueAsync(start);
+        return start;
     }
 }

@@ -40,10 +40,11 @@ if (-not (Test-Path $sessionsDir)) { New-Item -ItemType Directory -Path $session
 
 # SessionStart fires again on `/resume` (and on `/clear`, `/compact`) for a Claude session that
 # already has a mapping here — reuse the existing overwatch session ID rather than minting a new
-# one, and still send SessionStart so the API reactivates it. The source goes with it: a compact or
-# clear start of a session the agent keeps on this machine (one begun before enrolment) does not
-# reopen it; only a new session or a resume does. A missing source is left out, as older hooks sent it;
-# a source that is not a plain word goes as "unknown", which the agent never takes as a reopening.
+# one, and still send SessionStart so the API reactivates it. The source goes with it, and decides
+# whether the start may open the session for shipping: startup or resume can, and so can a missing
+# source, which is sent as null (as from a hook that predates the field); clear opens only a session the
+# agent has never decided on; compact never does. A source that is not a plain word goes as "unknown",
+# which never opens a session.
 $rawSource = if ($hookInput) { $hookInput.source } else { $null }
 $source = if ($null -eq $rawSource) { $null }
     elseif ($rawSource -is [string] -and $rawSource.ToLowerInvariant() -cmatch '\A[a-z_]{1,32}\z') { $rawSource.ToLowerInvariant() }

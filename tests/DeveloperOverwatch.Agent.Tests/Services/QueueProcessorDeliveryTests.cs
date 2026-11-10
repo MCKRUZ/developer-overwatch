@@ -219,7 +219,7 @@ public sealed class QueueProcessorDeliveryTests
     }
 
     [Fact]
-    public async Task EventQueue_StartState_IgnoresPendingStarts_AndDeadStartsCountAsUnknown()
+    public async Task EventQueue_Access_ChangesOnlyWhenAStartOpensOrClosesTheSession()
     {
         var dir = Path.Combine(Path.GetTempPath(), $"ow-start-state-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
@@ -227,18 +227,21 @@ public sealed class QueueProcessorDeliveryTests
         try
         {
             await queue.InitializeAsync();
-            foreach (var (id, session) in new[] { ("a1", "a"), ("a2", "a"), ("b1", "b"), ("c1", "c"), ("d1", "d"), ("d2", "d") })
-                await queue.EnqueueAsync(Event(id, EventType.SessionStart, sessionId: session));
-            await queue.MarkShippedAsync(["a1", "d2"]);
-            await queue.MarkDeadAsync(["c1", "d1"]);
+            var starts = new[] { ("a1", "a"), ("b1", "b"), ("c1", "c"), ("d1", "d"), ("d2", "d"), ("d3", "d") }
+                .ToDictionary(s => s.Item1, s => Event(s.Item1, EventType.SessionStart, sessionId: s.Item2));
+            foreach (var start in starts.Values)
+                await queue.EnqueueAsync(start);
+            var openFrom = new DateTime(2026, 5, 1, 10, 0, 0, DateTimeKind.Utc);
+            await queue.MarkShippedAsync(["b1", "d2"]);
+            await queue.MarkDeadAsync(["c1", "d3"]);
+            await queue.MarkOpenedAsync(starts["d1"], openFrom);
 
-            (await queue.GetStartStateAsync("a")).Should().Be(StartState.Shipped, "a resumed session's earlier start is on the server");
-            (await queue.GetStartStateAsync("b")).Should().Be(StartState.Unknown,
-                "a pending start is the caller's to walk to; the gate before it is what reached the server earlier");
-            (await queue.GetStartStateAsync("c")).Should().Be(StartState.Unknown,
-                "a refused start does not show the session is missing; the server decides its items");
-            (await queue.GetStartStateAsync("d")).Should().Be(StartState.Shipped);
-            (await queue.GetStartStateAsync("none")).Should().Be(StartState.Unknown);
+            (await queue.GetAccessAsync("a")).State.Should().Be(AccessState.New, "a pending start decides nothing until the walk reaches it");
+            (await queue.GetAccessAsync("b")).State.Should().Be(AccessState.New, "only an opening or closing start decides the session");
+            (await queue.GetAccessAsync("c")).State.Should().Be(AccessState.New, "the shipper, not the dead mark, closes a session");
+            (await queue.GetAccessAsync("d")).Should().Be(new SessionAccess(AccessState.Open, openFrom),
+                "a later start settled either way leaves the opening as it was");
+            (await queue.GetAccessAsync("none")).State.Should().Be(AccessState.New);
         }
         finally
         {

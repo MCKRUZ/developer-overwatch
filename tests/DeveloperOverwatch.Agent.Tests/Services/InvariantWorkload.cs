@@ -68,7 +68,7 @@ internal sealed class InvariantWorkload(Func<IEventQueue> queue, Dictionary<stri
         await SessionBackfillAsync();
     }
 
-    /// <summary>sess-d's items queued after the clock jump: its Local start must still keep them here.</summary>
+    /// <summary>sess-d's items queued after the clock jump: the session its pre-enrolment start closed must still keep them here.</summary>
     public async Task SeedLateAsync()
     {
         await ToolAsync(D, "late-tool", items: 1);
