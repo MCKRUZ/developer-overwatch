@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { api, setTokenGetter, clearTokenGetter, getAccessToken } from "./api";
 
 function mockFetch(body: unknown, ok = true, status = 200, statusText = "OK") {
@@ -34,6 +34,57 @@ describe("api", () => {
         "/api/sessions?developer=dev%40test.com&repo=org%2Frepo",
         undefined,
       );
+    });
+
+    it("should send every list filter so the server, not the browser, narrows the session list", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.sessions.list({
+        developer: "d@x.io",
+        repo: "r",
+        from: "2026-11-01T00:00:00Z",
+        to: "2026-11-02T00:00:00Z",
+        status: "Active",
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/sessions?developer=d%40x.io&repo=r&from=2026-11-01T00%3A00%3A00Z&to=2026-11-02T00%3A00%3A00Z&status=Active",
+        undefined,
+      );
+    });
+
+    it("should page the timeline backwards from a cursor only when one is given", async () => {
+      globalThis.fetch = mockFetch({ items: [] });
+      await api.sessions.timeline("s1");
+      await api.sessions.timeline("s1", "2026-11-01T10:00:00Z", 20);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(1, "/api/sessions/s1/timeline?limit=50", undefined);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        2,
+        "/api/sessions/s1/timeline?before=2026-11-01T10%3A00%3A00Z&limit=20",
+        undefined,
+      );
+    });
+
+    it("should anchor the timeline on whichever item a governance link points at", async () => {
+      globalThis.fetch = mockFetch({ items: [] });
+      await api.sessions.timelineAround("s1", { turnId: "t1" });
+      await api.sessions.timelineAround("s1", { toolExecutionId: "x1" }, 10);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        1,
+        "/api/sessions/s1/timeline/around?turnId=t1&limit=50",
+        undefined,
+      );
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        2,
+        "/api/sessions/s1/timeline/around?toolExecutionId=x1&limit=10",
+        undefined,
+      );
+    });
+
+    it("should read a session's daily usage and model breakdown from their own endpoints", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.sessions.dailyUsage("s1");
+      await api.sessions.modelBreakdown("s1");
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(1, "/api/sessions/s1/daily-usage", undefined);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(2, "/api/sessions/s1/model-breakdown", undefined);
     });
 
     it("get(id) calls GET /api/sessions/{id}", async () => {
@@ -81,6 +132,15 @@ describe("api", () => {
       globalThis.fetch = mockFetch({ totalSessions: 10 });
       await api.analytics.team();
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/analytics/team", undefined);
+    });
+
+    it("should pass the team date range and developer through to the server", async () => {
+      globalThis.fetch = mockFetch({});
+      await api.analytics.team("2026-11-01", "2026-11-30", "d@x.io");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/analytics/team?from=2026-11-01&to=2026-11-30&developer=d%40x.io",
+        undefined,
+      );
     });
 
     it("developer(email) encodes email in URL", async () => {
@@ -132,6 +192,39 @@ describe("api", () => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/annotations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    });
+  });
+
+  describe("pricing", () => {
+    it("should read the price list's as-of date from /api/pricing", async () => {
+      globalThis.fetch = mockFetch({ asOf: "2026-11-01" });
+      await expect(api.pricing.get()).resolves.toEqual({ asOf: "2026-11-01" });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/pricing", undefined);
+    });
+  });
+
+  describe("bearer token", () => {
+    afterEach(() => clearTokenGetter());
+
+    it("should attach the signed-in user's token, because every API route requires it when sign-in is on", async () => {
+      setTokenGetter(() => "tok-1");
+      globalThis.fetch = mockFetch([]);
+      await api.sessions.list();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/sessions", {
+        headers: { Authorization: "Bearer tok-1" },
+      });
+    });
+
+    it("should keep the request's own headers and body when it adds the token to a POST", async () => {
+      setTokenGetter(() => "tok-1");
+      globalThis.fetch = mockFetch({ annotationId: "a1" });
+      const body = { sessionId: "s1", content: "c", createdBy: "me" };
+      await api.annotations.create(body);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer tok-1" },
         body: JSON.stringify(body),
       });
     });
