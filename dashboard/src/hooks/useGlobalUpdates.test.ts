@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { HubConnectionState } from "@microsoft/signalr";
 import type { HubConnection } from "@microsoft/signalr";
 import { useGlobalUpdates } from "./useGlobalUpdates";
+import type { UsageUpdate } from "./useGlobalUpdates";
 import type { ViolationData } from "./useSessionUpdates";
 
 function makeConnection() {
@@ -110,6 +111,35 @@ describe("useGlobalUpdates", () => {
     expect(result.current.counts.newSessions).toBe(0);
   });
 
+  it("should pass the UsageUpdated payload through, so pages can refetch token totals as turns land", () => {
+    const { connection, emit } = makeConnection();
+    const onUsageUpdated = vi.fn();
+    renderHook(() =>
+      useGlobalUpdates({
+        connection,
+        connectionState: HubConnectionState.Connected,
+        onUsageUpdated,
+      }),
+    );
+    // The API sends only these two fields; the developer is not part of the broadcast.
+    const update: UsageUpdate = { sessionId: "s1", at: "2026-11-10T12:00:00Z" };
+
+    act(() => emit("UsageUpdated", update));
+
+    expect(onUsageUpdated).toHaveBeenCalledWith(update);
+  });
+
+  it("should ignore UsageUpdated when no page listens for it", () => {
+    const { connection, emit } = makeConnection();
+    const { result } = renderHook(() =>
+      useGlobalUpdates({ connection, connectionState: HubConnectionState.Connected }),
+    );
+
+    act(() => emit("UsageUpdated", { sessionId: "s1", at: "t" }));
+
+    expect(result.current.counts.newSessions).toBe(0);
+  });
+
   it("unsubscribes on unmount", () => {
     const { connection } = makeConnection();
     const { unmount } = renderHook(() =>
@@ -120,5 +150,6 @@ describe("useGlobalUpdates", () => {
 
     expect(connection.off).toHaveBeenCalledWith("SessionStarted", expect.any(Function));
     expect(connection.off).toHaveBeenCalledWith("ViolationResolved", expect.any(Function));
+    expect(connection.off).toHaveBeenCalledWith("UsageUpdated", expect.any(Function));
   });
 });

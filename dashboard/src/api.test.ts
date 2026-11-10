@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api } from "./api";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { api, setTokenGetter, clearTokenGetter, getAccessToken } from "./api";
 
 function mockFetch(body: unknown, ok = true, status = 200, statusText = "OK") {
   return vi.fn().mockResolvedValue({
@@ -34,6 +34,57 @@ describe("api", () => {
         "/api/sessions?developer=dev%40test.com&repo=org%2Frepo",
         undefined,
       );
+    });
+
+    it("should send every list filter so the server, not the browser, narrows the session list", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.sessions.list({
+        developer: "d@x.io",
+        repo: "r",
+        from: "2026-11-01T00:00:00Z",
+        to: "2026-11-02T00:00:00Z",
+        status: "Active",
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/sessions?developer=d%40x.io&repo=r&from=2026-11-01T00%3A00%3A00Z&to=2026-11-02T00%3A00%3A00Z&status=Active",
+        undefined,
+      );
+    });
+
+    it("should page the timeline backwards from a cursor only when one is given", async () => {
+      globalThis.fetch = mockFetch({ items: [] });
+      await api.sessions.timeline("s1");
+      await api.sessions.timeline("s1", "2026-11-01T10:00:00Z", 20);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(1, "/api/sessions/s1/timeline?limit=50", undefined);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        2,
+        "/api/sessions/s1/timeline?before=2026-11-01T10%3A00%3A00Z&limit=20",
+        undefined,
+      );
+    });
+
+    it("should anchor the timeline on whichever item a governance link points at", async () => {
+      globalThis.fetch = mockFetch({ items: [] });
+      await api.sessions.timelineAround("s1", { turnId: "t1" });
+      await api.sessions.timelineAround("s1", { toolExecutionId: "x1" }, 10);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        1,
+        "/api/sessions/s1/timeline/around?turnId=t1&limit=50",
+        undefined,
+      );
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        2,
+        "/api/sessions/s1/timeline/around?toolExecutionId=x1&limit=10",
+        undefined,
+      );
+    });
+
+    it("should read a session's daily usage and model breakdown from their own endpoints", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.sessions.dailyUsage("s1");
+      await api.sessions.modelBreakdown("s1");
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(1, "/api/sessions/s1/daily-usage", undefined);
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(2, "/api/sessions/s1/model-breakdown", undefined);
     });
 
     it("get(id) calls GET /api/sessions/{id}", async () => {
@@ -81,6 +132,15 @@ describe("api", () => {
       globalThis.fetch = mockFetch({ totalSessions: 10 });
       await api.analytics.team();
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/analytics/team", undefined);
+    });
+
+    it("should pass the team date range and developer through to the server", async () => {
+      globalThis.fetch = mockFetch({});
+      await api.analytics.team("2026-11-01", "2026-11-30", "d@x.io");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/analytics/team?from=2026-11-01&to=2026-11-30&developer=d%40x.io",
+        undefined,
+      );
     });
 
     it("developer(email) encodes email in URL", async () => {
@@ -137,6 +197,85 @@ describe("api", () => {
     });
   });
 
+  describe("usage", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it("should send the viewer's IANA time zone, because the server buckets days in the viewer's local time", async () => {
+      vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+        timeZone: "America/New_York",
+      } as Intl.ResolvedDateTimeFormatOptions);
+      globalThis.fetch = mockFetch({});
+      await api.usage.summary({ from: "2026-11-01", to: "2026-11-07", granularity: "day" });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/usage/summary?from=2026-11-01&to=2026-11-07&granularity=day&timeZone=America%2FNew_York",
+        undefined,
+      );
+    });
+
+    it("should pass the developer and project filters only when they are set", async () => {
+      vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+        timeZone: "Asia/Kolkata",
+      } as Intl.ResolvedDateTimeFormatOptions);
+      globalThis.fetch = mockFetch({});
+      await api.usage.summary({
+        from: "2026-11-01",
+        to: "2026-11-30",
+        granularity: "week",
+        developer: "d@x.io",
+        project: "overwatch",
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/usage/summary?from=2026-11-01&to=2026-11-30&granularity=week&timeZone=Asia%2FKolkata&developer=d%40x.io&project=overwatch",
+        undefined,
+      );
+    });
+
+    it("should list running sessions from /api/usage/running", async () => {
+      globalThis.fetch = mockFetch([{ id: "s1" }]);
+      await expect(api.usage.running()).resolves.toEqual([{ id: "s1" }]);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/running", undefined);
+    });
+
+    it("should pass the developer and project filters to the running list, so it matches the filtered totals", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.usage.running({ developer: "alice@x.io", project: "over watch" });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/running?developer=alice%40x.io&project=over+watch", undefined);
+    });
+  });
+
+  describe("pricing", () => {
+    it("should read the price list's as-of date from /api/pricing", async () => {
+      globalThis.fetch = mockFetch({ asOf: "2026-11-01" });
+      await expect(api.pricing.get()).resolves.toEqual({ asOf: "2026-11-01" });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/pricing", undefined);
+    });
+  });
+
+  describe("bearer token", () => {
+    afterEach(() => clearTokenGetter());
+
+    it("should attach the signed-in user's token, because every API route requires it when sign-in is on", async () => {
+      setTokenGetter(() => "tok-1");
+      globalThis.fetch = mockFetch([]);
+      await api.sessions.list();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/sessions", {
+        headers: { Authorization: "Bearer tok-1" },
+      });
+    });
+
+    it("should keep the request's own headers and body when it adds the token to a POST", async () => {
+      setTokenGetter(() => "tok-1");
+      globalThis.fetch = mockFetch({ annotationId: "a1" });
+      const body = { sessionId: "s1", content: "c", createdBy: "me" };
+      await api.annotations.create(body);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer tok-1" },
+        body: JSON.stringify(body),
+      });
+    });
+  });
+
   describe("error handling", () => {
     it("throws on non-ok response with status and body", async () => {
       globalThis.fetch = mockFetch("Not Found", false, 404, "Not Found");
@@ -147,5 +286,27 @@ describe("api", () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
       await expect(api.sessions.list()).rejects.toThrow("Failed to fetch");
     });
+  });
+});
+
+describe("getAccessToken", () => {
+  afterEach(() => clearTokenGetter());
+
+  it("should return null when no sign-in has registered a token, so callers connect anonymously", () => {
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it("should return the current token so the hub's token factory picks up silent renewals", () => {
+    let token = "first";
+    setTokenGetter(() => token);
+    expect(getAccessToken()).toBe("first");
+    token = "renewed";
+    expect(getAccessToken()).toBe("renewed");
+  });
+
+  it("should return null again after sign-out clears the getter", () => {
+    setTokenGetter(() => "t");
+    clearTokenGetter();
+    expect(getAccessToken()).toBeNull();
   });
 });

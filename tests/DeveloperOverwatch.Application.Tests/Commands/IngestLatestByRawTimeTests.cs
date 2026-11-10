@@ -72,6 +72,7 @@ public class IngestLatestByRawTimeTests
         Substitute.For<IUnitOfWork>(),
         Substitute.For<ITokenPricingCalculator>(),
         Substitute.For<IGovernanceViolationRepository>(),
+        Substitute.For<ISessionStaleThresholdProvider>(),
         new FixedTime(Now));
 
     private sealed class FixedTime(DateTime now) : TimeProvider

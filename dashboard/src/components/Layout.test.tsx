@@ -31,4 +31,12 @@ describe("Layout", () => {
     const links = screen.getAllByRole("link", { name: "Analytics" });
     expect(links[0]).toHaveAttribute("href", "/analytics");
   });
+
+  it("should link to the usage meter from the main navigation", () => {
+    render(<Layout />);
+    expect(screen.getByRole("link", { name: "Usage" })).toHaveAttribute(
+      "href",
+      "/usage",
+    );
+  });
 });

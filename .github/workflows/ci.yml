@@ -44,6 +44,10 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      # The API image (aspnet:10.0 noble) already ships tzdata-legacy; the runner does not.
+      - name: Install legacy time-zone names (matches the API image)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tzdata-legacy
+
       - name: Test with coverage
         run: >
           dotnet test --no-build --configuration Release

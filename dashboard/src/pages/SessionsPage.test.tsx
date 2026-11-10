@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { act } from "@testing-library/react";
 import { render, screen, waitFor, within, userEvent } from "../test/render";
 import SessionsPage from "./SessionsPage";
 import { api } from "../api";
 import { buildSessionListItem } from "../test/factories";
+import type { SessionListItem } from "../types";
 
 vi.mock("../api", () => ({
   api: {
@@ -13,7 +15,31 @@ vi.mock("../api", () => ({
   },
 }));
 
+const live = vi.hoisted(() => ({ refetch: null as (() => void) | null }));
+
+vi.mock("../hooks/useLiveRefresh", () => ({
+  useLiveRefresh: (refetch: () => void) => {
+    live.refetch = refetch;
+  },
+}));
+
 const mockApi = vi.mocked(api);
+
+type Deferred = {
+  promise: Promise<SessionListItem[]>;
+  resolve: (rows: SessionListItem[]) => void;
+  reject: (e: Error) => void;
+};
+
+function deferred(): Deferred {
+  let resolve!: Deferred["resolve"];
+  let reject!: Deferred["reject"];
+  const promise = new Promise<SessionListItem[]>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 describe("SessionsPage", () => {
   beforeEach(() => {
@@ -292,5 +318,80 @@ describe("SessionsPage", () => {
     expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
     expect(within(activeSection).getAllByRole("link", { name: /\.\.\.$/ })).toHaveLength(5);
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+  describe("live refresh", () => {
+    it("should refetch silently on a live update, so the table never flashes back to loading", async () => {
+      mockApi.sessions.list.mockResolvedValueOnce([
+        buildSessionListItem({ id: "aaaaaaaa-0000-0000-0000-000000000000", developerEmail: "first@test.com" }),
+      ]);
+      render(<SessionsPage />);
+      await screen.findByText("aaaaaaaa...");
+
+      mockApi.sessions.list.mockResolvedValueOnce([
+        buildSessionListItem({ id: "bbbbbbbb-0000-0000-0000-000000000000", developerEmail: "second@test.com" }),
+      ]);
+      act(() => live.refetch!());
+
+      expect(screen.queryByText("Loading sessions...")).not.toBeInTheDocument();
+      await screen.findByText("bbbbbbbb...");
+      expect(mockApi.sessions.list).toHaveBeenCalledTimes(2);
+    });
+
+    it("should keep the reader on their active-sessions page when a live update lands", async () => {
+      const user = userEvent.setup();
+      const active = Array.from({ length: 12 }, (_, i) =>
+        buildSessionListItem({
+          id: `act${String(i).padStart(2, "0")}-0000-0000-0000-000000000000`,
+          status: "Active",
+          endedAt: undefined,
+        }),
+      );
+      mockApi.sessions.list.mockResolvedValue(active);
+      render(<SessionsPage />);
+      await user.click(await screen.findByRole("button", { name: "Next" }));
+      expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+
+      act(() => live.refetch!());
+
+      await waitFor(() => expect(mockApi.sessions.list).toHaveBeenCalledTimes(2));
+      expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    });
+
+    it.each([
+      ["resolves", (d: Deferred) => d.resolve([buildSessionListItem({ id: "bbbbbbbb-0000-0000-0000-000000000000" })])],
+      ["rejects", (d: Deferred) => d.reject(new Error("500: late"))],
+    ])("should finish a live refetch that %s before the next tick's fetch, so responses land in order and the newest rows win", async (_label, settle) => {
+      mockApi.sessions.list.mockResolvedValueOnce([buildSessionListItem({ id: "aaaaaaaa-0000-0000-0000-000000000000" })]);
+      render(<SessionsPage />);
+      await screen.findByText("aaaaaaaa...");
+
+      const late = deferred();
+      mockApi.sessions.list.mockReturnValueOnce(late.promise);
+      act(() => live.refetch!());
+      mockApi.sessions.list.mockResolvedValueOnce([buildSessionListItem({ id: "cccccccc-0000-0000-0000-000000000000" })]);
+      act(() => live.refetch!());
+      expect(mockApi.sessions.list).toHaveBeenCalledTimes(2);
+
+      await act(async () => settle(late));
+
+      await screen.findByText("cccccccc...");
+      expect(mockApi.sessions.list).toHaveBeenCalledTimes(3);
+      expect(screen.queryByText("bbbbbbbb...")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Error:/)).not.toBeInTheDocument();
+    });
+
+    it("should clear an earlier error once a later fetch succeeds", async () => {
+      mockApi.sessions.list.mockRejectedValueOnce(new Error("503: down"));
+      render(<SessionsPage />);
+      await screen.findByText("Error: 503: down");
+
+      mockApi.sessions.list.mockResolvedValueOnce([
+        buildSessionListItem({ id: "cccccccc-0000-0000-0000-000000000000", developerEmail: "back@test.com" }),
+      ]);
+      act(() => live.refetch!());
+
+      await screen.findByText("cccccccc...");
+      expect(screen.queryByText(/Error:/)).not.toBeInTheDocument();
+    });
   });
 });

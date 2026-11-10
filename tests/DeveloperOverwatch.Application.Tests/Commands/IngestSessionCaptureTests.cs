@@ -470,7 +470,7 @@ public class IngestSessionCaptureTests
     // The handler's clock sits after every fixture timestamp, so only deliberately future ones clamp.
     private static readonly DateTime Now = T0.AddHours(1);
 
-    private IngestSessionEventsCommandHandler EventsHandler() => new(_repo, _uow, _pricing, _violations, new FixedTime(Now));
+    private IngestSessionEventsCommandHandler EventsHandler() => new(_repo, _uow, _pricing, _violations, Substitute.For<ISessionStaleThresholdProvider>(), new FixedTime(Now));
 
     private static IngestSessionStartCommand StartCommand(string sessionId) => new()
     {

@@ -10,6 +10,9 @@ import type {
   DeveloperAnalytics,
   GovernanceViolation,
   PricingInfo,
+  UsageGranularity,
+  UsageSummary,
+  RunningSession,
 } from "./types";
 
 const BASE = "/api";
@@ -24,8 +27,13 @@ export function clearTokenGetter(): void {
   tokenGetter = null;
 }
 
+/** The signed-in user's current bearer token, or null when nobody is signed in. */
+export function getAccessToken(): string | null {
+  return tokenGetter?.() ?? null;
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = tokenGetter?.();
+  const token = getAccessToken();
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> | undefined),
   };
@@ -52,6 +60,18 @@ export interface SessionListFilters {
   to?: string;
   status?: SessionListItem["status"];
 }
+
+export interface UsageSummaryParams {
+  /** Local dates (YYYY-MM-DD), both inclusive. */
+  from: string;
+  to: string;
+  granularity: UsageGranularity;
+  developer?: string;
+  project?: string;
+}
+
+/** The running list depends on who and which project, never on the period. */
+export type UsageRunningFilters = Pick<UsageSummaryParams, "developer" | "project">;
 
 export const api = {
   sessions: {
@@ -147,6 +167,27 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+    },
+  },
+
+  usage: {
+    summary(params: UsageSummaryParams): Promise<UsageSummary> {
+      const qs = new URLSearchParams({
+        from: params.from,
+        to: params.to,
+        granularity: params.granularity,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (params.developer) qs.set("developer", params.developer);
+      if (params.project) qs.set("project", params.project);
+      return fetchJson(`${BASE}/usage/summary?${qs.toString()}`);
+    },
+    running(filters: UsageRunningFilters = {}): Promise<RunningSession[]> {
+      const qs = new URLSearchParams();
+      if (filters.developer) qs.set("developer", filters.developer);
+      if (filters.project) qs.set("project", filters.project);
+      const query = qs.toString();
+      return fetchJson(`${BASE}/usage/running${query ? `?${query}` : ""}`);
     },
   },
 

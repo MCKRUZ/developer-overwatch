@@ -16,6 +16,7 @@ public sealed class IngestSessionEventsCommandHandler
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITokenPricingCalculator _pricing;
     private readonly IGovernanceViolationRepository _violations;
+    private readonly ISessionStaleThresholdProvider _staleThreshold;
     private readonly TimeProvider _time;
 
     public IngestSessionEventsCommandHandler(
@@ -23,12 +24,14 @@ public sealed class IngestSessionEventsCommandHandler
         IUnitOfWork unitOfWork,
         ITokenPricingCalculator pricing,
         IGovernanceViolationRepository violations,
+        ISessionStaleThresholdProvider staleThreshold,
         TimeProvider time)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
         _pricing = pricing;
         _violations = violations;
+        _staleThreshold = staleThreshold;
         _time = time;
     }
 
@@ -48,13 +51,27 @@ public sealed class IngestSessionEventsCommandHandler
         var results = new IngestItemResultsBuilder();
         var batch = await ValidateAsync(request, results, cancellationToken);
         var now = _time.GetUtcNow().UtcDateTime;
-        var totalEvents = await StoreAsync(session, batch, results, now, cancellationToken);
-        if (totalEvents > 0)
-            session.LastActivityAt = LatestActivity(session.LastActivityAt, batch.Stamps, now);
+        var stored = await StoreAsync(session, batch, results, now, cancellationToken);
+        var revived = 0;
+        if (stored.Total > 0)
+        {
+            var before = session.LastActivityAt;
+            session.LastActivityAt = LatestActivity(before, batch.Stamps, now);
+            revived = ReturnsToRunningList(session, before, now) ? 1 : 0;
+        }
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(totalEvents, results.Build()));
+        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(
+            stored.Total, results.Build(), stored.Turns, stored.LiveStateChanges + revived));
+    }
+
+    // The running list holds Active sessions whose last activity is within the stale threshold. A batch that moves
+    // an idle session back inside it changes that list, even when it holds only tools or files.
+    private bool ReturnsToRunningList(Session session, DateTime before, DateTime now)
+    {
+        var activeSince = now.AddMinutes(-_staleThreshold.StaleAfterMinutes);
+        return session.Status == SessionStatus.Active && before < activeSince && session.LastActivityAt >= activeSince;
     }
 
     // Each item gets its own outcome: invalid items are rejected without sinking the batch, and
@@ -103,7 +120,7 @@ public sealed class IngestSessionEventsCommandHandler
     // client-side even though this exact batch already committed, so the same Ids get
     // resubmitted on retry. Treat resubmission as a no-op rather than double-counting
     // cost/tokens or crashing EF's change tracker on the identity conflict.
-    private async Task<int> StoreAsync(
+    private async Task<StoredCounts> StoreAsync(
         Session session,
         ValidatedBatch batch,
         IngestItemResultsBuilder results,
@@ -114,13 +131,15 @@ public sealed class IngestSessionEventsCommandHandler
         var newTools = results.New(batch.Tools, t => t.Id, batch.ExistingToolIds);
         var newFiles = results.New(batch.Files, f => f.Id, batch.ExistingFileIds);
 
-        var totalEvents = await AddTurnsAsync(session, newTurns, cancellationToken);
-        totalEvents += await AddToolExecutionsAsync(session, newTools, cancellationToken);
-        totalEvents += await AddFileChangesAsync(session, newFiles, cancellationToken);
-        totalEvents += ApplyActivity(session, batch.Activity, now);
-        totalEvents += await ApplyToolFailuresAsync(session, batch.Failures, results, now, cancellationToken);
-        return totalEvents;
+        var turns = await AddTurnsAsync(session, newTurns, cancellationToken);
+        var toolsAndFiles = await AddToolExecutionsAsync(session, newTools, cancellationToken)
+            + await AddFileChangesAsync(session, newFiles, cancellationToken);
+        var liveStateChanges = ApplyActivity(session, batch.Activity, now)
+            + await ApplyToolFailuresAsync(session, batch.Failures, results, now, cancellationToken);
+        return new StoredCounts(turns + toolsAndFiles + liveStateChanges, turns, liveStateChanges);
     }
+
+    private sealed record StoredCounts(int Total, int Turns, int LiveStateChanges);
 
     private async Task<int> AddTurnsAsync(
         Session session, IReadOnlyList<ConversationTurnDto> newTurns, CancellationToken cancellationToken)

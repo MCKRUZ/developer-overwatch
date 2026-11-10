@@ -239,3 +239,84 @@ export interface DeveloperAnalytics {
 export interface PricingInfo {
   asOf: string;
 }
+
+export type UsageGranularity = "day" | "week" | "month";
+
+/** Sums for one slice of usage. `cacheHitRate` (0..1) is omitted when there was no input. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  cacheHitRate?: number;
+  turnCount: number;
+}
+
+/** One day, ISO week (its Monday) or month (its 1st), as a local YYYY-MM-DD date. */
+export interface UsageBucket extends UsageTotals {
+  start: string;
+}
+
+/** `key` is omitted for the main thread (subagent split) and for an unknown branch or machine. */
+export interface UsageSplitRow extends UsageTotals {
+  key?: string;
+  label: string;
+  costShare: number;
+  firstAt: string;
+  lastAt: string;
+}
+
+export interface UsageSplits {
+  model: UsageSplitRow[];
+  project: UsageSplitRow[];
+  session: UsageSplitRow[];
+  subagent: UsageSplitRow[];
+  branch: UsageSplitRow[];
+  developer: UsageSplitRow[];
+  machine: UsageSplitRow[];
+  agent: UsageSplitRow[];
+}
+
+/** Spend over the last `lookbackMinutes`, all four token kinds, per minute. */
+export interface UsageBurn {
+  tokensPerMinute: number;
+  costPerMinute: number;
+  lookbackMinutes: number;
+}
+
+export interface UsageSummary {
+  from: string;
+  to: string;
+  granularity: UsageGranularity;
+  timeZone: string;
+  pricesAsOf: string;
+  /** The developer and project filters the server applied, echoed back; omitted when not set. */
+  developer?: string;
+  project?: string;
+  totals: UsageTotals;
+  buckets: UsageBucket[];
+  splits: UsageSplits;
+  burn: UsageBurn;
+}
+
+export interface RunningSession {
+  id: string;
+  developerEmail: string;
+  developerName?: string;
+  project?: string;
+  machineName?: string;
+  agent: string;
+  activityState?: ActivityState;
+  idleForSeconds?: number;
+  lastActivityAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  estimatedCostUsd: number;
+  currentContextTokens?: number;
+  burnTokensPerMinute: number;
+  burnCostPerMinute: number;
+}

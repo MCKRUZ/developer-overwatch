@@ -1,3 +1,8 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 3000;
     server_name localhost;
@@ -6,7 +11,7 @@ server {
 
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self';" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     location /api/ {
@@ -14,6 +19,26 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # SignalR hub. Browsers cannot set headers on a WebSocket, so the bearer token travels as
+    # ?access_token= and the access log is off here to keep it out of the logs. No add_header in
+    # this block: one would discard the server-level security headers for this path.
+    location /hubs/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+        # The hub token travels in the query string (?access_token=), so keep the URL out of logs.
+        access_log off;
+        # access_log off does not cover the error log, and a failed upstream (refused, timed out,
+        # no live upstreams) logs the request line, token included, at the error level.
+        error_log /dev/stderr crit;
     }
 
     location / {

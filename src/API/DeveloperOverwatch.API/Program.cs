@@ -6,6 +6,8 @@ using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Hubs;
 using DeveloperOverwatch.API.Middleware;
+using DeveloperOverwatch.API.RateLimiting;
+using DeveloperOverwatch.API.Telemetry;
 using DeveloperOverwatch.Application;
 using DeveloperOverwatch.Application.Services;
 using DeveloperOverwatch.Domain.Interfaces;
@@ -18,9 +20,11 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using OpenTelemetry.Instrumentation.AspNetCore;
 using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddHostingLogFloor();
 
 var connectionString = builder.Configuration.GetValue<string>("Database:ConnectionString")
     ?? "Data Source=overwatch.db";
@@ -44,6 +48,15 @@ if (!string.IsNullOrEmpty(appInsightsCs))
             }
         })
         .WithTracing(tracing => tracing.AddSource(ApplicationTelemetry.ActivitySourceName));
+    builder.Services.Configure<AspNetCoreTraceInstrumentationOptions>(options =>
+    {
+        var previous = options.EnrichWithHttpRequest;
+        options.EnrichWithHttpRequest = (activity, request) =>
+        {
+            previous?.Invoke(activity, request);
+            AccessTokenRedaction.Apply(activity, request);
+        };
+    });
 }
 
 var healthChecks = builder.Services.AddHealthChecks();
@@ -149,7 +162,7 @@ builder.Services.AddRateLimiter(options =>
             return RateLimitPartition.GetNoLimiter("webhook-global-bypass");
 
         return RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            RateLimitPartitionKey.For(context),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = defaultPermitLimit,
@@ -203,6 +216,18 @@ builder.Services.AddAuthentication(options =>
             NameClaimType = "name",
             RoleClaimType = "roles"
         };
+        // Browsers cannot set headers on a WebSocket or EventSource, so the SignalR client sends the token
+        // as ?access_token=. Accept it on the hub only: anywhere else a token in the URL is refused.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var queryToken = context.Request.Query["access_token"].ToString();
+                if (context.Request.Path.StartsWithSegments("/hubs") && !string.IsNullOrEmpty(queryToken))
+                    context.Token = queryToken;
+                return Task.CompletedTask;
+            }
+        };
     }
     else
     {
@@ -227,6 +252,14 @@ builder.Services.AddAuthorization(options =>
 
     options.AddPolicy(AuthPolicies.Dashboard, policy =>
         policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+              .RequireAuthenticatedUser());
+
+    // Team-wide reads (the hub, the usage meter): a signed-in user with OIDC on, anonymous without it.
+    // Never the agent API key, which every developer machine holds.
+    options.AddPolicy(AuthPolicies.DashboardRead, policy =>
+        policy.AddAuthenticationSchemes(hasOidc
+                  ? JwtBearerDefaults.AuthenticationScheme
+                  : AnonymousDashboardDefaults.AuthenticationScheme)
               .RequireAuthenticatedUser());
 });
 
@@ -255,11 +288,15 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
 app.UseMiddleware<WebhookSignatureMiddleware>();
-app.UseRateLimiter();
+// Authentication first: the global limiter partitions by the signed-in user, which it can only see once
+// the request is authenticated. Authorization stays after, so an over-limit caller gets 429, not 401.
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
-app.MapHub<OverwatchHub>("/hubs/overwatch");
+// A WebSocket authenticates once, when it opens; close it when the token expires so a lapsed sign-in stops
+// receiving usage data. The client reconnects with a fresh token.
+app.MapHub<OverwatchHub>("/hubs/overwatch", options => options.CloseOnAuthenticationExpiration = true);
 app.MapHealthChecks("/health");
 
 if (!hasOidc)
@@ -282,4 +319,5 @@ public static class AuthPolicies
 {
     public const string Agent = "Agent";
     public const string Dashboard = "Dashboard";
+    public const string DashboardRead = "DashboardRead";
 }

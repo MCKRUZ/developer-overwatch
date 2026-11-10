@@ -25,13 +25,16 @@ public sealed class SessionsController : ControllerBase
 {
     private readonly IMediator _mediator;
     private readonly IHubContext<OverwatchHub, IOverwatchHubClient> _hub;
+    private readonly TimeProvider _time;
 
     public SessionsController(
         IMediator mediator,
-        IHubContext<OverwatchHub, IOverwatchHubClient> hub)
+        IHubContext<OverwatchHub, IOverwatchHubClient> hub,
+        TimeProvider time)
     {
         _mediator = mediator;
         _hub = hub;
+        _time = time;
     }
 
     [HttpPost("start")]
@@ -93,6 +96,15 @@ public sealed class SessionsController : ControllerBase
             command.ConversationTurns.Count,
             command.ToolExecutions.Count,
             command.FileChanges.Count);
+
+        // The usage page shows turn totals, which sessions are running, and each one's live state. Tool and file
+        // events on a session already running, and resent duplicates, change none of these, so they do not make every
+        // dashboard refetch. On an idle session they return it to the running list, which counts as a live-state change.
+        if (result.Value!.TurnsStored > 0 || result.Value.LiveStateChanges > 0)
+        {
+            await _hub.Clients.All.UsageUpdated(new UsageUpdatedNotification(
+                sessionId, _time.GetUtcNow().UtcDateTime));
+        }
 
         return Ok(new { eventsIngested = result.Value!.EventsIngested, results = result.Value.Results });
     }
