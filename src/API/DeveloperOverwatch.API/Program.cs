@@ -294,7 +294,9 @@ app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
-app.MapHub<OverwatchHub>("/hubs/overwatch");
+// A WebSocket authenticates once, when it opens; close it when the token expires so a lapsed sign-in stops
+// receiving usage data. The client reconnects with a fresh token.
+app.MapHub<OverwatchHub>("/hubs/overwatch", options => options.CloseOnAuthenticationExpiration = true);
 app.MapHealthChecks("/health");
 
 if (!hasOidc)

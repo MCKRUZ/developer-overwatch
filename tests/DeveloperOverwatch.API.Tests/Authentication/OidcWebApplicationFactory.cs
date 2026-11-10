@@ -43,11 +43,14 @@ public class OidcWebApplicationFactory : OverwatchWebApplicationFactory
     }
 
     /// <summary>A token the API accepts, for the given subject.</summary>
-    public static string MintToken(string subject) => new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+    public static string MintToken(string subject) => MintToken(subject, TimeSpan.FromHours(1));
+
+    /// <summary>A token the API accepts for the given subject until <paramref name="lifetime"/> from now.</summary>
+    public static string MintToken(string subject, TimeSpan lifetime) => new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
     {
         Issuer = Issuer,
         Audience = Audience,
-        Expires = DateTime.UtcNow.AddHours(1),
+        Expires = DateTime.UtcNow.Add(lifetime),
         Subject = new ClaimsIdentity([new Claim("sub", subject), new Claim("name", "Shared Display Name")]),
         SigningCredentials = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256),
     });
