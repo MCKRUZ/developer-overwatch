@@ -68,6 +68,33 @@ public class GovernanceBehaviorTests
         await _engine.DidNotReceive().EvaluateAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    // The session closed and its end will be answered duplicate if redelivered, so governance cut short by
+    // a client that gave up waiting would never run.
+    [Fact]
+    public async Task Handle_RequestCancelledAfterTheClose_StillEvaluatesAndNotifies()
+    {
+        _engine.EvaluateAsync("s1", Arg.Any<CancellationToken>()).Returns(ci =>
+        {
+            ci.Arg<CancellationToken>().ThrowIfCancellationRequested();
+            return new List<GovernanceViolation>
+            {
+                new() { Id = "v1", SessionId = "s1", RuleId = "r1", Severity = ViolationSeverity.Error, Message = "test" }
+            };
+        });
+        _notifier.ViolationCreatedAsync(Arg.Any<GovernanceViolation>(), Arg.Any<CancellationToken>())
+            .Returns(ci => ci.Arg<CancellationToken>().IsCancellationRequested
+                ? Task.FromCanceled(ci.Arg<CancellationToken>())
+                : Task.CompletedTask);
+        using var aborted = new CancellationTokenSource();
+        await aborted.CancelAsync();
+
+        var result = await _behavior.Handle(_command, Next(IngestOutcome.Accepted, closed: true), aborted.Token);
+
+        result.IsSuccess.Should().BeTrue();
+        await _notifier.Received(1).ViolationCreatedAsync(
+            Arg.Is<GovernanceViolation>(v => v.Id == "v1"), Arg.Is<CancellationToken>(t => !t.IsCancellationRequested));
+    }
+
     [Fact]
     public async Task Handle_GovernanceThrows_DoesNotFailSessionEnd()
     {
