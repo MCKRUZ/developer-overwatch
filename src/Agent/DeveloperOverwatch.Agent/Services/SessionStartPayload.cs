@@ -87,6 +87,32 @@ internal static class SessionStartPayload
         }
     }
 
+    /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session or a resume is
+    /// the developer coming to it, as is a start from a hook that predates the source field. A clear opens only a
+    /// session this machine has never decided on; in a known session it is the same sitting continuing. Any other
+    /// source, including the hook's "unknown", never opens.</summary>
+    public static bool MayOpen(string payloadJson, AccessState state)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!doc.RootElement.TryGetProperty("source", out var source) || source.ValueKind == JsonValueKind.Null)
+                return true;
+            if (source.ValueKind != JsonValueKind.String || source.GetString() is not { } value)
+                return false;
+            if (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("resume", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return state == AccessState.New && value.Equals("clear", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static string? ReadRepoPath(string rawPayload)
     {
         try

@@ -42,6 +42,17 @@ public interface IEventQueue
 
     /// <summary>Events this machine never sent: pending ones it could not, and Local starts it must not.</summary>
     Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default);
+
+    /// <summary>Whether the session may ship, and from which instant; New when no start has decided it yet.</summary>
+    Task<SessionAccess> GetAccessAsync(string sessionId, CancellationToken ct = default);
+
+    /// <summary>Settles <paramref name="start"/> and opens its session from <paramref name="openFrom"/> unless it
+    /// is open already; returns the instant the session is open from, since the first opening wins.</summary>
+    Task<DateTime> MarkOpenedAsync(QueuedEvent start, DateTime openFrom, CancellationToken ct = default);
+
+    /// <summary>Settles <paramref name="start"/> and closes its session, unless the session opened after the
+    /// start was queued.</summary>
+    Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default);
 }
 
 /// <summary>What the queue says about a session's settled starts. <see cref="Unknown"/> is the default.</summary>
@@ -64,7 +75,7 @@ public enum StartState
     Local
 }
 
-public sealed class EventQueue : IEventQueue, IDisposable
+public sealed partial class EventQueue : IEventQueue, IDisposable
 {
     private readonly SqliteConnection _connection;
     private readonly TimeProvider _time;
@@ -108,8 +119,13 @@ public sealed class EventQueue : IEventQueue, IDisposable
                     session_id TEXT PRIMARY KEY,
                     reopened_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS session_access (
+                    session_id TEXT PRIMARY KEY,
+                    open_from TEXT NULL
+                );
                 """;
             cmd.ExecuteNonQuery();
+            SeedAccess();
         }
 
         return Task.CompletedTask;
