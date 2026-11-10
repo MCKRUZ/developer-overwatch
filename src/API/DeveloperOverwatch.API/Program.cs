@@ -6,6 +6,7 @@ using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Hubs;
 using DeveloperOverwatch.API.Middleware;
+using DeveloperOverwatch.API.Telemetry;
 using DeveloperOverwatch.Application;
 using DeveloperOverwatch.Application.Services;
 using DeveloperOverwatch.Domain.Interfaces;
@@ -18,6 +19,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using OpenTelemetry.Instrumentation.AspNetCore;
 using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -44,6 +46,15 @@ if (!string.IsNullOrEmpty(appInsightsCs))
             }
         })
         .WithTracing(tracing => tracing.AddSource(ApplicationTelemetry.ActivitySourceName));
+    builder.Services.Configure<AspNetCoreTraceInstrumentationOptions>(options =>
+    {
+        var previous = options.EnrichWithHttpRequest;
+        options.EnrichWithHttpRequest = (activity, request) =>
+        {
+            previous?.Invoke(activity, request);
+            AccessTokenRedaction.Apply(activity, request);
+        };
+    });
 }
 
 var healthChecks = builder.Services.AddHealthChecks();
@@ -202,6 +213,18 @@ builder.Services.AddAuthentication(options =>
             ClockSkew = TimeSpan.Zero,
             NameClaimType = "name",
             RoleClaimType = "roles"
+        };
+        // Browsers cannot set headers on a WebSocket or EventSource, so the SignalR client sends the token
+        // as ?access_token=. Accept it on the hub only: anywhere else a token in the URL is refused.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var queryToken = context.Request.Query["access_token"].ToString();
+                if (context.Request.Path.StartsWithSegments("/hubs") && !string.IsNullOrEmpty(queryToken))
+                    context.Token = queryToken;
+                return Task.CompletedTask;
+            }
         };
     }
     else
