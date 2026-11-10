@@ -46,6 +46,7 @@ public static class DependencyInjection
         }
 
         services.AddScoped<ISessionRepository, SessionRepository>();
+        services.AddScoped<IUsageRepository, UsageRepository>();
         services.AddScoped<ICommitSessionLinkRepository, CommitSessionLinkRepository>();
         services.AddScoped<IPullRequestReviewRepository, PullRequestReviewRepository>();
         services.AddScoped<IArchitectAnnotationRepository, ArchitectAnnotationRepository>();
