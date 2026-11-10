@@ -24,9 +24,12 @@ public sealed record ActivityEventDto
 /// <summary>A failed tool call, with no error text. Agent delivery is at-least-once, so the same
 /// failure can arrive more than once; <see cref="Id"/> (the hook's event id) lets the server store
 /// each failure once and count only ids it has not seen.</summary>
-/// <remarks>Item fields other than the id are optional on the wire in every item DTO here. A
-/// <c>required</c> or non-nullable member would turn one item's missing value into a 400 for the
-/// whole batch; instead <see cref="IngestItemRules"/> rejects that item alone.</remarks>
+/// <remarks>Fields of this DTO other than the id are optional on the wire. A <c>required</c> or
+/// non-nullable member would turn one item's missing value into a 400 for the whole batch; instead
+/// <see cref="IngestItemRules"/> rejects that item alone. Not every item DTO here does the same:
+/// <see cref="ConversationTurnDto.Timestamp"/>, <see cref="ToolExecutionDto.Timestamp"/>,
+/// <see cref="ActivityEventDto.State"/> and <see cref="ActivityEventDto.At"/> are still
+/// <c>required</c>.</remarks>
 public sealed record ToolFailureDto
 {
     public required string Id { get; init; }

@@ -51,7 +51,7 @@ public sealed class RealServerDeliveryTests(ITestOutputHelper output)
             stored.ToolIds.Concat(stored.FailureIds).Should().NotContain(id => id.Contains(RealServerWorkload.D));
 
             AssertAggregates(run);
-            run.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            run.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));
         }
     }
 

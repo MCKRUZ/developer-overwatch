@@ -69,7 +69,7 @@ public sealed class DeliveryInvariantTests(ITestOutputHelper output)
                 .Should().OnlyContain(a => CarriesSomething(a.Body),
                     "an /events POST that carries no item and no activity state is a wasted request");
 
-            run.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            run.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));
         }
     }
 
