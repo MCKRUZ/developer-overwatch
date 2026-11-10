@@ -29,6 +29,11 @@ public class HubLoggingTests
         // A provider-specific rule beats every provider-less one, whatever its category.
         { [$"Logging:Capture:LogLevel:{AspNetCore}=Information", $"Logging:Capture:LogLevel:{Hosting}=Information"] },
         { ["Logging:LogLevel:Default=Trace", $"Logging:LogLevel:{AspNetCore}=Trace"] },
+        // A wildcard one character longer than the floor's category wins on length: provider-less, it rules every
+        // provider the floor does not name (Capture here, like Console or EventSource in production) ...
+        { [$"Logging:LogLevel:{AspNetCore}=Information", $"Logging:LogLevel:{Hosting}*=Information"] },
+        // ... and provider-specific, it beats the floor's own rule for that provider.
+        { [$"Logging:Capture:LogLevel:{AspNetCore}=Information", $"Logging:Capture:LogLevel:{Hosting}*=Information"] },
     };
 
     [Fact]

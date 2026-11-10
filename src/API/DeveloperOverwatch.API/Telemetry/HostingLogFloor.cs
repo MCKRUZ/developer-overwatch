@@ -22,6 +22,8 @@ public static class HostingLogFloor
     // Logging:Console:LogLevel:Microsoft.AspNetCore; each named provider gets its own rule as well.
     private static void Apply(LoggerFilterOptions options)
     {
+        ClampLongerMatchingRules(options.Rules);
+
         var providers = options.Rules
             .Select(rule => rule.ProviderName)
             .OfType<string>()
@@ -32,5 +34,34 @@ public static class HostingLogFloor
         options.Rules.Add(new LoggerFilterRule(null, Category, LogLevel.Warning, null));
         foreach (var provider in providers)
             options.Rules.Add(new LoggerFilterRule(provider, Category, LogLevel.Warning, null));
+    }
+
+    // A rule whose category is at least as long as the floor's would tie or beat it on length, as a wildcard such as
+    // "Microsoft.AspNetCore.Hosting.Diagnostics*" does. Raise each one that matches the category to Warning in place.
+    // Shorter rules (Microsoft.AspNetCore) already lose to the floor and are left alone.
+    private static void ClampLongerMatchingRules(IList<LoggerFilterRule> rules)
+    {
+        for (var i = 0; i < rules.Count; i++)
+        {
+            var rule = rules[i];
+            if (rule.LogLevel is null or < LogLevel.Warning
+                && rule.CategoryName is { } name
+                && name.Length >= Category.Length
+                && MatchesCategory(name))
+            {
+                rules[i] = new LoggerFilterRule(rule.ProviderName, name, LogLevel.Warning, rule.Filter);
+            }
+        }
+    }
+
+    // The same test LoggerRuleSelector applies: the text before the one '*' must start the category and the text
+    // after it must end it, ignoring case; a name without '*' must start the category.
+    private static bool MatchesCategory(string ruleCategory)
+    {
+        var wildcard = ruleCategory.IndexOf('*');
+        var prefix = wildcard < 0 ? ruleCategory : ruleCategory[..wildcard];
+        var suffix = wildcard < 0 ? string.Empty : ruleCategory[(wildcard + 1)..];
+        return Category.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && Category.EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
     }
 }
