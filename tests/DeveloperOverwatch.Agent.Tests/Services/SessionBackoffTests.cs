@@ -83,6 +83,33 @@ public sealed class SessionBackoffTests : IDisposable
         _sent.Count(s => s == "start:a-start").Should().Be(4);
     }
 
+    // A session swept dead or purged never reaches Succeeded, so its entry must not outlive it.
+    [Fact]
+    public void SessionNotRetriedLongAfterItsBackoff_IsForgotten()
+    {
+        var backoff = new SessionBackoff(pollIntervalSeconds: 1);
+        backoff.Failed("gone");
+
+        for (var poll = 0; poll < 200; poll++)
+            backoff.NextPoll();
+
+        backoff.Tracked.Should().Be(0);
+    }
+
+    [Fact]
+    public void SessionFailingEveryRetry_KeepsEscalating()
+    {
+        var backoff = new SessionBackoff(pollIntervalSeconds: 1);
+        for (var failure = 0; failure < 8; failure++)
+        {
+            backoff.Failed("stuck");
+            while (backoff.NextPoll().Contains("stuck")) { }
+        }
+
+        backoff.Failed("stuck");
+        Enumerable.Range(0, 59).All(_ => backoff.NextPoll().Contains("stuck")).Should().BeTrue();
+    }
+
     private QueueProcessor CreateSut()
     {
         var config = new AgentConfig
