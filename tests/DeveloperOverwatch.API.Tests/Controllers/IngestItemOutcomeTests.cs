@@ -133,19 +133,17 @@ public class IngestItemOutcomeTests : IClassFixture<OverwatchWebApplicationFacto
         accepted.Should().Equal(tool);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Events_FileChangeWhoseToolIsAlreadyStored_IsAccepted(bool sameSession)
+    // Another session's stored tool is fk_missing: see IngestCrossSessionDuplicateTests.
+    [Fact]
+    public async Task Events_FileChangeWhoseToolIsAlreadyStoredInTheSession_IsAccepted()
     {
-        var toolSession = await StartSession();
-        var fileSession = sameSession ? toolSession : await StartSession();
+        var session = await StartSession();
         var (tool, file) = (NewId(), NewId());
-        await PostAccepted(toolSession, "toolExecutions", Item("toolExecutions", tool));
+        await PostAccepted(session, "toolExecutions", Item("toolExecutions", tool));
         var fileItem = Item("fileChanges", file);
         fileItem["toolExecutionId"] = tool;
 
-        var accepted = await PostAccepted(fileSession, "fileChanges", fileItem);
+        var accepted = await PostAccepted(session, "fileChanges", fileItem);
 
         accepted.Should().Equal(file);
     }

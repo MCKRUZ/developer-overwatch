@@ -47,9 +47,44 @@ public class IngestCrossSessionDuplicateTests : IClassFixture<OverwatchWebApplic
         (await RowCount(list, second)).Should().Be(0);
     }
 
-    private async Task<(HttpStatusCode Status, JsonElement Results)> Post(string sessionId, string list, string id)
+    // A file change counts toward its own session, so it may not hang off another session's tool, even
+    // when the batch names that tool too (as a duplicate it is not stored again).
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Events_FileChangeOnAnotherSessionsTool_IsRejectedFkMissing(bool toolInBatch, bool sameSession)
     {
-        var body = new Dictionary<string, object> { ["sessionId"] = sessionId, [list] = new[] { Item(list, id) } };
+        var (first, second) = (await StartSession(), await StartSession());
+        var toolId = NewId();
+        (await Post(first, "toolExecutions", toolId)).Status.Should().Be(HttpStatusCode.OK);
+        var target = sameSession ? first : second;
+        var fileId = NewId();
+        var file = new Dictionary<string, object?> { ["id"] = fileId, ["filePath"] = "src/a.cs", ["toolExecutionId"] = toolId };
+        var body = new Dictionary<string, object> { ["sessionId"] = target, ["fileChanges"] = new[] { file } };
+        if (toolInBatch)
+            body["toolExecutions"] = new[] { Item("toolExecutions", toolId) };
+
+        var (status, results) = await Post(target, body);
+
+        status.Should().Be(HttpStatusCode.OK, results.ToString());
+        if (sameSession)
+        {
+            Ids(results, "accepted").Should().Contain(fileId);
+            return;
+        }
+
+        var rejected = results.GetProperty("rejected").EnumerateArray().Should().ContainSingle().Subject;
+        rejected.GetProperty("id").GetString().Should().Be(fileId);
+        rejected.GetProperty("reason").GetString().Should().StartWith("fk_missing");
+        (await RowCount("fileChanges", second)).Should().Be(0);
+    }
+
+    private Task<(HttpStatusCode Status, JsonElement Results)> Post(string sessionId, string list, string id) =>
+        Post(sessionId, new Dictionary<string, object> { ["sessionId"] = sessionId, [list] = new[] { Item(list, id) } });
+
+    private async Task<(HttpStatusCode Status, JsonElement Results)> Post(string sessionId, Dictionary<string, object> body)
+    {
         var response = await _client.PostAsJsonAsync($"/api/sessions/{sessionId}/events", body);
         var text = await response.Content.ReadAsStringAsync();
         var results = response.IsSuccessStatusCode

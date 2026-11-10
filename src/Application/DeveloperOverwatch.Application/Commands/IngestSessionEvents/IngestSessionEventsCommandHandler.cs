@@ -79,12 +79,14 @@ public sealed class IngestSessionEventsCommandHandler
             request.ToolExecutions, t => t.Id,
             t => IngestItemRules.ToolExecution(t, results.RejectedIds, knownTurnIds));
 
-        // Tool and file ids are primary keys, so the lookups span every session: an id stored under
-        // another session is a duplicate, and inserting it again would fail the whole save.
+        // Tool and file ids are primary keys, so the dedupe lookups span every session: an id stored under
+        // another session is a duplicate, and inserting it again would fail the whole save. A file change's
+        // parent, though, must be this session's: a new tool in the batch, or one stored under this session.
         var existingToolIds = await _repository.GetExistingToolExecutionIdsAsync(
-            tools.Select(t => t.Id).Concat(ParentIds(request.FileChanges, f => f.ToolExecutionId)).ToList(),
-            cancellationToken);
-        var knownToolIds = KnownIds(tools.Select(t => t.Id), existingToolIds);
+            tools.Select(t => t.Id).ToList(), cancellationToken);
+        var sessionToolIds = await _repository.GetToolExecutionIdsInSessionAsync(
+            request.SessionId, ParentIds(request.FileChanges, f => f.ToolExecutionId).ToList(), cancellationToken);
+        var knownToolIds = KnownIds(tools.Select(t => t.Id).Where(id => !existingToolIds.Contains(id)), sessionToolIds);
         var files = results.Valid(
             request.FileChanges, f => f.Id,
             f => IngestItemRules.FileChange(f, results.RejectedIds, knownToolIds));
