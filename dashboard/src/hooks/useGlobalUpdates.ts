@@ -3,6 +3,13 @@ import type { HubConnection } from "@microsoft/signalr";
 import { HubConnectionState } from "@microsoft/signalr";
 import type { ViolationData } from "./useSessionUpdates";
 
+/** Sent by the API after it stores new turns for a session. */
+export interface UsageUpdate {
+  sessionId: string;
+  developerEmail: string;
+  at: string;
+}
+
 interface GlobalCounts {
   newSessions: number;
   endedSessions: number;
@@ -17,6 +24,7 @@ interface UseGlobalUpdatesOptions {
   onSessionEnded?: (sessionId: string) => void;
   onViolationCreated?: (violation: ViolationData) => void;
   onViolationResolved?: (violationId: string) => void;
+  onUsageUpdated?: (update: UsageUpdate) => void;
 }
 
 export function useGlobalUpdates({
@@ -26,6 +34,7 @@ export function useGlobalUpdates({
   onSessionEnded,
   onViolationCreated,
   onViolationResolved,
+  onUsageUpdated,
 }: UseGlobalUpdatesOptions) {
   const [counts, setCounts] = useState<GlobalCounts>({
     newSessions: 0,
@@ -65,16 +74,20 @@ export function useGlobalUpdates({
       onViolationResolved?.(violationId);
     };
 
+    const handleUsageUpdated = (update: UsageUpdate) => onUsageUpdated?.(update);
+
     connection.on("SessionStarted", handleSessionStarted);
     connection.on("SessionEnded", handleSessionEnded);
     connection.on("ViolationCreated", handleViolationCreated);
     connection.on("ViolationResolved", handleViolationResolved);
+    connection.on("UsageUpdated", handleUsageUpdated);
 
     return () => {
       connection.off("SessionStarted", handleSessionStarted);
       connection.off("SessionEnded", handleSessionEnded);
       connection.off("ViolationCreated", handleViolationCreated);
       connection.off("ViolationResolved", handleViolationResolved);
+      connection.off("UsageUpdated", handleUsageUpdated);
     };
   }, [
     connection,
@@ -83,6 +96,7 @@ export function useGlobalUpdates({
     onSessionEnded,
     onViolationCreated,
     onViolationResolved,
+    onUsageUpdated,
   ]);
 
   return { counts, resetCounts };

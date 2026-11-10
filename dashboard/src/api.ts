@@ -24,8 +24,13 @@ export function clearTokenGetter(): void {
   tokenGetter = null;
 }
 
+/** The signed-in user's current bearer token, or null when nobody is signed in. */
+export function getAccessToken(): string | null {
+  return tokenGetter?.() ?? null;
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = tokenGetter?.();
+  const token = getAccessToken();
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> | undefined),
   };

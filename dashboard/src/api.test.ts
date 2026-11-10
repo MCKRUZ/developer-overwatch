@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api } from "./api";
+import { api, setTokenGetter, clearTokenGetter, getAccessToken } from "./api";
 
 function mockFetch(body: unknown, ok = true, status = 200, statusText = "OK") {
   return vi.fn().mockResolvedValue({
@@ -147,5 +147,27 @@ describe("api", () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
       await expect(api.sessions.list()).rejects.toThrow("Failed to fetch");
     });
+  });
+});
+
+describe("getAccessToken", () => {
+  afterEach(() => clearTokenGetter());
+
+  it("should return null when no sign-in has registered a token, so callers connect anonymously", () => {
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it("should return the current token so the hub's token factory picks up silent renewals", () => {
+    let token = "first";
+    setTokenGetter(() => token);
+    expect(getAccessToken()).toBe("first");
+    token = "renewed";
+    expect(getAccessToken()).toBe("renewed");
+  });
+
+  it("should return null again after sign-out clears the getter", () => {
+    setTokenGetter(() => "t");
+    clearTokenGetter();
+    expect(getAccessToken()).toBeNull();
   });
 });

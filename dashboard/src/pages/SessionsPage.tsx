@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { useSessionList } from "../hooks/useSessionList";
 import type { SessionListItem } from "../types";
 import StatusBadge from "../components/StatusBadge";
 import ExportButtons from "../components/ExportButtons";
@@ -122,9 +122,6 @@ function presetToRange(preset: DateRangePreset): { from?: string; to?: string } 
 
 export default function SessionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [sessions, setSessions] = useState<SessionListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [filterDev, setFilterDev] = useState(() => searchParams.get("developer") ?? "");
   const [filterRepo, setFilterRepo] = useState("");
   const [filterStatus, setFilterStatus] = useState<SessionListItem["status"] | "">("");
@@ -137,21 +134,14 @@ export default function SessionsPage() {
     initialFrom && initialTo ? { from: initialFrom, to: initialTo } : null,
   );
 
-  useEffect(() => {
-    setLoading(true);
-    const { from, to } = datePreset === "custom" && customRange ? customRange : presetToRange(datePreset);
-    api.sessions
-      .list({
-        developer: filterDev || undefined,
-        repo: filterRepo || undefined,
-        status: filterStatus || undefined,
-        from,
-        to,
-      })
-      .then(setSessions)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [filterDev, filterRepo, filterStatus, datePreset, customRange]);
+  const range = datePreset === "custom" && customRange ? customRange : presetToRange(datePreset);
+  const { sessions, loading, error } = useSessionList({
+    developer: filterDev || undefined,
+    repo: filterRepo || undefined,
+    status: filterStatus || undefined,
+    from: range.from,
+    to: range.to,
+  });
 
   function clearDrillDownFilter() {
     setDatePreset("today");
@@ -184,9 +174,10 @@ export default function SessionsPage() {
     [activeSessions, clampedActivePage],
   );
 
+  // Reset on a filter change only: live refetches replace `sessions` and must not move the reader.
   useEffect(() => {
     setActivePage(0);
-  }, [sessions]);
+  }, [filterDev, filterRepo, filterStatus, datePreset, customRange]);
 
   const dayGroups = useMemo(() => {
     const groups = new Map<string, SessionListItem[]>();

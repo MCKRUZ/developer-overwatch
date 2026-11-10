@@ -1,8 +1,9 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HubConnectionState } from "@microsoft/signalr";
+import { setTokenGetter, clearTokenGetter } from "../api";
 
-const { conn, builder } = vi.hoisted(() => {
+const { conn, builder, auth } = vi.hoisted(() => {
   const conn: Record<string, unknown> = {};
   conn.start = vi.fn().mockResolvedValue(undefined);
   conn.stop = vi.fn().mockResolvedValue(undefined);
@@ -20,7 +21,8 @@ const { conn, builder } = vi.hoisted(() => {
   builder.withAutomaticReconnect = vi.fn(() => builder);
   builder.configureLogging = vi.fn(() => builder);
   builder.build = vi.fn(() => conn);
-  return { conn, builder };
+  const auth = { configured: false, token: null as string | null };
+  return { conn, builder, auth };
 });
 
 vi.mock("@microsoft/signalr", async (importOriginal) => {
@@ -33,31 +35,50 @@ vi.mock("@microsoft/signalr", async (importOriginal) => {
   };
 });
 
+vi.mock("../auth/AuthProvider", () => ({
+  get isAuthConfigured() {
+    return auth.configured;
+  },
+  useAuthContext: () => ({ token: auth.token }),
+}));
+
 import { useSignalR } from "./useSignalR";
+
+type TokenFactory = { accessTokenFactory: () => string };
+
+function lastTokenFactory(): TokenFactory["accessTokenFactory"] {
+  const calls = (builder.withUrl as ReturnType<typeof vi.fn>).mock.calls;
+  return (calls[calls.length - 1]![1] as TokenFactory).accessTokenFactory;
+}
 
 describe("useSignalR", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     (conn.start as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    auth.configured = false;
+    auth.token = null;
   });
 
-  it("connects to the hub URL and reaches Connected after start resolves", async () => {
+  afterEach(() => clearTokenGetter());
+
+  it("should connect to the hub URL and reach Connected after start resolves", async () => {
     const { result } = renderHook(() => useSignalR());
 
-    expect(builder.withUrl).toHaveBeenCalledWith("/hubs/overwatch");
+    expect(builder.withUrl).toHaveBeenCalledWith("/hubs/overwatch", expect.any(Object));
     await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Connected));
     expect(result.current.connection).toBe(conn);
   });
 
-  it("computes exponential backoff capped at 30s", () => {
+  it("should compute exponential backoff capped at 30s", () => {
     renderHook(() => useSignalR());
 
-    const config = (builder.withAutomaticReconnect as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const config = (builder.withAutomaticReconnect as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(config.nextRetryDelayInMilliseconds({ previousRetryCount: 0 })).toBe(1000);
     expect(config.nextRetryDelayInMilliseconds({ previousRetryCount: 2 })).toBe(4000);
     expect(config.nextRetryDelayInMilliseconds({ previousRetryCount: 20 })).toBe(30000);
   });
 
-  it("reflects reconnecting / reconnected / close lifecycle", async () => {
+  it("should reflect reconnecting / reconnected / close lifecycle", async () => {
     const { result } = renderHook(() => useSignalR());
     await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Connected));
 
@@ -71,16 +92,73 @@ describe("useSignalR", () => {
     expect(result.current.state).toBe(HubConnectionState.Disconnected);
   });
 
-  it("falls back to Disconnected when start rejects", async () => {
+  it("should fall back to Disconnected when start rejects", async () => {
     (conn.start as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
     const { result } = renderHook(() => useSignalR());
 
     await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Disconnected));
   });
 
-  it("stops the connection on unmount", () => {
+  it("should stop the connection on unmount", () => {
     const { unmount } = renderHook(() => useSignalR());
     unmount();
     expect(conn.stop).toHaveBeenCalled();
+  });
+
+  it("should send no token when sign-in is not configured, so the anonymous API accepts the hub", () => {
+    renderHook(() => useSignalR());
+    expect(lastTokenFactory()()).toBe("");
+  });
+
+  it("should not start before a token exists when sign-in is configured, because the hub would reject it", () => {
+    auth.configured = true;
+    const { result } = renderHook(() => useSignalR());
+
+    expect(builder.build).not.toHaveBeenCalled();
+    expect(conn.start).not.toHaveBeenCalled();
+    expect(result.current.connection).toBeNull();
+  });
+
+  it("should start once the token arrives and hand the hub the current bearer token", async () => {
+    auth.configured = true;
+    const { result, rerender } = renderHook(() => useSignalR());
+
+    auth.token = "tok-1";
+    setTokenGetter(() => "tok-1");
+    rerender();
+
+    await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Connected));
+    expect(conn.start).toHaveBeenCalledTimes(1);
+    expect(lastTokenFactory()()).toBe("tok-1");
+  });
+
+  it("should keep the connection when the token silently renews, so the live feed does not drop hourly", async () => {
+    auth.configured = true;
+    auth.token = "tok-1";
+    let current = "tok-1";
+    setTokenGetter(() => current);
+    const { result, rerender } = renderHook(() => useSignalR());
+    await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Connected));
+
+    auth.token = "tok-2";
+    current = "tok-2";
+    rerender();
+
+    expect(conn.start).toHaveBeenCalledTimes(1);
+    expect(conn.stop).not.toHaveBeenCalled();
+    expect(lastTokenFactory()()).toBe("tok-2");
+  });
+
+  it("should stop the connection when the token goes away on sign-out", async () => {
+    auth.configured = true;
+    auth.token = "tok-1";
+    const { result, rerender } = renderHook(() => useSignalR());
+    await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Connected));
+
+    auth.token = null;
+    rerender();
+
+    expect(conn.stop).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Disconnected));
   });
 });
