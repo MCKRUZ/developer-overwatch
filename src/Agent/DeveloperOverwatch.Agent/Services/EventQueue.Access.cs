@@ -86,7 +86,9 @@ public sealed partial class EventQueue
 
     /// <summary>Both sides are UTC "o" text, so the text comparison orders by instant. A session opened in this
     /// enrolment is never below it: a startup or clear opens at pilotSince itself, and any other start opens at
-    /// its own created_at, which is at or after pilotSince, since earlier events never ship.</summary>
+    /// its own created_at, which is at or after pilotSince, since earlier events never ship. It also closes a row
+    /// the upgrade seed opened from a shipped event that predates pilotSince: that fails closed by design, so a
+    /// session from before this enrolment ships again only once a startup or resume opens it.</summary>
     public Task CloseOpenedBeforeAsync(DateTime pilotSince, CancellationToken ct = default)
     {
         lock (_lock)

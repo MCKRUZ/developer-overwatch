@@ -160,7 +160,8 @@ internal sealed class SessionShipper
     };
 
     /// <summary>A start that may not open the session: a compact or clear of a session already decided here is
-    /// the same sitting going on, not the developer coming back to it.</summary>
+    /// the same sitting going on, not the developer coming back to it. So is a start with no source in such a
+    /// session, which cannot show the developer came back, and a fork that reuses its id.</summary>
     private async Task CloseAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
         await RecordSessionProjectAsync(sessionId, start, ct);
@@ -214,7 +215,7 @@ internal sealed class SessionShipper
     /// <summary>An accepted start opens the session if it was not open, and lets its later items ship. A
     /// rejected one, or one the server answers session_not_found, is dead, and if it was to open the session, the
     /// session is closed too, since the start still shows the session existed by then, and only a later startup or
-    /// resume can open it. A transient start, or one too large to send, holds the session. The title goes only when it was
+    /// resume can open it: a later fork or clear opens only a new session. A transient start, or one too large to send, holds the session. The title goes only when it was
     /// written at or above the floor the session has, or would have once this start opens it.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {

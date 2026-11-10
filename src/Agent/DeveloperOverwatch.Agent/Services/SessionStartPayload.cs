@@ -67,8 +67,8 @@ internal static class SessionStartPayload
     /// background) writes a new session id, so it opens only a session this machine has never decided on: a fork
     /// that reused a known id would otherwise reopen a closed session without a resume. A clear opens only a
     /// session this machine has never decided on; in a known
-    /// session it is the same sitting continuing. So does a start with no source, from a hook or Claude Code
-    /// version that predates the field: it cannot show the developer came back. Any other source, including the
+    /// session it is the same sitting continuing. A start with no source, from a hook or Claude Code version that
+    /// predates the field, also opens only a new session: it cannot show the developer came back. Any other source, including the
     /// hook's "unknown", never opens.</summary>
     public static bool MayOpen(string payloadJson, AccessState state)
     {
