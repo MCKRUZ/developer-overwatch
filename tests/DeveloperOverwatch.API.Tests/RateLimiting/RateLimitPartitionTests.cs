@@ -166,6 +166,19 @@ public class SharedIdentityRateLimitTests : IClassFixture<AnonymousRateLimitFact
         status.Should().Be(StatusCodes.Status200OK);
     }
 
+    // The dashboard and the agent on a developer's machine share its IP. A dashboard over its limit (a busy
+    // page, or anyone browsing from that address) must not throttle the agent's ingest, or telemetry is lost.
+    [Fact]
+    public async Task DashboardOverTheLimit_DoesNotThrottleTheAgentOnTheSameIp()
+    {
+        const string ip = "10.5.0.1";
+        await RateLimitProbe.UseUpLimit(_server, ip);
+
+        var status = await RateLimitProbe.Get(_server, ip, apiKey: OverwatchWebApplicationFactory.TestApiKey);
+
+        status.Should().Be(StatusCodes.Status200OK);
+    }
+
     [Fact]
     public async Task OneAgentOverTheLimit_Gets429()
     {
