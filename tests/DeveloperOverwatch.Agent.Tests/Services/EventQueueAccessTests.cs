@@ -193,4 +193,22 @@ public sealed class EventQueueAccessTests : IDisposable
         effective.Kind.Should().Be(DateTimeKind.Utc);
         effective.Ticks.Should().Be(X.Ticks);
     }
+
+    // A startup or clear opens at pilotSince itself, so the re-enrolment close must keep a session opened exactly
+    // there and close one opened even a tick before it.
+    [Theory]
+    [InlineData(0, AccessState.Open)]
+    [InlineData(-1, AccessState.Closed)]
+    [InlineData(1, AccessState.Open)]
+    public async Task CloseOpenedBefore_SessionOpenedAroundTheCutoff_ClosesOnlyThoseStrictlyBefore(
+        long ticksFromCutoff, AccessState expected)
+    {
+        await _sut.InitializeAsync();
+        var openFrom = X.AddTicks(ticksFromCutoff);
+        await _sut.MarkOpenedAsync(await QueueStartAsync(openFrom), openFrom);
+
+        await _sut.CloseOpenedBeforeAsync(X);
+
+        (await _sut.GetAccessAsync("s1")).State.Should().Be(expected);
+    }
 }
