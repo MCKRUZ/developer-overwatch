@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { UsageSplitRow, UsageSummary } from "../types";
+import type { UsageGranularity, UsageSplitRow, UsageSummary } from "../types";
 import { useUsageData } from "../hooks/useUsageData";
+import { useLocalToday } from "../hooks/useLocalToday";
 import PeriodPicker, { type UsagePeriod } from "../components/usage/PeriodPicker";
 import UsageTiles from "../components/usage/UsageTiles";
 import UsageBucketsTable from "../components/usage/UsageBucketsTable";
@@ -14,6 +15,7 @@ import { exportPdf } from "../utils/exportPdf";
 import { lastDaysRange } from "../utils/localDate";
 import { usageCsvTable, usageJsonExport, usagePdfTable, usagePdfTitle } from "../utils/usageColumns";
 
+const DEFAULT_RANGE_DAYS = 7;
 const SELECT_CLASS = "border dark:border-gray-600 rounded px-3 py-1.5 text-sm dark:bg-gray-800 dark:text-gray-100";
 
 /** Options from the split rows, plus the current choice: filtering narrows the splits to that one value. */
@@ -55,7 +57,16 @@ function exportAll(summary: UsageSummary, format: "csv" | "json" | "pdf") {
 }
 
 export default function UsagePage() {
-  const [period, setPeriod] = useState<UsagePeriod>(() => ({ granularity: "day", ...lastDaysRange(new Date(), 7) }));
+  const today = useLocalToday();
+  const [granularity, setGranularity] = useState<UsageGranularity>("day");
+  // Null keeps the default rolling window, which moves forward when the local date changes.
+  const [pickedRange, setPickedRange] = useState<{ from: string; to: string } | null>(null);
+  const range = pickedRange ?? lastDaysRange(today, DEFAULT_RANGE_DAYS);
+  const period: UsagePeriod = { granularity, ...range };
+  const setPeriod = (next: UsagePeriod) => {
+    setGranularity(next.granularity);
+    if (next.from !== range.from || next.to !== range.to) setPickedRange({ from: next.from, to: next.to });
+  };
   const [developer, setDeveloper] = useState("");
   const [project, setProject] = useState("");
   const { summary, running, error, runningError } = useUsageData({

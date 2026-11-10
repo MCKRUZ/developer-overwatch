@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 import { render, screen, waitFor, userEvent } from "../test/render";
 import UsagePage from "./UsagePage";
 import { api } from "../api";
@@ -234,5 +234,56 @@ describe("UsagePage", () => {
     expect(rows[0]![headers.indexOf("Developer filter")]).toBe("alice@x.io");
     expect(vi.mocked(exportJson).mock.calls[0]![1]).toMatchObject({ developer: "alice@x.io", project: "overwatch" });
     expect(vi.mocked(exportPdf).mock.calls[0]![1]).toContain("developer alice@x.io, project overwatch");
+  });
+
+  describe("default range at midnight", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(new Date(2026, 10, 10, 23, 59, 30));
+    });
+
+    const crossMidnight = () =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+    it("should roll the default last-7-days range forward when the local date changes, so a page left open overnight shows today", async () => {
+      render(<UsagePage />);
+      await screen.findByTestId("tile-cost");
+
+      await crossMidnight();
+
+      await waitFor(() =>
+        expect(mockApi.usage.summary).toHaveBeenLastCalledWith(
+          expect.objectContaining({ from: "2026-11-05", to: "2026-11-11", granularity: "day" }),
+        ),
+      );
+    });
+
+    it("should keep the chosen granularity when the default range rolls", async () => {
+      render(<UsagePage />);
+      await screen.findByTestId("tile-cost");
+      fireEvent.change(screen.getByLabelText("Granularity"), { target: { value: "week" } });
+
+      await crossMidnight();
+
+      await waitFor(() =>
+        expect(mockApi.usage.summary).toHaveBeenLastCalledWith(
+          expect.objectContaining({ from: "2026-11-05", to: "2026-11-11", granularity: "week" }),
+        ),
+      );
+    });
+
+    it("should never move a range the user picked", async () => {
+      render(<UsagePage />);
+      await screen.findByTestId("tile-cost");
+      fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-01" } });
+
+      await crossMidnight();
+
+      expect(mockApi.usage.summary).toHaveBeenLastCalledWith(
+        expect.objectContaining({ from: "2026-10-01", to: "2026-11-10" }),
+      );
+    });
   });
 });
