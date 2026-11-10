@@ -1,6 +1,16 @@
 import { downloadFile } from "./downloadFile";
 
-function escapeCsvValue(value: string): string {
+// OWASP CSV Injection: spreadsheets evaluate cells starting with these
+// (including full-width variants) as formulas.
+const FORMULA_LEADING = /^[=+\-@\t\r\n＝＋－＠]/;
+const PLAIN_NUMBER = /^[+-]?\d+(\.\d+)?(e[+-]?\d+)?$/i;
+
+function neutraliseFormula(value: string): string {
+  return FORMULA_LEADING.test(value) && !PLAIN_NUMBER.test(value) ? `'${value}` : value;
+}
+
+function escapeCsvValue(raw: string): string {
+  const value = neutraliseFormula(raw);
   if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
     return `"${value.replace(/"/g, '""')}"`;
   }

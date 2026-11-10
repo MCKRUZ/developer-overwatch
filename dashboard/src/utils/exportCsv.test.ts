@@ -105,4 +105,72 @@ describe("exportCsv", () => {
 
     vi.unstubAllGlobals();
   });
+
+  // OWASP CSV Injection: a cell a spreadsheet would evaluate as a formula must
+  // be neutralised so opening an export cannot run attacker-supplied formulas.
+  describe("formula injection", () => {
+    function exportCell(value: string): string {
+      let captured = "";
+      const OrigBlob = globalThis.Blob;
+      vi.stubGlobal(
+        "Blob",
+        class MockBlob extends OrigBlob {
+          constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
+            super(parts, options);
+            captured = parts?.[0] as string;
+          }
+        },
+      );
+      exportCsv("test", ["Col"], [[value]]);
+      vi.unstubAllGlobals();
+      return captured.split("\r\n").slice(1).join("\r\n");
+    }
+
+    it.each(["=1+1", "+cmd", "-cmd", "@SUM(A1)", "\tx", "＝1+1", "＋cmd", "－cmd", "＠SUM(A1)"])(
+      "should prefix a quote to formula-leading cell %j",
+      (value) => {
+        expect(exportCell(value)).toBe(`'${value}`);
+      },
+    );
+
+    it("should neutralise then quote a cell starting with a carriage return", () => {
+      expect(exportCell("\rx")).toBe("\"'\rx\"");
+    });
+
+    it("should neutralise then quote a cell starting with a line feed", () => {
+      expect(exportCell("\nx")).toBe("\"'\nx\"");
+    });
+
+    it("should both neutralise and quote a formula containing quotes and commas", () => {
+      expect(exportCell('=HYPERLINK("x","y")')).toBe('"\'=HYPERLINK(""x"",""y"")"');
+    });
+
+    it.each(["-5", "-0.25", "+3", "42", "1.5e3", "-2E-4"])(
+      "should leave plain number %j unchanged so it stays numeric",
+      (value) => {
+        expect(exportCell(value)).toBe(value);
+      },
+    );
+
+    it("should leave ordinary text unchanged", () => {
+      expect(exportCell("feat/usage-page")).toBe("feat/usage-page");
+    });
+
+    it("should neutralise formula-leading headers too", () => {
+      let captured = "";
+      const OrigBlob = globalThis.Blob;
+      vi.stubGlobal(
+        "Blob",
+        class MockBlob extends OrigBlob {
+          constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
+            super(parts, options);
+            captured = parts?.[0] as string;
+          }
+        },
+      );
+      exportCsv("test", ["=cmd"], []);
+      vi.unstubAllGlobals();
+      expect(captured).toBe("'=cmd");
+    });
+  });
 });
