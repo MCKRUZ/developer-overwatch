@@ -11,23 +11,21 @@ public static class UsageCalendar
     // Local offsets run from UTC-12 to UTC+14, so this much padding either side of the local days' naive UTC
     // bounds holds every moment of them in any zone. Slots outside the local days are dropped after conversion.
     private static readonly TimeSpan OffsetPadding = TimeSpan.FromHours(14);
+    private const int MaxZoneIdLength = 64;
 
     public static bool IsGranularity(string? value) => value is Day or Week or Month;
 
+    // The id comes from the query string and becomes a file path under the zoneinfo root on Linux, where a
+    // directory such as "America" throws SecurityException from FindSystemTimeZoneById. The Try form turns
+    // every failure into false. No real IANA id is anywhere near 64 characters.
     public static bool TryFindZone(string? id, out TimeZoneInfo zone)
     {
         zone = TimeZoneInfo.Utc;
-        if (string.IsNullOrWhiteSpace(id))
+        if (string.IsNullOrWhiteSpace(id) || id.Length > MaxZoneIdLength
+            || !TimeZoneInfo.TryFindSystemTimeZoneById(id, out var found))
             return false;
-        try
-        {
-            zone = TimeZoneInfo.FindSystemTimeZoneById(id);
-            return true;
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            return false;
-        }
+        zone = found;
+        return true;
     }
 
     /// <summary>A UTC window, [from, to), that holds every moment of the local days from..to in any zone.

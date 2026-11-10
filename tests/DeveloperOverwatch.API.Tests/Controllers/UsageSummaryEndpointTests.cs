@@ -14,6 +14,9 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
 
     private readonly OverwatchWebApplicationFactory _factory;
 
+    // 65 characters: one past the cap, so an id is never handed to a file-system lookup at any length.
+    private const string TooLongZone = "Abcdefghij/Abcdefghij/Abcdefghij/Abcdefghij/Abcdefghij/Abcdefghij";
+
     public UsageSummaryEndpointTests(OverwatchWebApplicationFactory factory) => _factory = factory;
 
     [Theory]
@@ -23,6 +26,9 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
     [InlineData("from=2026-11-01&to=2026-11-10&granularity=Day&timeZone=Etc/UTC", "'granularity' must be day, week or month")]
     [InlineData("from=2026-11-01&to=2026-11-10&granularity=day&timeZone=Mars/Olympus_Mons", "known IANA time zone")]
     [InlineData("from=2026-11-01&to=2026-11-10&granularity=day", "known IANA time zone")]
+    // On Linux "America" is a directory under the zoneinfo root, not a zone; reading it must be a 400, not a 500.
+    [InlineData("from=2026-11-01&to=2026-11-10&granularity=day&timeZone=America", "known IANA time zone")]
+    [InlineData("from=2026-11-01&to=2026-11-10&granularity=day&timeZone=" + TooLongZone, "known IANA time zone")]
     [InlineData("to=2026-11-10&granularity=day&timeZone=Etc/UTC", "From")]
     [InlineData("from=2026-11-01&granularity=day&timeZone=Etc/UTC", "To")]
     public async Task GetSummary_InvalidInput_Returns400NamingTheBrokenRule(string query, string message)
