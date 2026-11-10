@@ -21,6 +21,11 @@ $claudeSessionId = if ($hookInput) { $hookInput.session_id } else { $null }
 # The id names a file, so anything that could leave the sessions folder is refused.
 if ($claudeSessionId -notmatch '^[A-Za-z0-9-]{1,100}$') { exit 0 }
 
+# Taken first, before the lazy agent start, the git calls and the title lookup, so the start errs early: a
+# first prompt typed right after a resume is not dated before it and dropped. It is still taken before the
+# mapping is written: once that exists, other hooks can queue events, and none of them may sort before this start.
+$now = (Get-Date).ToUniversalTime().ToString("o")
+
 # Safety net: the agent is meant to auto-start via the "OverwatchAgent" scheduled task
 # (registered by install-hooks.ps1), but if that task isn't registered on this machine —
 # or was killed and hasn't restarted yet — events would otherwise silently pile up in the
@@ -76,10 +81,6 @@ if ($transcriptPath -and (Test-Path $transcriptPath)) {
         } catch { }
     }
 }
-
-# Dated before the mapping exists: once it does, other hooks can queue events, and none of them
-# may sort before this start.
-$now = (Get-Date).ToUniversalTime().ToString("o")
 
 $mapping = @{
     ourSessionId = $sessionId
