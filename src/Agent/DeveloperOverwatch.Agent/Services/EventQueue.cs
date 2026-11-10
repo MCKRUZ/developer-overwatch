@@ -46,6 +46,10 @@ public interface IEventQueue
     /// <summary>Closes the session of <paramref name="start"/> like <see cref="MarkClosedAsync"/>, but leaves
     /// the start's own state alone.</summary>
     Task CloseAsync(QueuedEvent start, CancellationToken ct = default);
+
+    /// <summary>Closes every session opened before <paramref name="pilotSince"/>: it was opened in an earlier
+    /// enrolment, or with no cutoff, and may have been used in Local mode since.</summary>
+    Task CloseOpenedBeforeAsync(DateTime pilotSince, CancellationToken ct = default);
 }
 
 public sealed partial class EventQueue : IEventQueue, IDisposable

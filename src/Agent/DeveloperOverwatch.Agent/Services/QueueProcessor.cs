@@ -105,6 +105,10 @@ public sealed class QueueProcessor : BackgroundService
         }
 
         await FallbackEventImporter.ImportAsync(_config.OverwatchDir, _queue, _logger, TimeProvider.System);
+        // A session opened in an earlier enrolment may have been used in Local mode since, with no start
+        // there to close it, so it is held again until the developer comes back to it.
+        if (_config is { Mode: AgentMode.Pilot, PilotSince: { } pilotSince })
+            await _queue.CloseOpenedBeforeAsync(pilotSince, ct);
         await ProcessBatchAsync(ct);
         await PurgeOldEventsAsync();
         return PollResult.Continue;

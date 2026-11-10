@@ -81,6 +81,46 @@ public sealed class QueueProcessorContentFloorGateTests : IDisposable
         (await _queue.GetAccessAsync("s")).State.Should().Be(AccessState.Closed);
     }
 
+    // Local mode closes a session only through a start it handles. One used there with no start queued must still
+    // be held on re-enrolment until the developer resumes it.
+    [Theory]
+    [InlineData(50)]
+    [InlineData(1)]
+    public async Task ReEnrolledSession_NoStartInLocalMode_ItemsAfterReEnrolment_ShipOnlyFromTheResume(int batchSize)
+    {
+        var period1 = _pilotSince.AddMinutes(-60);
+        await EnqueueAsync(Start("start-1", "startup"), period1.AddMinutes(1));
+        await DrainAsync(CreateSut(period1, batchSize: batchSize));
+        CaptureTurns(Turn("uuid:local", "local text", period1.AddMinutes(20)));
+        await EnqueueAsync(Marker("m-local"), period1.AddMinutes(21));
+        await EnqueueAsync(Tool("tool-local", "te-local"), period1.AddMinutes(22));
+        await DrainAsync(CreateSut(period1, AgentMode.Local, batchSize));
+
+        var sut = CreateSut(_pilotSince, batchSize: batchSize);
+        var before = _http.Bodies.Count;
+        CaptureTurns(
+            Turn("uuid:local", "local text", period1.AddMinutes(20)),
+            Turn("uuid:between", "between text", _pilotSince.AddMinutes(2)));
+        await EnqueueAsync(Tool("tool", "te-between"), _pilotSince.AddMinutes(1));
+        await EnqueueAsync(Marker("m1"), _pilotSince.AddMinutes(3));
+        await DrainAsync(sut);
+        _http.Bodies.Skip(before).Should().BeEmpty("the session was used in Local mode and has not been resumed since");
+
+        CaptureTurns(
+            Turn("uuid:local", "local text", period1.AddMinutes(20)),
+            Turn("uuid:between", "between text", _pilotSince.AddMinutes(2)),
+            Turn("uuid:late-window", "late window text", _pilotSince.AddMinutes(8)),
+            Turn("uuid:after", "post-resume text", _pilotSince.AddMinutes(11)));
+        await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Marker("m2"), _pilotSince.AddMinutes(12));
+        await DrainAsync(sut);
+
+        var sent = string.Join("\n", _http.Bodies.Skip(before));
+        sent.Should().NotContain("late window text", "the session reopens at this resume, not at its period-1 start");
+        sent.Should().NotContain("between text").And.NotContain("te-between").And.NotContain("local text");
+        sent.Should().Contain("post-resume text");
+    }
+
     private async Task BackfillThenLiveMarkerAsync()
     {
         var backfillAt = _pilotSince.AddMinutes(5);

@@ -88,6 +88,22 @@ public sealed partial class EventQueue
         return Task.CompletedTask;
     }
 
+    /// <summary>Both sides are UTC "o" text, so the text comparison orders by instant. A session opened in this
+    /// enrolment is never below it: a startup or clear opens at pilotSince itself, and any other start opens at
+    /// its own created_at, which is at or after pilotSince, since earlier events never ship.</summary>
+    public Task CloseOpenedBeforeAsync(DateTime pilotSince, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "UPDATE session_access SET open_from = NULL WHERE open_from < $pilotSince";
+            cmd.Parameters.AddWithValue("$pilotSince", UtcInstant.Utc(pilotSince).ToString("o"));
+            cmd.ExecuteNonQuery();
+        }
+
+        return Task.CompletedTask;
+    }
+
     /// <summary>open_from and created_at are both UTC "o" text, so the text comparison orders by instant. A
     /// session already closed stays closed: NULL &lt; x is not true.</summary>
     private void Close(SqliteTransaction? transaction, QueuedEvent start)
