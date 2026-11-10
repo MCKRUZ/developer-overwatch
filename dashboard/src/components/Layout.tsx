@@ -7,6 +7,7 @@ const navItems = [
   { to: "/sessions", label: "Sessions" },
   { to: "/governance", label: "Governance" },
   { to: "/analytics", label: "Analytics" },
+  { to: "/usage", label: "Usage" },
 ];
 
 function UserInfo() {
