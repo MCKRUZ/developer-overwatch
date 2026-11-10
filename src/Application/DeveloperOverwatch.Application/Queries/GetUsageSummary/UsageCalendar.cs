@@ -17,30 +17,16 @@ public static class UsageCalendar
 
     // The id comes from the query string and becomes a file path under the zoneinfo root on Linux, where a
     // directory such as "America" throws SecurityException from FindSystemTimeZoneById. The Try form turns
-    // every failure into false. No real IANA id is anywhere near 64 characters. An old name whose zone file is
-    // missing (Ubuntu noble without tzdata-legacy) resolves through the link list in tzdata.zi; the ICU
-    // IANA-to-Windows-to-IANA round trip cannot do this, because CLDR maps India Standard Time back to
-    // Asia/Calcutta and FLE Standard Time back to Europe/Kiev.
-    public static bool TryFindZone(string? id, out TimeZoneInfo zone) =>
-        TryFindZone(id, FindSystemZone, TzdataLinks.Installed, out zone);
-
-    /// <summary>The lookup with the host's zone store and link list passed in, so a host without
-    /// tzdata-legacy can be simulated.</summary>
-    internal static bool TryFindZone(
-        string? id, Func<string, TimeZoneInfo?> find, IReadOnlyDictionary<string, string> links, out TimeZoneInfo zone)
+    // every failure into false. No real IANA id is anywhere near 64 characters.
+    public static bool TryFindZone(string? id, out TimeZoneInfo zone)
     {
         zone = TimeZoneInfo.Utc;
-        if (string.IsNullOrWhiteSpace(id) || id.Length > MaxZoneIdLength)
-            return false;
-        var found = find(id) ?? (links.TryGetValue(id, out var target) ? find(target) : null);
-        if (found is null)
+        if (string.IsNullOrWhiteSpace(id) || id.Length > MaxZoneIdLength
+            || !TimeZoneInfo.TryFindSystemTimeZoneById(id, out var found))
             return false;
         zone = found;
         return true;
     }
-
-    private static TimeZoneInfo? FindSystemZone(string id) =>
-        TimeZoneInfo.TryFindSystemTimeZoneById(id, out var found) ? found : null;
 
     /// <summary>A UTC window, [from, to), that holds every moment of the local days from..to in any zone.
     /// Converting local midnight itself is avoided: where DST starts at midnight, that time does not exist.</summary>

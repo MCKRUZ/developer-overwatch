@@ -9,9 +9,6 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
   </ItemGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="DeveloperOverwatch.Application.Tests" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\..\Domain\DeveloperOverwatch.Domain\DeveloperOverwatch.Domain.csproj" />
   </ItemGroup>
 </Project>
