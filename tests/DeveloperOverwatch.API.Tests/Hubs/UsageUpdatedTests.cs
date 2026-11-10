@@ -20,27 +20,62 @@ public class UsageUpdatedTests : IClassFixture<OverwatchWebApplicationFactory>
 
     public UsageUpdatedTests(OverwatchWebApplicationFactory factory) => _factory = factory;
 
+    // Each step that must stay silent is followed by one that must broadcast. Messages arrive in order, so if a
+    // silent step broadcast, its message would be read before the sentinel's and the session id would differ.
     [Fact]
-    public async Task IngestEvents_OnlyTheBatchWithTurns_BroadcastsUsageUpdated()
+    public async Task IngestEvents_BroadcastsOnlyWhenTurnsOrLiveStateWereStored()
     {
         var received = Channel.CreateUnbounded<JsonElement>();
         await using var connection = Connect();
         connection.On<JsonElement>("UsageUpdated", notification => received.Writer.TryWrite(notification));
         await connection.StartAsync();
 
-        var withoutTurns = await StartSession("no-turns@team.dev");
+        var empty = await StartSession("empty@team.dev");
         var withTurns = await StartSession("turns@team.dev");
-        await PostEvents(withoutTurns, turns: []);
-        await PostEvents(withTurns, turns: [Turn()]);
+        var toolsOnly = await StartSession("tools@team.dev");
+        var activityOnly = await StartSession("activity@team.dev");
+        var failureOnly = await StartSession("failure@team.dev");
+        object[] turns = [Turn()];
 
-        // The batch without turns was posted first, so if it broadcast, its message would arrive first.
-        using var timeout = new CancellationTokenSource(Wait);
-        var notification = await received.Reader.ReadAsync(timeout.Token);
-        notification.GetProperty("sessionId").GetString().Should().Be(withTurns);
-        notification.GetProperty("developerEmail").GetString().Should().Be("turns@team.dev");
+        await PostEvents(withTurns, new { ConversationTurns = turns });
+        (await Next(received)).GetProperty("sessionId").GetString().Should().Be(withTurns);
+
+        await PostEvents(empty, new { });
+        await PostEvents(withTurns, new { ConversationTurns = turns });
+        await PostEvents(toolsOnly, new { ToolExecutions = new[] { Tool() } });
+        await PostEvents(activityOnly, new { ActivityEvents = new[] { new { State = "Active", At = DateTime.UtcNow } } });
+        var activity = await Next(received);
+        activity.GetProperty("sessionId").GetString().Should().Be(
+            activityOnly, "an empty batch, resent duplicate turns and tool executions alone change nothing shown");
+
+        await PostEvents(failureOnly, new { ToolFailures = new[] { Failure() } });
+        (await Next(received)).GetProperty("sessionId").GetString().Should().Be(failureOnly);
+    }
+
+    [Fact]
+    public async Task UsageUpdated_Payload_IsSessionIdAndUtcTimeOnly()
+    {
+        var received = Channel.CreateUnbounded<JsonElement>();
+        await using var connection = Connect();
+        connection.On<JsonElement>("UsageUpdated", notification => received.Writer.TryWrite(notification));
+        await connection.StartAsync();
+
+        var sessionId = await StartSession("payload@team.dev");
+        await PostEvents(sessionId, new { ConversationTurns = new[] { Turn() } });
+
+        var notification = await Next(received);
+        notification.GetProperty("sessionId").GetString().Should().Be(sessionId);
+        notification.TryGetProperty("developerEmail", out _)
+            .Should().BeFalse("every dashboard client receives the broadcast, whoever is signed in");
         notification.GetProperty("at").GetString().Should().EndWith("Z", "the dashboard reads it as UTC");
         DateTimeOffset.Parse(notification.GetProperty("at").GetString()!)
             .Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(1));
+    }
+
+    private static async Task<JsonElement> Next(Channel<JsonElement> received)
+    {
+        using var timeout = new CancellationTokenSource(Wait);
+        return await received.Reader.ReadAsync(timeout.Token);
     }
 
     private HubConnection Connect()
@@ -66,19 +101,21 @@ public class UsageUpdatedTests : IClassFixture<OverwatchWebApplicationFactory>
         return sessionId;
     }
 
-    private async Task PostEvents(string sessionId, object[] turns)
+    // The endpoint requires the body's session id to match the route's.
+    private async Task PostEvents(string sessionId, object batch)
     {
-        var response = await _factory.CreateAuthenticatedClient().PostAsJsonAsync($"/api/sessions/{sessionId}/events", new
-        {
-            SessionId = sessionId,
-            ConversationTurns = turns,
-            ToolExecutions = new[]
-            {
-                new { Id = Guid.NewGuid().ToString(), ToolName = "Read", DurationMs = 5, Timestamp = DateTime.UtcNow },
-            },
-        });
+        var body = JsonSerializer.SerializeToNode(batch)!.AsObject();
+        body["sessionId"] = sessionId;
+        var response = await _factory.CreateAuthenticatedClient().PostAsJsonAsync($"/api/sessions/{sessionId}/events", body);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
+
+    private static object Tool() => new
+    {
+        Id = Guid.NewGuid().ToString(), ToolName = "Read", DurationMs = 5, Timestamp = DateTime.UtcNow,
+    };
+
+    private static object Failure() => new { Id = Guid.NewGuid().ToString(), ToolName = "Bash", At = DateTime.UtcNow };
 
     private static object Turn() => new
     {

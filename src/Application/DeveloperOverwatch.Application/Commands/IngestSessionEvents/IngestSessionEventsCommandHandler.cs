@@ -48,13 +48,14 @@ public sealed class IngestSessionEventsCommandHandler
         var results = new IngestItemResultsBuilder();
         var batch = await ValidateAsync(request, results, cancellationToken);
         var now = _time.GetUtcNow().UtcDateTime;
-        var totalEvents = await StoreAsync(session, batch, results, now, cancellationToken);
-        if (totalEvents > 0)
+        var stored = await StoreAsync(session, batch, results, now, cancellationToken);
+        if (stored.Total > 0)
             session.LastActivityAt = LatestActivity(session.LastActivityAt, batch.Stamps, now);
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(totalEvents, results.Build(), session.DeveloperEmail));
+        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(
+            stored.Total, results.Build(), stored.Turns, stored.LiveStateChanges));
     }
 
     // Each item gets its own outcome: invalid items are rejected without sinking the batch, and
@@ -103,7 +104,7 @@ public sealed class IngestSessionEventsCommandHandler
     // client-side even though this exact batch already committed, so the same Ids get
     // resubmitted on retry. Treat resubmission as a no-op rather than double-counting
     // cost/tokens or crashing EF's change tracker on the identity conflict.
-    private async Task<int> StoreAsync(
+    private async Task<StoredCounts> StoreAsync(
         Session session,
         ValidatedBatch batch,
         IngestItemResultsBuilder results,
@@ -114,13 +115,15 @@ public sealed class IngestSessionEventsCommandHandler
         var newTools = results.New(batch.Tools, t => t.Id, batch.ExistingToolIds);
         var newFiles = results.New(batch.Files, f => f.Id, batch.ExistingFileIds);
 
-        var totalEvents = await AddTurnsAsync(session, newTurns, cancellationToken);
-        totalEvents += await AddToolExecutionsAsync(session, newTools, cancellationToken);
-        totalEvents += await AddFileChangesAsync(session, newFiles, cancellationToken);
-        totalEvents += ApplyActivity(session, batch.Activity, now);
-        totalEvents += await ApplyToolFailuresAsync(session, batch.Failures, results, now, cancellationToken);
-        return totalEvents;
+        var turns = await AddTurnsAsync(session, newTurns, cancellationToken);
+        var toolsAndFiles = await AddToolExecutionsAsync(session, newTools, cancellationToken)
+            + await AddFileChangesAsync(session, newFiles, cancellationToken);
+        var liveStateChanges = ApplyActivity(session, batch.Activity, now)
+            + await ApplyToolFailuresAsync(session, batch.Failures, results, now, cancellationToken);
+        return new StoredCounts(turns + toolsAndFiles + liveStateChanges, turns, liveStateChanges);
     }
+
+    private sealed record StoredCounts(int Total, int Turns, int LiveStateChanges);
 
     private async Task<int> AddTurnsAsync(
         Session session, IReadOnlyList<ConversationTurnDto> newTurns, CancellationToken cancellationToken)

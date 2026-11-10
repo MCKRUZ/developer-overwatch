@@ -97,11 +97,12 @@ public sealed class SessionsController : ControllerBase
             command.ToolExecutions.Count,
             command.FileChanges.Count);
 
-        // Usage totals only move when turns arrive; tool and file events alone do not change them.
-        if (command.ConversationTurns.Count > 0)
+        // The usage page shows turn totals and each running session's live state. Tool and file events alone,
+        // and resent duplicates, change neither, so they do not make every dashboard refetch.
+        if (result.Value!.TurnsStored > 0 || result.Value.LiveStateChanges > 0)
         {
             await _hub.Clients.All.UsageUpdated(new UsageUpdatedNotification(
-                sessionId, result.Value!.DeveloperEmail, _time.GetUtcNow().UtcDateTime));
+                sessionId, _time.GetUtcNow().UtcDateTime));
         }
 
         return Ok(new { eventsIngested = result.Value!.EventsIngested, results = result.Value.Results });
