@@ -63,6 +63,12 @@ internal sealed class SessionRun(
         await queue.MarkClosedAsync(start, ct);
     }
 
+    public async Task MarkDeadAndClosedAsync(QueuedEvent start, CancellationToken ct)
+    {
+        _marked.Add(start.Id);
+        await queue.MarkDeadAndClosedAsync(start, ct);
+    }
+
     private async Task MarkAsync(
         IReadOnlyList<QueuedEvent> toMark, Func<IReadOnlyList<string>, CancellationToken, Task> mark, CancellationToken ct)
     {

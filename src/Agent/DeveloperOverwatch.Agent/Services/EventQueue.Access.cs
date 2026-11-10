@@ -43,7 +43,7 @@ public sealed partial class EventQueue
         lock (_lock)
         {
             using var transaction = _connection.BeginTransaction();
-            MarkStartShipped(transaction, start);
+            MarkStart(transaction, start, Shipped);
 
             using var upsert = _connection.CreateCommand();
             upsert.Transaction = transaction;
@@ -67,23 +67,19 @@ public sealed partial class EventQueue
         }
     }
 
-    public Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default)
+    public Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default) => MarkAndCloseAsync(start, Shipped);
+
+    public Task MarkDeadAndClosedAsync(QueuedEvent start, CancellationToken ct = default) => MarkAndCloseAsync(start, Dead);
+
+    private Task MarkAndCloseAsync(QueuedEvent start, int state)
     {
         lock (_lock)
         {
             using var transaction = _connection.BeginTransaction();
-            MarkStartShipped(transaction, start);
+            MarkStart(transaction, start, state);
             Close(transaction, start);
             transaction.Commit();
         }
-
-        return Task.CompletedTask;
-    }
-
-    public Task CloseAsync(QueuedEvent start, CancellationToken ct = default)
-    {
-        lock (_lock)
-            Close(null, start);
 
         return Task.CompletedTask;
     }
@@ -106,7 +102,7 @@ public sealed partial class EventQueue
 
     /// <summary>open_from and created_at are both UTC "o" text, so the text comparison orders by instant. A
     /// session already closed stays closed: NULL &lt; x is not true.</summary>
-    private void Close(SqliteTransaction? transaction, QueuedEvent start)
+    private void Close(SqliteTransaction transaction, QueuedEvent start)
     {
         using var upsert = _connection.CreateCommand();
         upsert.Transaction = transaction;
@@ -120,11 +116,12 @@ public sealed partial class EventQueue
         upsert.ExecuteNonQuery();
     }
 
-    private void MarkStartShipped(SqliteTransaction transaction, QueuedEvent start)
+    private void MarkStart(SqliteTransaction transaction, QueuedEvent start, int state)
     {
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandText = $"UPDATE events SET shipped = {Shipped} WHERE id = $id";
+        cmd.CommandText = "UPDATE events SET shipped = $state WHERE id = $id";
+        cmd.Parameters.AddWithValue("$state", state);
         cmd.Parameters.AddWithValue("$id", start.Id);
         cmd.ExecuteNonQuery();
     }

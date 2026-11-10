@@ -235,11 +235,14 @@ internal sealed class SessionShipper
 
         if (run.Session is null)
         {
-            await _queue.CloseAsync(start, ct);
+            await run.MarkDeadAndClosedAsync(start, ct);
             run.State = AccessState.Closed;
         }
+        else
+        {
+            await run.MarkDeadAsync([start], ct);
+        }
 
-        await run.MarkDeadAsync([start], ct);
         return true;
     }
 

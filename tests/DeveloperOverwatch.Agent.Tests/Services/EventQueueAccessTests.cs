@@ -142,6 +142,46 @@ public sealed class EventQueueAccessTests : IDisposable
         (await _sut.GetUnshippedCountAsync()).Should().Be(1);
     }
 
+    // A start the server refused still shows the session existed by then. Marking it dead and closing the session
+    // in one transaction means a crash between the two cannot leave the start dead and the session New.
+    [Fact]
+    public async Task MarkDeadAndClosed_NewSession_TheStartIsDeadAndTheSessionClosed()
+    {
+        await _sut.InitializeAsync();
+        var start = await QueueStartAsync(X);
+
+        await _sut.MarkDeadAndClosedAsync(start);
+
+        (await _sut.GetAccessAsync("s1")).Should().Be(new SessionAccess(AccessState.Closed, null));
+        ShippedState(start.Id).Should().Be(DeadState);
+        (await _sut.GetUnshippedCountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task MarkDeadAndClosed_SessionOpenedAtTheStart_StaysOpenAndTheStartIsStillDead()
+    {
+        await _sut.InitializeAsync();
+        var refused = await QueueStartAsync(X);
+        await _sut.MarkOpenedAsync(await QueueStartAsync(X), X);
+
+        await _sut.MarkDeadAndClosedAsync(refused);
+
+        (await _sut.GetAccessAsync("s1")).Should().Be(new SessionAccess(AccessState.Open, X));
+        ShippedState(refused.Id).Should().Be(DeadState);
+    }
+
+    private const long DeadState = 2;
+
+    private long ShippedState(string id)
+    {
+        using var connection = new SqliteConnection($"Data Source={_dbPath};Pooling=False");
+        connection.Open();
+        using var select = connection.CreateCommand();
+        select.CommandText = "SELECT shipped FROM events WHERE id = $id";
+        select.Parameters.AddWithValue("$id", id);
+        return (long)select.ExecuteScalar()!;
+    }
+
     [Fact]
     public async Task MarkOpened_LocalInstant_IsStoredAsTheSameUtcInstant()
     {

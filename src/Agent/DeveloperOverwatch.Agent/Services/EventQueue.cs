@@ -43,9 +43,9 @@ public interface IEventQueue
     /// start was queued.</summary>
     Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default);
 
-    /// <summary>Closes the session of <paramref name="start"/> like <see cref="MarkClosedAsync"/>, but leaves
-    /// the start's own state alone.</summary>
-    Task CloseAsync(QueuedEvent start, CancellationToken ct = default);
+    /// <summary>Marks <paramref name="start"/> dead and closes its session like <see cref="MarkClosedAsync"/>, in
+    /// one transaction.</summary>
+    Task MarkDeadAndClosedAsync(QueuedEvent start, CancellationToken ct = default);
 
     /// <summary>Closes every session opened before <paramref name="pilotSince"/>: it was opened in an earlier
     /// enrolment, or with no cutoff, and may have been used in Local mode since.</summary>
