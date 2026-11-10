@@ -30,6 +30,20 @@ describe("ExportButtons", () => {
     expect(onPdf).toHaveBeenCalledOnce();
   });
 
+  it("should hide the JSON button when the page offers no JSON export, so existing pages are unchanged", () => {
+    render(<ExportButtons onExportCsv={vi.fn()} onExportPdf={vi.fn()} />);
+    expect(screen.queryByText("Export JSON")).not.toBeInTheDocument();
+  });
+
+  it("should offer a JSON export when the page provides one", async () => {
+    const onJson = vi.fn();
+    render(<ExportButtons onExportCsv={vi.fn()} onExportPdf={vi.fn()} onExportJson={onJson} />);
+
+    await userEvent.setup().click(screen.getByText("Export JSON"));
+
+    expect(onJson).toHaveBeenCalledOnce();
+  });
+
   it("should have gray outline styling", () => {
     render(<ExportButtons onExportCsv={vi.fn()} onExportPdf={vi.fn()} />);
 

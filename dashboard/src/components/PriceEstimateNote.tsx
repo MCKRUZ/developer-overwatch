@@ -24,20 +24,25 @@ export function resetPriceEstimateCache(): void {
 
 interface PriceEstimateNoteProps {
   className?: string;
+  /** The price list date the figures were computed with, when the response already carries it. */
+  asOf?: string;
 }
 
-export default function PriceEstimateNote({ className }: PriceEstimateNoteProps) {
-  const [asOf, setAsOf] = useState<string | null>(null);
+export default function PriceEstimateNote({ className, asOf: givenAsOf }: PriceEstimateNoteProps) {
+  const [fetchedAsOf, setFetchedAsOf] = useState<string | null>(null);
 
   useEffect(() => {
+    if (givenAsOf) return;
     let active = true;
     loadPricingAsOf().then((date) => {
-      if (active) setAsOf(date);
+      if (active) setFetchedAsOf(date);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [givenAsOf]);
+
+  const asOf = givenAsOf ?? fetchedAsOf;
 
   const classes = ["text-xs text-gray-500 dark:text-gray-400", className].filter(Boolean).join(" ");
 

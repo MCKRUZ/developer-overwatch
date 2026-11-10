@@ -27,6 +27,13 @@ describe("PriceEstimateNote", () => {
     ).toBeInTheDocument();
   });
 
+  it("should use the as-of date the caller already has, without fetching the price list again", () => {
+    render(<PriceEstimateNote asOf="2026-11-01" />);
+
+    expect(screen.getByText("API-equivalent estimate (prices as of 2026-11-01)")).toBeInTheDocument();
+    expect(api.pricing.get).not.toHaveBeenCalled();
+  });
+
   it("falls back to the undated label when pricing cannot be fetched", async () => {
     vi.mocked(api.pricing.get).mockRejectedValue(new Error("offline"));
 
