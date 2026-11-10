@@ -72,6 +72,10 @@ internal static class AgentPayload
         }
     }
 
+    /// <summary>Whether the payload is an object whose <c>isBackfill</c> is JSON true.</summary>
+    public static bool IsBackfill(string payloadJson) =>
+        ParseObject(payloadJson)?["isBackfill"]?.GetValueKind() == JsonValueKind.True;
+
     public static string? StringValue(JsonObject obj, string name) =>
         obj[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 

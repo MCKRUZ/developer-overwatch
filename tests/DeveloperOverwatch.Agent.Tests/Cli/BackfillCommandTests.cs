@@ -153,7 +153,9 @@ public sealed class BackfillCommandTests : IDisposable
             .BeAfter(Now.AddDays(-40)).And.BeOnOrBefore(Now.AddDays(-2), "only the --days window ships");
 
         using var end = JsonDocument.Parse(events[2].PayloadJson);
-        end.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("sessionId", "endedAt");
+        end.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal("sessionId", "endedAt", "isBackfill");
+        end.RootElement.GetProperty("isBackfill").GetBoolean().Should().BeTrue(
+            "the end must ship through the backfill lane, or a session no start opened never completes");
         end.RootElement.GetProperty("sessionId").GetString().Should().Be(MappedId);
         end.RootElement.GetProperty("endedAt").GetDateTime().ToUniversalTime().Should().Be(Now.AddDays(-1));
     }

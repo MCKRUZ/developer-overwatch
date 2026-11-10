@@ -145,7 +145,7 @@ internal sealed class InvariantWorkload(Func<IEventQueue> queue, Dictionary<stri
         {
             sessionId = Q, transcriptPath = TranscriptOf(Q), usageOnly = true, isBackfill = true, from
         })), pre: false);
-        await EndAsync(Q, "bf-end");
+        await EndAsync(Q, "bf-end", backfill: true);
     }
 
     private void AddTurns(string sessionId, int count, bool pre, Func<int, bool> stored)
@@ -179,10 +179,11 @@ internal sealed class InvariantWorkload(Func<IEventQueue> queue, Dictionary<stri
         _edges.Add((sessionId, true, backfill));
     }
 
-    private async Task EndAsync(string sessionId, string name, bool held = false)
+    private async Task EndAsync(string sessionId, string name, bool held = false, bool backfill = false)
     {
         var id = $"{sessionId}:{name}";
-        if (!await EnqueueAsync(Event(id, sessionId, EventType.SessionEnd, JsonSerializer.Serialize(new { sessionId, endedAt = _post })), false, held))
+        object payload = backfill ? new { sessionId, endedAt = _post, isBackfill = true } : new { sessionId, endedAt = _post };
+        if (!await EnqueueAsync(Event(id, sessionId, EventType.SessionEnd, JsonSerializer.Serialize(payload)), false, held))
             return;
         Expect("end", sessionId, id);
         _edges.Add((sessionId, false, false));

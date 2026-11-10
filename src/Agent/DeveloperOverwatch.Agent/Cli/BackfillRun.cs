@@ -158,7 +158,8 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
             from = Iso(cutoffUtc),
         });
         // The payload overwatch-session-end.ps1 queues, dated when the session was last active.
-        var end = JsonSerializer.Serialize(new { sessionId = session.Id, endedAt = lastActiveAt });
+        // isBackfill lets the end ship through the processor's backfill lane, as the start and marker do.
+        var end = JsonSerializer.Serialize(new { sessionId = session.Id, endedAt = lastActiveAt, isBackfill = true });
 
         await services.Queue.EnqueueAsync(
             Event($"start:{claudeSessionId}", session.Id, EventType.SessionStart, BuildSessionStart(transcript, session.Id, header, repo), 0), ct);

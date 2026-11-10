@@ -8,7 +8,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// <summary>Delivers one session's queued events in the order they happened and marks each by its own
 /// outcome. Nothing of a session ships until one of its starts opens it (see
 /// <see cref="SessionStartPayload.MayOpen"/>), and then only content at or above its floor
-/// (<see cref="OpenSession"/>); a start that may not open it closes it, and its items stay here. Starts,
+/// (<see cref="OpenSession"/>); a start that may not open it closes it, and its items stay here. Backfill alone
+/// ships before then, as usage with no content, and opens nothing. Starts,
 /// ends, tool, file and turn events are sent where they fall. Activity and tool failures gather and go in one
 /// POST before each start or end, and once at the end of the walk. A request the server refuses as a whole is
 /// split until each item has its own answer (see <see cref="HalvingPoster"/>): an item rejected alone is dead,
@@ -94,26 +95,70 @@ internal sealed class SessionShipper
         for (run.At = 0; run.At < run.Events.Count; run.At++)
         {
             var evt = run.Events[run.At];
-            if (run.IsMarked(evt))
-                continue;
-
-            if (evt.EventType == EventType.SessionStart)
-            {
-                if (run.Session is null && !SessionStartPayload.MayOpen(evt.PayloadJson, run.State))
-                    await CloseAsync(sessionId, run, evt, ct);
-                else if (!await StepAsync(sessionId, run, evt, ct))
-                    return;
-            }
-            else if (run.Dead)
-                await SweepAsync(sessionId, run, SessionUnknown, ct);
-            else if (run.Session is null)
-                await KeepLocalAsync(sessionId, run, evt, ct);
-            else if (!await StepAsync(sessionId, run, evt, ct))
+            if (!run.IsMarked(evt) && !await NextAsync(sessionId, run, evt, ct))
                 return;
         }
 
         await FlushSignalsAsync(run, ct);
     }
+
+    /// <summary>Dead is set only by a send of an open session, so a session no start has opened is never dead.</summary>
+    /// <returns>False when the session must stop for this poll.</returns>
+    private async Task<bool> NextAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
+    {
+        if (run.Session is null && IsBackfill(evt))
+            return await ShipBackfillAsync(sessionId, run, evt, ct);
+
+        if (evt.EventType == EventType.SessionStart)
+        {
+            if (run.Session is not null || SessionStartPayload.MayOpen(evt.PayloadJson, run.State))
+                return await StepAsync(sessionId, run, evt, ct);
+            await CloseAsync(sessionId, run, evt, ct);
+        }
+        else if (run.Dead)
+            await SweepAsync(sessionId, run, SessionUnknown, ct);
+        else if (run.Session is null)
+            await KeepLocalAsync(sessionId, run, evt, ct);
+        else
+            return await StepAsync(sessionId, run, evt, ct);
+
+        return true;
+    }
+
+    /// <summary>Backfill of a session no start has opened is usage the developer chose to send, not the developer
+    /// coming back to it. It ships through a lane whose floor admits nothing, so no title, text or signal goes with
+    /// it, and it neither opens nor closes the session. Each event settles by its own outcome.</summary>
+    private async Task<bool> ShipBackfillAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
+    {
+        var lane = new OpenSession(sessionId, DateTime.MaxValue);
+        var outcome = evt.EventType switch
+        {
+            EventType.SessionStart => await SendStartAsync(sessionId, evt, lane, ct),
+            EventType.SessionEnd => await SendEndAsync(sessionId, evt, ct),
+            _ => await _conversations.ShipAsync(lane, evt, ct)
+        };
+
+        if (outcome == EventOutcome.Transient)
+        {
+            run.Transient = true;
+            return false;
+        }
+
+        if (outcome == EventOutcome.Done)
+            await run.MarkShippedAsync([evt], ct);
+        else
+            await run.MarkDeadAsync([evt], ct);
+        return true;
+    }
+
+    /// <summary>A backfill marker is read as <see cref="ConversationMarker"/> reads it, so the lane takes exactly
+    /// the markers that carry no text.</summary>
+    private static bool IsBackfill(QueuedEvent evt) => evt.EventType switch
+    {
+        EventType.SessionStart or EventType.SessionEnd => AgentPayload.IsBackfill(evt.PayloadJson),
+        EventType.ConversationTurn => ConversationMarker.Parse(evt.PayloadJson) is { Backfill: true },
+        _ => false
+    };
 
     /// <summary>A start that may not open the session: a compact or clear of a session already decided here is
     /// the same sitting going on, not the developer coming back to it.</summary>
@@ -174,12 +219,9 @@ internal sealed class SessionShipper
     /// written at or above the floor the session has, or would have once this start opens it.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
-        var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
         var openFrom = OpenFrom(run.State, start);
         var titleSession = run.Session ?? new OpenSession(sessionId, UtcInstant.Later(_pilotSince, openFrom));
-        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, titleSession);
-        var outcome = await SendAloneAsync(sessionId, start, () => _api.SendSessionStartAsync(payload, ct));
-        switch (outcome)
+        switch (await SendStartAsync(sessionId, start, titleSession, ct))
         {
             case EventOutcome.Transient:
                 run.Transient = true;
@@ -200,6 +242,15 @@ internal sealed class SessionShipper
 
         await run.MarkDeadAsync([start], ct);
         return true;
+    }
+
+    /// <param name="titleSession">The title goes only when this session admits when it was written.</param>
+    private async Task<EventOutcome> SendStartAsync(
+        string sessionId, QueuedEvent start, OpenSession titleSession, CancellationToken ct)
+    {
+        var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
+        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, titleSession);
+        return await SendAloneAsync(sessionId, start, () => _api.SendSessionStartAsync(payload, ct));
     }
 
     private async Task SettleShippedStartAsync(
@@ -247,10 +298,14 @@ internal sealed class SessionShipper
 
     private async Task<bool> ShipEndAsync(OpenSession session, SessionRun run, QueuedEvent end, CancellationToken ct)
     {
-        var sessionId = session.SessionId;
+        var outcome = await SendEndAsync(session.SessionId, end, ct);
+        return await ApplyAsync(session.SessionId, run, new SettledPost(outcome, [(end, outcome)]), ct);
+    }
+
+    private Task<EventOutcome> SendEndAsync(string sessionId, QueuedEvent end, CancellationToken ct)
+    {
         var payload = AgentPayload.WithEventId(_redactor.Redact(end.PayloadJson), end.Id);
-        var outcome = await SendAloneAsync(sessionId, end, () => _api.SendSessionEndAsync(sessionId, payload, ct));
-        return await ApplyAsync(sessionId, run, new SettledPost(outcome, [(end, outcome)]), ct);
+        return SendAloneAsync(sessionId, end, () => _api.SendSessionEndAsync(sessionId, payload, ct));
     }
 
     /// <summary>A start or end is a request of one item: a 400 rejects it, and a 413 holds it.</summary>
