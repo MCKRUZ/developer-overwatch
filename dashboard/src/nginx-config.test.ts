@@ -40,6 +40,10 @@ describe.each(configs)("%s", (_name, conf) => {
     expect(hubs).toContain("access_log off;");
   });
 
+  it("should log only crit and worse inside /hubs/, because a failed upstream logs the request line, token included, at error", () => {
+    expect(hubs).toMatch(/\n\s*error_log \/dev\/stderr crit;/);
+  });
+
   it("should not set headers inside /hubs/, which would drop the server-level security headers there", () => {
     expect(hubs).not.toContain("add_header");
   });

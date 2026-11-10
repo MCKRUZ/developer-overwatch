@@ -34,7 +34,11 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 3600s;
         proxy_buffering off;
+        # The hub token travels in the query string (?access_token=), so keep the URL out of logs.
         access_log off;
+        # access_log off does not cover the error log, and a failed upstream (refused, timed out,
+        # no live upstreams) logs the request line, token included, at the error level.
+        error_log /dev/stderr crit;
     }
 
     location / {
