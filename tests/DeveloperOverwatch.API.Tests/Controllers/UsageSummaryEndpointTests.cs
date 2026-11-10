@@ -45,6 +45,20 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
             .Should().ContainSingle(e => e!.Contains(message));
     }
 
+    // Browsers can still report the pre-rename IANA ids. On Ubuntu noble those files ship in tzdata-legacy,
+    // not tzdata; the aspnet:10.0 (noble) image installs both through its runtime-deps base.
+    [Theory]
+    [InlineData("Asia/Calcutta")]
+    [InlineData("Europe/Kiev")]
+    [InlineData("US/Eastern")]
+    public async Task GetSummary_LegacyZoneAlias_Returns200(string zone)
+    {
+        var response = await _factory.CreateClient()
+            .GetAsync($"/api/usage/summary?from=2026-11-01&to=2026-11-07&granularity=day&timeZone={zone}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
     // Control for the date bounds: the earliest allowed day is accepted.
     [Fact]
     public async Task GetSummary_FromTheEarliestAllowedDay_Returns200()
