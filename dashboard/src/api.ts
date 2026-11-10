@@ -10,6 +10,9 @@ import type {
   DeveloperAnalytics,
   GovernanceViolation,
   PricingInfo,
+  UsageGranularity,
+  UsageSummary,
+  RunningSession,
 } from "./types";
 
 const BASE = "/api";
@@ -56,6 +59,15 @@ export interface SessionListFilters {
   from?: string;
   to?: string;
   status?: SessionListItem["status"];
+}
+
+export interface UsageSummaryParams {
+  /** Local dates (YYYY-MM-DD), both inclusive. */
+  from: string;
+  to: string;
+  granularity: UsageGranularity;
+  developer?: string;
+  project?: string;
 }
 
 export const api = {
@@ -152,6 +164,23 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+    },
+  },
+
+  usage: {
+    summary(params: UsageSummaryParams): Promise<UsageSummary> {
+      const qs = new URLSearchParams({
+        from: params.from,
+        to: params.to,
+        granularity: params.granularity,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (params.developer) qs.set("developer", params.developer);
+      if (params.project) qs.set("project", params.project);
+      return fetchJson(`${BASE}/usage/summary?${qs.toString()}`);
+    },
+    running(): Promise<RunningSession[]> {
+      return fetchJson(`${BASE}/usage/running`);
     },
   },
 

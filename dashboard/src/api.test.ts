@@ -197,6 +197,46 @@ describe("api", () => {
     });
   });
 
+  describe("usage", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it("should send the viewer's IANA time zone, because the server buckets days in the viewer's local time", async () => {
+      vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+        timeZone: "America/New_York",
+      } as Intl.ResolvedDateTimeFormatOptions);
+      globalThis.fetch = mockFetch({});
+      await api.usage.summary({ from: "2026-11-01", to: "2026-11-07", granularity: "day" });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/usage/summary?from=2026-11-01&to=2026-11-07&granularity=day&timeZone=America%2FNew_York",
+        undefined,
+      );
+    });
+
+    it("should pass the developer and project filters only when they are set", async () => {
+      vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+        timeZone: "Asia/Kolkata",
+      } as Intl.ResolvedDateTimeFormatOptions);
+      globalThis.fetch = mockFetch({});
+      await api.usage.summary({
+        from: "2026-11-01",
+        to: "2026-11-30",
+        granularity: "week",
+        developer: "d@x.io",
+        project: "overwatch",
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/usage/summary?from=2026-11-01&to=2026-11-30&granularity=week&timeZone=Asia%2FKolkata&developer=d%40x.io&project=overwatch",
+        undefined,
+      );
+    });
+
+    it("should list running sessions from /api/usage/running", async () => {
+      globalThis.fetch = mockFetch([{ id: "s1" }]);
+      await expect(api.usage.running()).resolves.toEqual([{ id: "s1" }]);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/running", undefined);
+    });
+  });
+
   describe("pricing", () => {
     it("should read the price list's as-of date from /api/pricing", async () => {
       globalThis.fetch = mockFetch({ asOf: "2026-11-01" });
