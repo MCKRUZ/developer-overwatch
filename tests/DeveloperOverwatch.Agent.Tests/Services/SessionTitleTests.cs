@@ -95,7 +95,7 @@ public sealed class SessionTitleTests : IDisposable
         redactor.Redact(Arg.Any<string>()).Returns(ci => ci.Arg<string>());
         var shipper = new ConversationShipper(
             _api, redactor, _capture, Substitute.For<IConversationCursorStore>(), Substitute.For<IUsageStore>(),
-            NullLogger.Instance, pilotSince);
+            NullLogger.Instance, localMode: false, pilotSince);
         var marker = new QueuedEvent
         {
             Id = "m", SessionId = "s", EventType = EventType.ConversationTurn, PayloadJson = markerPayload, CreatedAt = DateTime.UtcNow

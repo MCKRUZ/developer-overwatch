@@ -17,14 +17,19 @@ internal sealed class ConversationShipper
     private readonly IConversationCursorStore _cursorStore;
     private readonly IUsageStore _usageStore;
     private readonly ILogger _logger;
+    private readonly bool _localMode;
     private readonly DateTime? _pilotSince;
 
-    /// <param name="pilotSince">Bounds where a turn kept on this machine moves the cursors to; null in Local
-    /// mode, where they go to the end. What may ship is the <see cref="OpenSession"/>'s floor.</param>
+    /// <param name="localMode">Local mode sends nothing, so a turn kept on this machine moves the cursors to the
+    /// end. In Pilot, cutoff or not, they stop where a later start may ship from.</param>
+    /// <param name="pilotSince">Bounds where a turn kept on this machine moves the cursors to, when no nearer
+    /// bound is given. What may ship is the <see cref="OpenSession"/>'s floor.</param>
     public ConversationShipper(
         IApiClient api, IPrivacyRedactor redactor, IConversationCapture capture,
-        IConversationCursorStore cursorStore, IUsageStore usageStore, ILogger logger, DateTime? pilotSince = null)
+        IConversationCursorStore cursorStore, IUsageStore usageStore, ILogger logger, bool localMode,
+        DateTime? pilotSince = null)
     {
+        _localMode = localMode;
         _pilotSince = pilotSince;
         _api = api;
         _redactor = redactor;
@@ -35,8 +40,8 @@ internal sealed class ConversationShipper
     }
 
     /// <summary>Records the usage and sends nothing. Each live cursor moves up to its first turn dated at or
-    /// after the bound, so a later marker still sends that turn and the ones after it; with no bound (Local
-    /// mode) it moves to the end.</summary>
+    /// after the bound, so a later marker still sends that turn and the ones after it; in Local mode, or with no
+    /// bound at all, it moves to the end.</summary>
     /// <param name="keepFrom">The bound, when it is not enrolment itself: the session began before
     /// enrolment, and only its turns from this instant on may ship after it is resumed.</param>
     public async Task RecordLocallyAsync(
@@ -45,7 +50,7 @@ internal sealed class ConversationShipper
         if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
             return;
 
-        var bound = _pilotSince is null ? null : keepFrom ?? _pilotSince;
+        var bound = _localMode ? null : keepFrom ?? _pilotSince;
         foreach (var transcript in captured.Transcripts)
         {
             var stop = bound is { } from ? FirstLineFrom(transcript, from) : null;

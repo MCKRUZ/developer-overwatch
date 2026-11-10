@@ -64,6 +64,30 @@ public sealed class QueueProcessorContentFloorGateTests : IDisposable
         (await _queue.GetAccessAsync("s")).State.Should().Be(AccessState.New, "backfill decides nothing about the session");
     }
 
+    // With no cutoff the install is still Pilot: a marker kept here stops the cursor at the resume after it, or
+    // the resumed session's turns are passed over and never sent.
+    [Theory]
+    [InlineData(50)]
+    [InlineData(1)]
+    public async Task PilotWithNoCutoff_ClosedSession_TurnsAfterAResumeQueuedBehindAKeptMarker_Ship(int batchSize)
+    {
+        var sut = CreateSut(pilotSince: null, batchSize: batchSize);
+        await EnqueueAsync(Start("compact", "compact"), _pilotSince.AddMinutes(1));
+        await DrainAsync(sut);
+
+        CaptureTurns(
+            Turn("uuid:held", "held text", _pilotSince.AddMinutes(4)),
+            Turn("uuid:after", "post-resume text", _pilotSince.AddMinutes(11)));
+        await EnqueueAsync(Marker("m1"), _pilotSince.AddMinutes(5));
+        await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Marker("m2"), _pilotSince.AddMinutes(12));
+        await DrainAsync(sut);
+
+        var sent = Sent();
+        sent.Should().Contain("post-resume text", "the turn after the resume belongs to the resumed session");
+        sent.Should().NotContain("held text");
+    }
+
     // An old hook queues starts with no source; one of them must not let a held session back in.
     [Fact]
     public async Task ClosedSession_StartWithNoSource_LetsNothingIn()
