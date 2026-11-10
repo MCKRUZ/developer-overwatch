@@ -1,57 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback } from "react";
 import { api } from "../api";
 import type { UsageSummaryParams } from "../api";
-import type { RunningSession, UsageSummary } from "../types";
+import { useCoalescedFetch } from "./useCoalescedFetch";
 import { useLiveRefresh } from "./useLiveRefresh";
 
 /**
  * Loads the usage summary for `params` and the running sessions, and refetches both on the hub's
- * live events. A failed running list leaves the summary on screen; a stale response never
- * overwrites a newer one.
+ * live events. A failed running list leaves the summary on screen; a response for superseded
+ * params never overwrites a newer one, and a live tick never discards a response in flight.
  */
 export function useUsageData(params: UsageSummaryParams) {
-  const [summary, setSummary] = useState<UsageSummary | null>(null);
-  const [running, setRunning] = useState<RunningSession[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [runningError, setRunningError] = useState<string | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
-
-  const refetch = useCallback(() => setRefreshTick((tick) => tick + 1), []);
-  useLiveRefresh(refetch);
-
   // Callers build a fresh params object each render; key on its content so only a real change refetches.
   const paramsKey = JSON.stringify(params);
-  const stableParams = useMemo(() => params, [paramsKey]);
+  const summary = useCoalescedFetch(paramsKey, () => api.usage.summary(params));
+  const running = useCoalescedFetch(paramsKey, () => api.usage.running());
 
-  useEffect(() => {
-    let superseded = false;
+  const { refresh: refreshSummary } = summary;
+  const { refresh: refreshRunning } = running;
+  const refetch = useCallback(() => {
+    refreshSummary();
+    refreshRunning();
+  }, [refreshSummary, refreshRunning]);
+  useLiveRefresh(refetch);
 
-    api.usage
-      .summary(stableParams)
-      .then((result) => {
-        if (superseded) return;
-        setSummary(result);
-        setError(null);
-      })
-      .catch((e: Error) => {
-        if (!superseded) setError(e.message);
-      });
-
-    api.usage
-      .running()
-      .then((rows) => {
-        if (superseded) return;
-        setRunning(rows);
-        setRunningError(null);
-      })
-      .catch((e: Error) => {
-        if (!superseded) setRunningError(e.message);
-      });
-
-    return () => {
-      superseded = true;
-    };
-  }, [stableParams, refreshTick]);
-
-  return { summary, running, error, runningError };
+  return {
+    summary: summary.data,
+    running: running.data ?? [],
+    error: summary.error,
+    runningError: running.error,
+  };
 }

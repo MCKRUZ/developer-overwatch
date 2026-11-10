@@ -360,7 +360,7 @@ describe("SessionsPage", () => {
     it.each([
       ["resolves", (d: Deferred) => d.resolve([buildSessionListItem({ id: "bbbbbbbb-0000-0000-0000-000000000000" })])],
       ["rejects", (d: Deferred) => d.reject(new Error("500: late"))],
-    ])("should ignore an older request that %s after a newer one, so stale rows never overwrite fresh ones", async (_label, settle) => {
+    ])("should finish a live refetch that %s before the next tick's fetch, so responses land in order and the newest rows win", async (_label, settle) => {
       mockApi.sessions.list.mockResolvedValueOnce([buildSessionListItem({ id: "aaaaaaaa-0000-0000-0000-000000000000" })]);
       render(<SessionsPage />);
       await screen.findByText("aaaaaaaa...");
@@ -370,11 +370,12 @@ describe("SessionsPage", () => {
       act(() => live.refetch!());
       mockApi.sessions.list.mockResolvedValueOnce([buildSessionListItem({ id: "cccccccc-0000-0000-0000-000000000000" })]);
       act(() => live.refetch!());
-      await screen.findByText("cccccccc...");
+      expect(mockApi.sessions.list).toHaveBeenCalledTimes(2);
 
       await act(async () => settle(late));
 
-      expect(screen.getByText("cccccccc...")).toBeInTheDocument();
+      await screen.findByText("cccccccc...");
+      expect(mockApi.sessions.list).toHaveBeenCalledTimes(3);
       expect(screen.queryByText("bbbbbbbb...")).not.toBeInTheDocument();
       expect(screen.queryByText(/Error:/)).not.toBeInTheDocument();
     });

@@ -10,7 +10,13 @@ vi.mock("../api", () => ({
   api: { usage: { summary: vi.fn(), running: vi.fn() } },
 }));
 
-vi.mock("./useLiveRefresh", () => ({ useLiveRefresh: vi.fn() }));
+const live = vi.hoisted(() => ({ refetch: null as (() => void) | null }));
+
+vi.mock("./useLiveRefresh", () => ({
+  useLiveRefresh: (refetch: () => void) => {
+    live.refetch = refetch;
+  },
+}));
 
 const mockApi = vi.mocked(api, true);
 
@@ -65,5 +71,23 @@ describe("useUsageData", () => {
     await act(async () => oldRunning.reject(new Error("old running failed")));
 
     expect(result.current.runningError).toBeNull();
+  });
+
+  it("should show the in-flight response when live ticks land before it, so a slow server under a steady event stream still updates the screen", async () => {
+    const first = deferred<UsageSummary>();
+    mockApi.usage.summary.mockReturnValueOnce(first.promise).mockReturnValue(new Promise(() => {}));
+    mockApi.usage.running.mockResolvedValue([]);
+    const { result } = renderHook(() => useUsageData(dayParams));
+
+    act(() => {
+      live.refetch?.();
+      live.refetch?.();
+    });
+    await act(async () => first.resolve(buildUsageSummary({ pricesAsOf: "first" })));
+
+    expect(result.current.summary?.pricesAsOf).toBe("first");
+    // Both ticks fold into one follow-up request once the first settles, not one request each.
+    expect(mockApi.usage.summary).toHaveBeenCalledTimes(2);
+    expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
   });
 });
