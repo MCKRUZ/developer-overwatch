@@ -121,7 +121,7 @@ public sealed class SessionsController : ControllerBase
         }
 
         var outcome = result.Value!.Outcome;
-        if (outcome != IngestOutcome.Duplicate)
+        if (result.Value.ClosedSession)
         {
             await _hub.Clients.Group(sessionId).SessionEnded(sessionId);
             await _hub.Clients.All.SessionEnded(sessionId);

@@ -62,6 +62,21 @@ public class StartEndDeliveryTests : IClassFixture<OverwatchWebApplicationFactor
         await _groupClient.Received(1).SessionEnded(sessionId);
     }
 
+    // A second end with its own event id is accepted but finds the session already over, so nothing ended.
+    [Fact]
+    public async Task End_AcceptedForASessionAlreadyOver_IsNotBroadcast()
+    {
+        var sessionId = NewId();
+        await PostOk("/api/sessions/start", StartBody(sessionId, NewId()));
+
+        await PostOk($"/api/sessions/{sessionId}/end", new { sessionId, eventId = NewId(), endedAt = _past });
+        (await PostOutcome($"/api/sessions/{sessionId}/end", new { sessionId, eventId = NewId(), endedAt = _past }))
+            .Should().Be("accepted");
+
+        await _allClient.Received(1).SessionEnded(sessionId);
+        await _groupClient.Received(1).SessionEnded(sessionId);
+    }
+
     // An event id dedupes within its own session only. One recorded for session A must not make
     // session B's start or end look already processed, or B would never be created or closed.
     [Theory]
