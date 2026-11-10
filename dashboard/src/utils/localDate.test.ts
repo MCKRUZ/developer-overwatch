@@ -7,7 +7,9 @@ const env = (globalThis as unknown as { process: { env: Record<string, string | 
 describe("localDate", () => {
   const originalTz = env.TZ;
   afterEach(() => {
-    env.TZ = originalTz;
+    // Assigning undefined would store the string "undefined" as the zone.
+    if (originalTz === undefined) delete env.TZ;
+    else env.TZ = originalTz;
   });
 
   it("should give the viewer's local date in the evening, not the UTC date that has already rolled over", () => {

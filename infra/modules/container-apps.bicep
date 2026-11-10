@@ -202,7 +202,8 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
       ] : []
       scale: {
         minReplicas: 1
-        maxReplicas: 3
+        // Single copy so hub broadcasts reach every client and the SQLite file on Azure Files has one writer; scaling out needs Azure SignalR Service plus SQL Server.
+        maxReplicas: 1
         rules: [
           {
             name: 'http-scaling'
