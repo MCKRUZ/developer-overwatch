@@ -70,6 +70,7 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
     [Fact]
     public async Task Pilot_ModeBrieflyUnreadable_SkipsThatPollThenShips()
     {
+        await _queue.OpenAsync("s1");
         var source = Substitute.For<IAgentModeSource>();
         source.CurrentMode().Returns(_ => throw new IOException("config.json is locked"), _ => AgentMode.Pilot);
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
@@ -98,6 +99,8 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
     [Fact]
     public async Task Pilot_EventsReturn404_GroupIsMarkedDeadAndNeverDequeuedAgain()
     {
+        await _queue.OpenAsync("ghost");
+        await _queue.OpenAsync("known");
         _api.SendSessionEventsAsync("ghost", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.NotFound);
         _api.SendSessionEventsAsync("known", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
         await EnqueueAsync("g1", "ghost", EventType.ToolExecution, ageMinutes: 3);
@@ -115,6 +118,8 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
     [Fact]
     public async Task Pilot_TwoSessionsFail_BothAreTriedInTheSamePoll()
     {
+        await _queue.OpenAsync("a");
+        await _queue.OpenAsync("b");
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Failed);
         await EnqueueAsync("a1", "a", EventType.ToolExecution, ageMinutes: 2);
         await EnqueueAsync("b1", "b", EventType.ToolExecution);
@@ -147,6 +152,7 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
     [Fact]
     public async Task Pilot_SignalsTimedOut_EndWaitsForThem_AndBothShipNextPoll()
     {
+        await _queue.OpenAsync("s1");
         _api.SendSessionEndAsync("s1", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
         var signalPayloads = new List<string>();
         _api.SendSessionEventsAsync("s1", Arg.Do<string>(signalPayloads.Add), Arg.Any<CancellationToken>())
@@ -167,6 +173,8 @@ public sealed class QueueProcessorLifecycleTests : IDisposable
     [Fact]
     public async Task Pilot_EventsRejectedWith400_GroupIsDead_AndOtherGroupsShipInTheSamePoll()
     {
+        await _queue.OpenAsync("bad");
+        await _queue.OpenAsync("good");
         _api.SendSessionEventsAsync("bad", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Rejected);
         _api.SendSessionEventsAsync("good", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiResult.Success);
         await EnqueueAsync("b1", "bad", EventType.ToolExecution, ageMinutes: 3);

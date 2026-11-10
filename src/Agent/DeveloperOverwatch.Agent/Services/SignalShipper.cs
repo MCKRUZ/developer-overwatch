@@ -10,10 +10,14 @@ namespace DeveloperOverwatch.Agent.Services;
 /// The payload holds only states, tool names, ids and times: nothing to redact.</summary>
 internal sealed class SignalShipper(IApiClient api, ILogger logger)
 {
-    public async Task<SettledPost> FlushAsync(string sessionId, IReadOnlyList<QueuedEvent> contributors, CancellationToken ct)
+    /// <summary>A contributor dated below the session's floor is left out; a signal event among them is Done.</summary>
+    public async Task<SettledPost> FlushAsync(OpenSession session, IReadOnlyList<QueuedEvent> contributors, CancellationToken ct)
     {
-        var units = contributors.Where(e => SessionSignals.BuildPayload(sessionId, [e]) is not null).ToList();
-        // A signal event that carries nothing to send has nothing to wait for.
+        var sessionId = session.SessionId;
+        var units = contributors
+            .Where(e => session.Admits(e.CreatedAt) && SessionSignals.BuildPayload(sessionId, [e]) is not null)
+            .ToList();
+        // A signal event that carries nothing to send, or may not send it, has nothing to wait for.
         var outcomes = contributors
             .Where(e => SessionSignals.IsSignalEvent(e.EventType) && !units.Contains(e))
             .ToDictionary(e => e, _ => EventOutcome.Done);

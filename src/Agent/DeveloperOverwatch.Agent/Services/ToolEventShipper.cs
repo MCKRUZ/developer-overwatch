@@ -10,8 +10,13 @@ internal sealed class ToolEventShipper(IApiClient api, IPrivacyRedactor redactor
 {
     private sealed record Answer(string? Id, ItemOutcome? Outcome, string? Reason);
 
-    public Task<EventOutcome> ShipAsync(string sessionId, QueuedEvent evt, CancellationToken ct)
+    /// <summary>An event dated below the session's floor is settled Done and never sent.</summary>
+    public Task<EventOutcome> ShipAsync(OpenSession session, QueuedEvent evt, CancellationToken ct)
     {
+        if (!session.Admits(evt.CreatedAt))
+            return Task.FromResult(EventOutcome.Done);
+
+        var sessionId = session.SessionId;
         var payload = AgentPayload.NormalizeToolEvent(redactor.Redact(evt.PayloadJson));
         var body = AgentPayload.ParseObject(payload);
         var items = body is null ? [] : AgentPayload.ListItems(body);

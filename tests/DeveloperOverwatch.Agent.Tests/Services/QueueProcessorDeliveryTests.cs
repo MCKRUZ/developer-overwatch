@@ -31,6 +31,8 @@ public sealed class QueueProcessorDeliveryTests
 
     public QueueProcessorDeliveryTests()
     {
+        _queue.GetAccessAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionAccess(AccessState.Open, DateTime.MinValue));
         _queue.MarkShippedAsync(Arg.Do<IReadOnlyList<string>>(ids => ids.ToList().ForEach(_shipped.Enqueue)), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
         _queue.MarkDeadAsync(Arg.Do<IReadOnlyList<string>>(ids => ids.ToList().ForEach(_dead.Enqueue)), Arg.Any<CancellationToken>())

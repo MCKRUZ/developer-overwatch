@@ -30,6 +30,8 @@ public sealed class SessionShipperTests : IDisposable
         Directory.CreateDirectory(_dir);
         _queue = new EventQueue(Path.Combine(_dir, "queue.db"));
         _queue.InitializeAsync().GetAwaiter().GetResult();
+        // The session is on the server already, from a start shipped and purged before these tests' events.
+        _queue.OpenAsync(Session).GetAwaiter().GetResult();
         var starts = 0;
         var ends = 0;
         _api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ci =>
@@ -138,8 +140,8 @@ public sealed class SessionShipperTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
-    // A refused start does not show the session is missing from the server: an earlier start may have
-    // shipped and been purged. Its items are sent, and session_not_found drops them up to the next start.
+    // A refused start does not show the session is missing from the server: an earlier start shipped and was
+    // purged, and the session stays open. Its items are sent, and session_not_found drops them up to the next start.
     [Fact]
     public async Task RejectedStart_TheServerDecidesItsItems_UpToTheNextStart()
     {
@@ -191,13 +193,13 @@ public sealed class SessionShipperTests : IDisposable
         (await _queue.GetUnshippedCountAsync()).Should().Be(0);
     }
 
-    // The rescue never reaches a session that began before enrolment: its items stay on this machine.
+    // The rescue never reaches a session held on this machine: its items stay here.
     [Fact]
-    public async Task RejectedResume_OfALocalSession_ItsItemsAreNeverSent()
+    public async Task RejectedResume_OfAClosedSession_ItsItemsAreNeverSent()
     {
         _onStart = _ => ApiResult.Rejected;
         await EnqueueAsync(Start("S1"), T0);
-        await _queue.MarkLocalAsync(["S1"]);
+        await _queue.MarkClosedAsync((await _queue.DequeueBatchAsync(10)).Single(e => e.Id == "S1"));
         await EnqueueAsync(Start("R"), T0.AddMinutes(1));
         await EnqueueAsync(Event("t1", EventType.ToolExecution, ToolExecution("te-1")), T0.AddMinutes(2));
         var sut = CreateSut();

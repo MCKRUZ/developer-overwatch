@@ -18,8 +18,8 @@ public interface IEventQueue
     /// Pending starts do not count.</summary>
     Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default);
 
-    /// <summary>When the session's first start queued after <paramref name="after"/> that may reopen the
-    /// session (see <see cref="SessionStartPayload.MayReopen"/>) was queued, whatever its state; null when
+    /// <summary>When the session's first start queued after <paramref name="after"/> that may open a held
+    /// session (see <see cref="SessionStartPayload.MayOpen"/>) was queued, whatever its state; null when
     /// the queue holds none.</summary>
     Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default);
 
@@ -235,7 +235,7 @@ public sealed partial class EventQueue : IEventQueue, IDisposable
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
-                if (SessionStartPayload.MayReopen(reader.GetString(1)))
+                if (SessionStartPayload.MayOpen(reader.GetString(1), AccessState.Closed))
                     return Task.FromResult<DateTime?>(
                         DateTime.Parse(reader.GetString(0), null, System.Globalization.DateTimeStyles.RoundtripKind));
             }

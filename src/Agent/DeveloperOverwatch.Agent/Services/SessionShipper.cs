@@ -1,19 +1,20 @@
 using System.Diagnostics;
+using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using Microsoft.Extensions.Logging;
 
 namespace DeveloperOverwatch.Agent.Services;
 
 /// <summary>Delivers one session's queued events in the order they happened and marks each by its own
-/// outcome. Starts, ends, tool, file and turn events are sent where they fall. Activity and tool failures
-/// gather and go in one POST before each start or end, and once at the end of the walk. A request the
-/// server refuses as a whole is split until each item has its own answer (see <see cref="HalvingPoster"/>):
-/// an item rejected alone is dead, and one too large even alone is held, never dead. Once the server no
-/// longer knows the session, its events are dropped up to its next start; a refused start leaves that to
-/// the server's answer to the items after it. A
-/// session whose start was handled locally keeps its items here, unsent, until a later new-session or resume
-/// start ships; a compact or clear start stays here with it. The
-/// first transient failure holds the rest of the session until the next poll.</summary>
+/// outcome. Nothing of a session ships until one of its starts opens it (see
+/// <see cref="SessionStartPayload.MayOpen"/>), and then only content at or above its floor
+/// (<see cref="OpenSession"/>); a start that may not open it closes it, and its items stay here. Starts,
+/// ends, tool, file and turn events are sent where they fall. Activity and tool failures gather and go in one
+/// POST before each start or end, and once at the end of the walk. A request the server refuses as a whole is
+/// split until each item has its own answer (see <see cref="HalvingPoster"/>): an item rejected alone is dead,
+/// and one too large even alone is held, never dead. Once the server no longer knows the session, its events
+/// are dropped up to its next start. The first transient failure holds the rest of the session until the next
+/// poll.</summary>
 internal sealed class SessionShipper
 {
     private const string SessionUnknown = "the server does not know the session";
@@ -29,7 +30,7 @@ internal sealed class SessionShipper
     private readonly ILogger _logger;
     private readonly DateTime? _pilotSince;
 
-    /// <param name="pilotSince">A start's title written before Pilot enrolment is not sent.</param>
+    /// <param name="pilotSince">Enrolment: no session's floor is below it.</param>
     public SessionShipper(
         IEventQueue queue, IApiClient api, IPrivacyRedactor redactor, IGitReader gitRemote,
         IUsageStore usageStore, ConversationShipper conversations, ILogger logger, DateTime? pilotSince)
@@ -46,29 +47,37 @@ internal sealed class SessionShipper
         _logger = logger;
     }
 
-    /// <summary>Sends nothing anywhere. The session's project and its usage are kept in queue.db. Starts are
-    /// marked Local, so the session's later items stay here too; every other event is marked shipped,
-    /// meaning handled, so the queue drains.</summary>
+    /// <summary>Sends nothing anywhere. The session's project and its usage are kept in queue.db. Each start
+    /// closes the session, so its later items stay here too until a later start opens it; every other event is
+    /// marked shipped, meaning handled, so the queue drains.</summary>
     public async Task HandleLocallyAsync(string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
     {
         foreach (var evt in events)
         {
             if (evt.EventType == EventType.SessionStart)
+            {
                 await RecordSessionProjectAsync(sessionId, evt, ct);
+                await _queue.MarkClosedAsync(evt, ct);
+            }
             else if (evt.EventType == EventType.ConversationTurn)
+            {
                 await RecordTurnsLocallyAsync(sessionId, evt, ct);
+            }
         }
 
-        var starts = events.Where(e => e.EventType == EventType.SessionStart).ToList();
-        await _queue.MarkLocalAsync(starts.Select(e => e.Id).ToList(), ct);
-        await _queue.MarkShippedAsync(events.Except(starts).Select(e => e.Id).ToList(), ct);
+        await _queue.MarkShippedAsync(
+            events.Where(e => e.EventType != EventType.SessionStart).Select(e => e.Id).ToList(), ct);
     }
 
     /// <returns>True when something was transient, so the caller backs off.</returns>
     public async Task<bool> ShipAsync(string sessionId, IReadOnlyList<QueuedEvent> events, CancellationToken ct)
     {
         var ordered = events.OrderBy(e => e.CreatedAt).ThenBy(e => e.RowId).ToList();
-        var run = new SessionRun(_queue, ordered, await _queue.GetStartStateAsync(sessionId, ct));
+        var access = await _queue.GetAccessAsync(sessionId, ct);
+        var session = access is { State: AccessState.Open, OpenFrom: { } openFrom }
+            ? new OpenSession(sessionId, UtcInstant.Later(_pilotSince, openFrom))
+            : null;
+        var run = new SessionRun(_queue, ordered, access.State, session);
         await WalkAsync(sessionId, run, ct);
 
         if (run.Transient)
@@ -88,21 +97,34 @@ internal sealed class SessionShipper
             if (run.IsMarked(evt))
                 continue;
 
-            if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Dead)
+            if (evt.EventType == EventType.SessionStart)
+            {
+                if (run.Session is null && !SessionStartPayload.MayOpen(evt.PayloadJson, run.State))
+                    await CloseAsync(sessionId, run, evt, ct);
+                else if (!await StepAsync(sessionId, run, evt, ct))
+                    return;
+            }
+            else if (run.Dead)
                 await SweepAsync(sessionId, run, SessionUnknown, ct);
-            else if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Local)
+            else if (run.Session is null)
                 await KeepLocalAsync(sessionId, run, evt, ct);
-            else if (run.Gate == StartState.Local && !SessionStartPayload.MayReopen(evt.PayloadJson))
-                await KeepStartLocalAsync(sessionId, run, evt, ct);
             else if (!await StepAsync(sessionId, run, evt, ct))
                 return;
         }
 
-        await FlushSignalsAsync(sessionId, run, ct);
+        await FlushSignalsAsync(run, ct);
     }
 
-    /// <summary>An item of a session that began before enrolment, queued after it: handled here like the
-    /// session's earlier items.</summary>
+    /// <summary>A start that may not open the session: a compact or clear of a session already decided here is
+    /// the same sitting going on, not the developer coming back to it.</summary>
+    private async Task CloseAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
+    {
+        await RecordSessionProjectAsync(sessionId, start, ct);
+        await run.MarkClosedAsync(start, ct);
+        run.State = AccessState.Closed;
+    }
+
+    /// <summary>An item of a session no start has opened: handled here like the session's earlier items.</summary>
     private async Task KeepLocalAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
     {
         if (evt.EventType == EventType.ConversationTurn)
@@ -120,27 +142,22 @@ internal sealed class SessionShipper
         await _conversations.RecordLocallyAsync(sessionId, marker, ct, keepFrom: resumedAt ?? marker.CreatedAt);
     }
 
-    /// <summary>A compact or clear start of a session kept here is the same sitting going on, not the
-    /// developer coming back to it, so it stays here like the session's first start.</summary>
-    private async Task KeepStartLocalAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
-    {
-        await RecordSessionProjectAsync(sessionId, start, ct);
-        await run.MarkLocalAsync([start], ct);
-    }
-
+    /// <summary>Only an item at or above the floor joins the signals; each sender settles a lower one itself.</summary>
     /// <returns>False when the session must stop for this poll.</returns>
     private async Task<bool> StepAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
     {
         switch (evt.EventType)
         {
             case EventType.SessionStart:
-                return await FlushSignalsAsync(sessionId, run, ct) && await ShipStartAsync(sessionId, run, evt, ct);
+                return await FlushSignalsAsync(run, ct) && await ShipStartAsync(sessionId, run, evt, ct);
             case EventType.SessionEnd:
-                return await FlushSignalsAsync(sessionId, run, ct)
-                    && (run.IsMarked(evt) || await ShipEndAsync(sessionId, run, evt, ct));
+                return await FlushSignalsAsync(run, ct)
+                    && (run.IsMarked(evt) || await ShipEndAsync(run.Session!, run, evt, ct));
             case EventType.ToolExecution or EventType.FileChange or EventType.ConversationTurn:
-                run.Signals.Add(evt);
-                var outcome = await ShipItemAsync(sessionId, evt, ct);
+                var session = run.Session!;
+                if (session.Admits(evt.CreatedAt))
+                    run.Signals.Add(evt);
+                var outcome = await ShipItemAsync(session, evt, ct);
                 return await ApplyAsync(sessionId, run, new SettledPost(outcome, [(evt, outcome)]), ct);
             case EventType.ActivityChanged or EventType.ToolFailed:
                 run.Signals.Add(evt);
@@ -150,16 +167,16 @@ internal sealed class SessionShipper
         }
     }
 
-    /// <summary>An accepted start lets the session's later items ship. A rejected one, or one the server
-    /// answers session_not_found, is dead and leaves the gate as it was: an earlier start may have reached
-    /// the server, so its items are sent and the server's answer to them decides, unless the session is
-    /// Local. A transient start, or one too large to send, holds the session. A start that reopens a Local
-    /// session sends only a title written from that start on.</summary>
+    /// <summary>An accepted start opens the session if it was not open, and lets its later items ship. A
+    /// rejected one, or one the server answers session_not_found, is dead and changes nothing in the session's
+    /// access. A transient start, or one too large to send, holds the session. The title goes only when it was
+    /// written at or above the floor the session has, or would have once this start opens it.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
         var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
-        var titleFrom = run.Gate == StartState.Local ? Later(_pilotSince, start.CreatedAt) : _pilotSince;
-        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, titleFrom);
+        var openFrom = OpenFrom(run.State, start);
+        var titleSession = run.Session ?? new OpenSession(sessionId, UtcInstant.Later(_pilotSince, openFrom));
+        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, titleSession);
         var outcome = await SendAloneAsync(sessionId, start, () => _api.SendSessionStartAsync(payload, ct));
         switch (outcome)
         {
@@ -167,8 +184,7 @@ internal sealed class SessionShipper
                 run.Transient = true;
                 return false;
             case EventOutcome.Done:
-                await run.MarkShippedAsync([start], ct);
-                run.Gate = StartState.Shipped;
+                await SettleShippedStartAsync(sessionId, run, start, openFrom, ct);
                 return true;
             case EventOutcome.SessionGone:
                 _logger.LogWarning("Server refused start {EventId} of session {SessionId}: {Why}", start.Id, sessionId, SessionUnknown);
@@ -179,8 +195,52 @@ internal sealed class SessionShipper
         return true;
     }
 
-    private async Task<bool> ShipEndAsync(string sessionId, SessionRun run, QueuedEvent end, CancellationToken ct)
+    private async Task SettleShippedStartAsync(
+        string sessionId, SessionRun run, QueuedEvent start, DateTime openFrom, CancellationToken ct)
     {
+        if (run.Session is null)
+        {
+            var effective = await run.MarkOpenedAsync(start, openFrom, ct);
+            run.Session = new OpenSession(sessionId, UtcInstant.Later(_pilotSince, effective));
+            run.State = AccessState.Open;
+        }
+        else
+        {
+            await run.MarkShippedAsync([start], ct);
+        }
+
+        run.Dead = false;
+    }
+
+    /// <summary>A session first seen here through a new-session or clear start began here, so it opens from
+    /// enrolment and keeps a first prompt written just before the hook stamped the start. Any other start shows
+    /// the session existed before it, so it opens at the start.</summary>
+    private DateTime OpenFrom(AccessState state, QueuedEvent start) =>
+        state == AccessState.New && SourceOf(start.PayloadJson) is "startup" or "clear"
+            ? _pilotSince ?? DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc)
+            : UtcInstant.Utc(start.CreatedAt);
+
+    /// <summary>The start's source in lower case; null when it is missing or the payload is not an object.</summary>
+    private static string? SourceOf(string payloadJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("source", out var source)
+                && source.ValueKind == JsonValueKind.String
+                    ? source.GetString()?.ToLowerInvariant()
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<bool> ShipEndAsync(OpenSession session, SessionRun run, QueuedEvent end, CancellationToken ct)
+    {
+        var sessionId = session.SessionId;
         var payload = AgentPayload.WithEventId(_redactor.Redact(end.PayloadJson), end.Id);
         var outcome = await SendAloneAsync(sessionId, end, () => _api.SendSessionEndAsync(sessionId, payload, ct));
         return await ApplyAsync(sessionId, run, new SettledPost(outcome, [(end, outcome)]), ct);
@@ -205,18 +265,20 @@ internal sealed class SessionShipper
         return stop.ToOutcome(outcome);
     }
 
-    /// <summary>A reopened session's turns from before it reopened are not sent, even when no marker moved
-    /// its cursors past them while it was Local.</summary>
-    private async Task<EventOutcome> ShipItemAsync(string sessionId, QueuedEvent evt, CancellationToken ct) =>
+    private async Task<EventOutcome> ShipItemAsync(OpenSession session, QueuedEvent evt, CancellationToken ct) =>
         evt.EventType == EventType.ConversationTurn
-            ? await _conversations.ShipAsync(sessionId, evt, ct, await _queue.GetReopenedAtAsync(sessionId, ct))
-            : await _tools.ShipAsync(sessionId, evt, ct);
+            ? await _conversations.ShipAsync(session, evt, ct)
+            : await _tools.ShipAsync(session, evt, ct);
 
-    private async Task<bool> FlushSignalsAsync(string sessionId, SessionRun run, CancellationToken ct)
+    /// <summary>Signals gather only while the session is open, so with no session there are none.</summary>
+    private async Task<bool> FlushSignalsAsync(SessionRun run, CancellationToken ct)
     {
+        if (run.Session is not { } session)
+            return true;
+
         var contributors = run.Signals.ToList();
         run.Signals.Clear();
-        return await ApplyAsync(sessionId, run, await _signals.FlushAsync(sessionId, contributors, ct), ct);
+        return await ApplyAsync(session.SessionId, run, await _signals.FlushAsync(session, contributors, ct), ct);
     }
 
     /// <summary>Marks each event the send settled. Then a session-gone send drops the session's open events up
@@ -246,7 +308,7 @@ internal sealed class SessionShipper
     {
         var dropped = run.OpenBeforeNextStart();
         run.Signals.Clear();
-        run.Gate = StartState.Dead;
+        run.Dead = true;
         _logger.LogWarning("Dropping {Count} queued events of session {SessionId} up to its next start: {Why}",
             dropped.Count, sessionId, why);
         await run.MarkDeadAsync(dropped, ct);
@@ -257,67 +319,5 @@ internal sealed class SessionShipper
         var projectKey = await SessionStartPayload.ResolveProjectKeyAsync(evt.PayloadJson, _gitRemote, ct);
         await _usageStore.SetSessionProjectAsync(sessionId, projectKey, ct);
         return projectKey;
-    }
-
-    private static DateTime Later(DateTime? a, DateTime b) =>
-        a is { } first && first.ToUniversalTime() > b.ToUniversalTime() ? first : b;
-
-    /// <summary>The session's events from this poll in the order they happened, the walk's position in
-    /// them, and which of them are already marked.</summary>
-    /// <param name="gate">What the session's settled starts outside this poll say.</param>
-    private sealed class SessionRun(IEventQueue queue, IReadOnlyList<QueuedEvent> events, StartState gate)
-    {
-        private readonly HashSet<string> _marked = new(StringComparer.Ordinal);
-
-        public IReadOnlyList<QueuedEvent> Events => events;
-
-        public int At { get; set; }
-
-        /// <summary>Shipped once a start ships. Dead once the server answers session_not_found, and it drops
-        /// the session's items up to its next start; Local handles them here.</summary>
-        public StartState Gate { get; set; } = gate;
-
-        /// <summary>Activity and tool failures gathered since the last signals POST, with the tool and turn
-        /// events activity is derived from.</summary>
-        public List<QueuedEvent> Signals { get; } = [];
-
-        public bool Transient { get; set; }
-
-        public bool IsMarked(QueuedEvent evt) => _marked.Contains(evt.Id);
-
-        public IReadOnlyList<QueuedEvent> Open() => events.Where(e => !IsMarked(e)).ToList();
-
-        /// <summary>Open events before the first start at or after <see cref="At"/>. Signals gathered
-        /// earlier are open and belong to the same stretch, so they are included.</summary>
-        public IReadOnlyList<QueuedEvent> OpenBeforeNextStart()
-        {
-            var bound = At;
-            while (bound < events.Count && events[bound].EventType != EventType.SessionStart)
-                bound++;
-            return events.Take(bound).Where(e => !IsMarked(e)).ToList();
-        }
-
-        public Task MarkShippedAsync(IReadOnlyList<QueuedEvent> toMark, CancellationToken ct) =>
-            MarkAsync(toMark, queue.MarkShippedAsync, ct);
-
-        public Task MarkDeadAsync(IReadOnlyList<QueuedEvent> toMark, CancellationToken ct) =>
-            MarkAsync(toMark, queue.MarkDeadAsync, ct);
-
-        public Task MarkLocalAsync(IReadOnlyList<QueuedEvent> toMark, CancellationToken ct) =>
-            MarkAsync(toMark, queue.MarkLocalAsync, ct);
-
-        private async Task MarkAsync(
-            IReadOnlyList<QueuedEvent> toMark, Func<IReadOnlyList<string>, CancellationToken, Task> mark, CancellationToken ct)
-        {
-            var ids = new List<string>();
-            foreach (var evt in toMark)
-            {
-                if (_marked.Add(evt.Id))
-                    ids.Add(evt.Id);
-            }
-
-            if (ids.Count > 0)
-                await mark(ids, ct);
-        }
     }
 }

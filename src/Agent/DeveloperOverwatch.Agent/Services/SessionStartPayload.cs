@@ -31,9 +31,9 @@ internal static class SessionStartPayload
     /// not a JSON object, because a session start must never be dropped.</param>
     /// <param name="projectKey">From <see cref="ResolveProjectKeyAsync"/>.</param>
     /// <param name="eventId">The queued start's id, which lets the server report a redelivery as a duplicate.</param>
-    /// <param name="pilotSince">With it, the title goes only when the hook shows it was written at or after
-    /// enrolment; a title from before names a session that began before.</param>
-    public static string Enrich(string redactedPayload, string? projectKey, string eventId, DateTime? pilotSince)
+    /// <param name="session">The title goes only when the hook shows it was written at or above the session's
+    /// floor; a title from below names the stretch the session was held. With a floor, an undated title is dropped.</param>
+    public static string Enrich(string redactedPayload, string? projectKey, string eventId, OpenSession session)
     {
         JsonObject? body;
         try
@@ -53,15 +53,14 @@ internal static class SessionStartPayload
         body["projectKey"] = FieldLimits.Clamp(projectKey, FieldLimits.ProjectKey);
         body["developerEmail"] = FieldLimits.Email(AgentPayload.StringValue(body, "developerEmail"));
         body["eventId"] = eventId;
-        if (pilotSince is { } cutoff && !WrittenFrom(AgentPayload.StringValue(body, "titleWrittenAt"), cutoff))
+        if (!session.Admits(WrittenAt(AgentPayload.StringValue(body, "titleWrittenAt"))))
             body.Remove("title");
         body.Remove("titleWrittenAt");
         return body.ToJsonString();
     }
 
-    private static bool WrittenFrom(string? writtenAt, DateTime cutoff) =>
-        DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at)
-        && at.ToUniversalTime() >= cutoff;
+    private static DateTime? WrittenAt(string? writtenAt) =>
+        DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at) ? at : null;
 
     /// <summary>Whether this start may reopen a session kept on this machine. Only a new session or a
     /// resume is the developer coming back to it; a compact or clear start is the same sitting continuing.

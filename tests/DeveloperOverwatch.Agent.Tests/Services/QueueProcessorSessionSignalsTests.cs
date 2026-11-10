@@ -22,6 +22,8 @@ public sealed class QueueProcessorSessionSignalsTests
 
     public QueueProcessorSessionSignalsTests()
     {
+        _queue.GetAccessAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionAccess(AccessState.Open, DateTime.MinValue));
         _api.SendSessionEventsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ci => { _sentPayloads.Add(ci.ArgAt<string>(1)); return ApiResult.Success; });
     }

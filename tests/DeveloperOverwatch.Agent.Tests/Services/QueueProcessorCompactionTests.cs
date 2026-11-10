@@ -44,7 +44,7 @@ public sealed class QueueProcessorCompactionTests : IDisposable
     }
 
     [Fact]
-    public async Task LocalSession_CompactedAfterEnrolment_SendsNothing_AndStaysLocal()
+    public async Task LocalSession_CompactedAfterEnrolment_SendsNothing_AndStaysClosed()
     {
         var sut = CreateSut();
         await EnqueueAsync(Start("start", "startup"), _pilotSince.AddMinutes(-10));
@@ -60,7 +60,7 @@ public sealed class QueueProcessorCompactionTests : IDisposable
 
         string.Join("\n", _http.Bodies).Should().NotContain(Sentinel);
         _http.Bodies.Should().BeEmpty();
-        (await _queue.GetStartStateAsync("s")).Should().Be(StartState.Local);
+        (await _queue.GetAccessAsync("s")).State.Should().Be(AccessState.Closed);
     }
 
     [Fact]

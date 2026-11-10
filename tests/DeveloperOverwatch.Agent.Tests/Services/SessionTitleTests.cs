@@ -76,7 +76,7 @@ public sealed class SessionTitleTests : IDisposable
                 _ => "not a date"
             };
 
-        var enriched = JsonNode.Parse(SessionStartPayload.Enrich(body.ToJsonString(), "key", "e1", pilot ? PilotSince : null))!.AsObject();
+        var enriched = JsonNode.Parse(SessionStartPayload.Enrich(body.ToJsonString(), "key", "e1", new OpenSession("s", pilot ? PilotSince : DateTime.MinValue)))!.AsObject();
 
         enriched.ContainsKey("title").Should().Be(kept);
         enriched.ContainsKey("titleWrittenAt").Should().BeFalse();
@@ -101,7 +101,7 @@ public sealed class SessionTitleTests : IDisposable
             Id = "m", SessionId = "s", EventType = EventType.ConversationTurn, PayloadJson = markerPayload, CreatedAt = DateTime.UtcNow
         };
 
-        await shipper.ShipAsync("s", marker, CancellationToken.None);
+        await shipper.ShipAsync(new OpenSession("s", pilotSince ?? DateTime.MinValue), marker, CancellationToken.None);
     }
 
     private string SentBody() =>

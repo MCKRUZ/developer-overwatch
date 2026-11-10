@@ -43,6 +43,9 @@ public sealed class RefusedRequestSplitTests : IDisposable
         Directory.CreateDirectory(_dir);
         _queue = new EventQueue(Path.Combine(_dir, "queue.db"));
         _queue.InitializeAsync().GetAwaiter().GetResult();
+        // Splitting is not about the content floor: both sessions are open as if a start had shipped.
+        _queue.OpenAsync(Session).GetAwaiter().GetResult();
+        _queue.OpenAsync("b").GetAwaiter().GetResult();
         _capture.FindSubagentTranscripts(Arg.Any<string>()).Returns([]);
         _api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(_ => { _sent.Enqueue("start"); return _onStart; });

@@ -27,6 +27,9 @@ public sealed class SessionBackoffTests : IDisposable
         Directory.CreateDirectory(_dir);
         _queue = new EventQueue(Path.Combine(_dir, "queue.db"));
         _queue.InitializeAsync().GetAwaiter().GetResult();
+        // Backoff is not about the content floor: both sessions are open as if a start had shipped.
+        _queue.OpenAsync("a").GetAwaiter().GetResult();
+        _queue.OpenAsync("b").GetAwaiter().GetResult();
         _api.SendSessionStartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ci =>
         {
             _sent.Enqueue("start:" + Property(ci.ArgAt<string>(0), "eventId"));

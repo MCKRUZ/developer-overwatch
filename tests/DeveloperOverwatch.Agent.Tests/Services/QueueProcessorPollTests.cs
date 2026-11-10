@@ -200,6 +200,7 @@ public sealed class QueueProcessorPollTests : IDisposable
     [Fact]
     public async Task TooLarge_TurnChunk_HalvesWithinThePoll_UntilItFits()
     {
+        await _queue.OpenAsync("s");
         CaptureTurns(Enumerable.Range(0, 8).Select(i => ($"uuid:{i}", $"turn {i}", DateTime.UtcNow.AddMinutes(-10).AddSeconds(i))).ToArray());
         _http.Respond = (_, body) => TurnCount(body) > 2 ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.OK;
         await EnqueueAsync(Event("m", "s", EventType.ConversationTurn, MarkerPayload()), DateTime.UtcNow.AddMinutes(-1));
@@ -213,6 +214,7 @@ public sealed class QueueProcessorPollTests : IDisposable
     [Fact]
     public async Task TooLarge_SingleTurn_IsHeld_AndTheCursorStopsBeforeIt()
     {
+        await _queue.OpenAsync("s");
         CaptureTurns(Enumerable.Range(0, 3).Select(i => ($"uuid:{i}", $"turn {i}", DateTime.UtcNow.AddMinutes(-10).AddSeconds(i))).ToArray());
         _http.Respond = (_, body) => body.Contains("turn 1") ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.OK;
         await EnqueueAsync(Event("m", "s", EventType.ConversationTurn, MarkerPayload()), DateTime.UtcNow.AddMinutes(-1));
@@ -305,7 +307,10 @@ public sealed class QueueProcessorPollTests : IDisposable
 
     private static QueuedEvent Start(string id, string sessionId) =>
         Event(id, sessionId, EventType.SessionStart,
-            JsonSerializer.Serialize(new { sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow }));
+            JsonSerializer.Serialize(new
+            {
+                sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow, source = "startup"
+            }));
 
     private static string MarkerPayload() => JsonSerializer.Serialize(new { transcriptPath = Transcript });
 

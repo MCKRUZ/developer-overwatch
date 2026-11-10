@@ -19,8 +19,8 @@ internal sealed class ConversationShipper
     private readonly ILogger _logger;
     private readonly DateTime? _pilotSince;
 
-    /// <param name="pilotSince">Turns from before Pilot enrolment are recorded here but never sent, even
-    /// when a marker queued after enrolment captures them (a session resumed across enrolment).</param>
+    /// <param name="pilotSince">Bounds where a turn kept on this machine moves the cursors to; null in Local
+    /// mode, where they go to the end. What may ship is the <see cref="OpenSession"/>'s floor.</param>
     public ConversationShipper(
         IApiClient api, IPrivacyRedactor redactor, IConversationCapture capture,
         IConversationCursorStore cursorStore, IUsageStore usageStore, ILogger logger, DateTime? pilotSince = null)
@@ -42,7 +42,7 @@ internal sealed class ConversationShipper
     public async Task RecordLocallyAsync(
         string sessionId, QueuedEvent marker, CancellationToken ct, DateTime? keepFrom = null)
     {
-        if (await CaptureAsync(sessionId, marker, _pilotSince, ct) is not { } captured)
+        if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
             return;
 
         var bound = _pilotSince is null ? null : keepFrom ?? _pilotSince;
@@ -56,20 +56,21 @@ internal sealed class ConversationShipper
     /// <summary>An undated turn is not one: with a cutoff it is never sent, so the cursor may pass it.</summary>
     private static int? FirstLineFrom(TranscriptCapture transcript, DateTime from) =>
         transcript.Result.Turns
-            .Where(t => t.Timestamp is { } ts && ToUtc(ts) >= from)
+            .Where(t => t.Timestamp is { } ts && UtcInstant.Utc(ts) >= UtcInstant.Utc(from))
             .Select(t => (int?)t.StartLine)
             .Min();
 
     /// <summary>Done once every captured turn has a definitive outcome. A transient chunk stops there:
     /// the cursors keep what earlier chunks earned, and the next poll resumes from them.</summary>
-    /// <param name="reopenedAt">When the session left Local: its turns, and a title, from before then are
-    /// never sent.</param>
-    public async Task<EventOutcome> ShipAsync(
-        string sessionId, QueuedEvent marker, CancellationToken ct, DateTime? reopenedAt = null)
+    /// <param name="session">Its turns, and a title, from below its floor are recorded but never sent;
+    /// backfill, which carries no text, is exempt.</param>
+    public async Task<EventOutcome> ShipAsync(OpenSession session, QueuedEvent marker, CancellationToken ct)
     {
-        var shipFrom = Later(_pilotSince, reopenedAt);
-        if (await CaptureAsync(sessionId, marker, shipFrom, ct) is not { } captured)
+        var sessionId = session.SessionId;
+        if (await CaptureAsync(sessionId, marker, ct) is not { } all)
             return EventOutcome.Done;
+
+        var captured = all with { Turns = await ShippableAsync(session, all, ct) };
 
         var answered = new HashSet<string>(StringComparer.Ordinal);
         var turns = captured.Turns;
@@ -81,7 +82,8 @@ internal sealed class ConversationShipper
 
         var title = captured.Marker.Backfill
             ? null
-            : await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, shipFrom, ct);
+            : await ConversationPayload.ResolveSessionTitleAsync(
+                captured.Marker.TranscriptPath, session.Bounded ? session.Floor : null, ct);
         var callbacks = Callbacks(sessionId, title, captured, answered, ct);
         foreach (var chunk in turns.Chunk(MaxTurnsPerPost))
         {
@@ -168,10 +170,7 @@ internal sealed class ConversationShipper
     /// <summary>Captures the new turns and records their usage on this machine before anything is sent,
     /// so a failed send never loses it; re-capture after a failure is deduplicated by the turns' stable
     /// ids. Null when the marker names no transcript.</summary>
-    /// <param name="shipFrom">Turns dated before it are recorded but never sent: enrolment, or the later
-    /// instant the session reopened.</param>
-    private async Task<CapturedConversation?> CaptureAsync(
-        string sessionId, QueuedEvent evt, DateTime? shipFrom, CancellationToken ct)
+    private async Task<CapturedConversation?> CaptureAsync(string sessionId, QueuedEvent evt, CancellationToken ct)
     {
         if (ConversationMarker.Parse(evt.PayloadJson) is not { } marker)
         {
@@ -184,38 +183,50 @@ internal sealed class ConversationShipper
         // conversation by time. OrderBy is stable: same-timestamp turns keep transcript order.
         var turns = transcripts
             .SelectMany(c => c.Result.Turns.Select(t => new TurnRef(c.CursorKey, t, StableTurnId.From(t.SourceId))))
-            .Where(t => marker.From is not { } from || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= from))
+            .Where(t => marker.From is not { } from || (t.Turn.Timestamp is { } ts && UtcInstant.Utc(ts) >= UtcInstant.Utc(from)))
             .OrderBy(t => t.Turn.Timestamp ?? DateTime.MaxValue)
             .ToList();
 
         await _usageStore.RecordTurnsAsync(sessionId, turns.Select(t => t.Turn).ToList(), ct);
-        // Left out of Turns, a pre-enrolment turn is never sent, and the cursor moves past it like an answered one.
-        // A turn with no timestamp cannot be shown to postdate enrolment, so with a cutoff it is never sent either.
-        // Backfill is the explicit opt-in for that usage, and never carries text.
-        var shippable = turns
-            .Where(t => marker.Backfill || shipFrom is not { } since || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= since))
-            .ToList();
-        if (shipFrom is { } cutoff && !marker.UsageOnly)
-            shippable = await HoldPreEnrolmentSummariesAsync(sessionId, marker, shippable, cutoff, ct);
-        return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, shippable);
+        return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, turns);
     }
 
-    /// <summary>A compaction summary is dated at compaction but restates the prompts it replaces, so its
-    /// text ships only when the whole transcript, read from its first line, is from after enrolment and
-    /// holds the summary. Otherwise it ships as usage alone. Capture reads only past the cursor, hence the
-    /// second, full read; it happens only when a summary is present, and a transcript that cannot be read
-    /// comes back empty, which holds the text.</summary>
-    private async Task<List<TurnRef>> HoldPreEnrolmentSummariesAsync(
-        string sessionId, ConversationMarker marker, List<TurnRef> shippable, DateTime cutoff, CancellationToken ct)
+    /// <summary>Left out, a turn below the floor is never sent, and the cursor moves past it like an answered
+    /// one. An undated turn cannot be shown to be above a floor, so with one it is never sent either. Backfill
+    /// is the explicit opt-in for that usage, and never carries text.</summary>
+    private async Task<IReadOnlyList<TurnRef>> ShippableAsync(
+        OpenSession session, CapturedConversation captured, CancellationToken ct)
     {
+        var marker = captured.Marker;
+        var shippable = captured.Turns.Where(t => marker.Backfill || session.Admits(t.Turn.Timestamp)).ToList();
+        return session.Bounded && !marker.UsageOnly
+            ? await HoldRestatingSummariesAsync(session, marker, shippable, ct)
+            : shippable;
+    }
+
+    /// <summary>A compaction summary is dated at compaction but restates the prompts it replaces, which may be
+    /// from below the floor: a fork copies them with their own dates. So its text ships only when the whole
+    /// transcript, read from its first line, holds the summary after a turn of the session's own and every turn
+    /// in it is above the floor. Otherwise it ships as usage alone. Capture reads only past the cursor, hence
+    /// the second, full read; it happens only when a summary is present, and a transcript that cannot be read
+    /// comes back empty, which holds the text.</summary>
+    private async Task<List<TurnRef>> HoldRestatingSummariesAsync(
+        OpenSession session, ConversationMarker marker, List<TurnRef> shippable, CancellationToken ct)
+    {
+        var sessionId = session.SessionId;
         if (!shippable.Any(t => t.CursorKey == sessionId && t.Turn.IsCompactSummary))
             return shippable;
 
         var whole = (await _capture.CaptureFromFileAsync(marker.TranscriptPath, 0, false, ct)).Turns;
-        var allAfter = whole.Count > 0 && whole.All(t => t.Timestamp is { } ts && ToUtc(ts) >= cutoff);
+        var allAbove = whole.Count > 0 && whole.All(t => session.Admits(t.Timestamp));
         var read = whole.Select(t => t.SourceId).ToHashSet(StringComparer.Ordinal);
+        bool Keeps(CapturedTurn summary) =>
+            allAbove
+            && read.Contains(summary.SourceId)
+            && whole.Any(t => !t.IsCompactSummary && t.StartLine < summary.StartLine);
+
         return shippable
-            .Select(t => t.CursorKey != sessionId || !t.Turn.IsCompactSummary || (allAfter && read.Contains(t.Turn.SourceId))
+            .Select(t => t.CursorKey != sessionId || !t.Turn.IsCompactSummary || Keeps(t.Turn)
                 ? t
                 : t with { Turn = t.Turn with { Content = null } })
             .ToList();
@@ -244,10 +255,4 @@ internal sealed class ConversationShipper
 
         return captures;
     }
-
-    private static DateTime ToUtc(DateTime value) =>
-        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
-
-    private static DateTime? Later(DateTime? a, DateTime? b) =>
-        a is null ? b : b is null ? a : (ToUtc(a.Value) >= ToUtc(b.Value) ? a : b);
 }

@@ -21,6 +21,8 @@ public sealed class QueueProcessorTests
     public QueueProcessorTests()
     {
         _queue = Substitute.For<IEventQueue>();
+        _queue.GetAccessAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionAccess(AccessState.Open, DateTime.MinValue));
         _api = Substitute.For<IApiClient>();
         _redactor = Substitute.For<IPrivacyRedactor>();
         _conversationCapture = Substitute.For<IConversationCapture>();
