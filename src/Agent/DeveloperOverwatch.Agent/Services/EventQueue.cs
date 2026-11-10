@@ -187,6 +187,9 @@ public sealed partial class EventQueue : IEventQueue, IDisposable
     private const int Shipped = 1;
     private const int Dead = 2;
 
+    // Written only by earlier builds of this branch, for a start held in Local mode; never written now.
+    private const int LegacyLocal = 3;
+
     public Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Shipped);
 
     public Task MarkDeadAsync(IReadOnlyList<string> ids, CancellationToken ct = default) => SetStateAsync(ids, Dead);
@@ -244,7 +247,7 @@ public sealed partial class EventQueue : IEventQueue, IDisposable
     }
 
     public Task PurgeShippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
-        PurgeAsync($"shipped IN ({Shipped}, {Dead})", olderThan);
+        PurgeAsync($"shipped IN ({Shipped}, {Dead}, {LegacyLocal})", olderThan);
 
     public Task PurgeUnshippedAsync(TimeSpan olderThan, CancellationToken ct = default) =>
         PurgeAsync($"shipped = {Pending}", olderThan);

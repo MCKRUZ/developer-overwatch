@@ -73,6 +73,52 @@ public sealed class EventQueueAccessSeedTests : IDisposable
         (await restarted.GetAccessAsync("s1")).State.Should().Be(AccessState.New);
     }
 
+    // Earlier builds of this branch marked a start held in Local mode with shipped = 3. A session holding one
+    // was used in Local mode, so its shipped rows do not show it was on the server from the earliest of them. Left
+    // New, a later clear or no-source start could open it at pilotSince, so it is seeded Closed.
+    [Fact]
+    public async Task Initialize_SessionHoldingALegacyLocalRow_IsSeededClosed()
+    {
+        CreateOldQueue(
+            ("a-1", "shipped-session", X, 1),
+            ("l-local", "local-session", X.AddMinutes(-5), LegacyLocal),
+            ("l-1", "local-session", X, 1));
+
+        using var queue = new EventQueue(_dbPath);
+        await queue.InitializeAsync();
+
+        (await queue.GetAccessAsync("local-session")).Should().Be(new SessionAccess(AccessState.Closed, null));
+        (await queue.GetAccessAsync("shipped-session")).Should().Be(new SessionAccess(AccessState.Open, X));
+    }
+
+    // Nothing writes shipped = 3 any more and nothing dequeues it, so only the shipped purge can clear it.
+    [Fact]
+    public async Task PurgeShipped_LeftoverLegacyLocalRow_IsDeleted()
+    {
+        CreateOldQueue(("l-local", "local-session", X, LegacyLocal), ("p-1", "pending-session", X, 0));
+
+        using var queue = new EventQueue(_dbPath);
+        await queue.InitializeAsync();
+        await queue.PurgeShippedAsync(TimeSpan.Zero);
+
+        RowIds().Should().Equal("p-1");
+    }
+
+    private const int LegacyLocal = 3;
+
+    private IReadOnlyList<string> RowIds()
+    {
+        using var connection = new SqliteConnection($"Data Source={_dbPath};Pooling=False");
+        connection.Open();
+        using var select = connection.CreateCommand();
+        select.CommandText = "SELECT id FROM events ORDER BY id";
+        using var reader = select.ExecuteReader();
+        var ids = new List<string>();
+        while (reader.Read())
+            ids.Add(reader.GetString(0));
+        return ids;
+    }
+
     /// <summary>The events table exactly as EventQueue creates it, written without EventQueue.</summary>
     private void CreateOldQueue(params (string Id, string SessionId, DateTime CreatedAt, int Shipped)[] rows)
     {

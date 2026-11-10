@@ -130,7 +130,9 @@ public sealed partial class EventQueue
     }
 
     /// <summary>Runs once per database, guarded by user_version. A queue from before session_access marks a row
-    /// shipped only once it was sent, so a session with a shipped row was on the server from its earliest one.</summary>
+    /// shipped only once it was sent, so a session with a shipped row was on the server from its earliest one. A
+    /// session holding a <see cref="LegacyLocal"/> row was used in Local mode, so it is seeded Closed first and the
+    /// open seed leaves it alone.</summary>
     private void SeedAccess()
     {
         using var transaction = _connection.BeginTransaction();
@@ -144,6 +146,8 @@ public sealed partial class EventQueue
         using var seed = _connection.CreateCommand();
         seed.Transaction = transaction;
         seed.CommandText = $"""
+            INSERT OR IGNORE INTO session_access (session_id, open_from)
+            SELECT DISTINCT session_id, NULL FROM events WHERE shipped = {LegacyLocal};
             INSERT OR IGNORE INTO session_access (session_id, open_from)
             SELECT session_id, MIN(created_at) FROM events WHERE shipped = {Shipped} GROUP BY session_id;
             PRAGMA user_version = 1;
