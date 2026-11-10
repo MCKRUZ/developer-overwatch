@@ -7,10 +7,22 @@ public sealed class GetUsageSummaryQueryValidator : AbstractValidator<GetUsageSu
     /// <summary>Longest period, counting both end days: a leap year.</summary>
     public const int MaxDays = 366;
 
-    public GetUsageSummaryQueryValidator()
+    /// <summary>Earliest day a query may start. The handler pads the window by a day each side, which must
+    /// stay inside DateTime's range; no usage predates this anyway.</summary>
+    public static readonly DateOnly EarliestFrom = new(2000, 1, 1);
+
+    public GetUsageSummaryQueryValidator(TimeProvider time)
     {
         RuleFor(x => x.From).NotNull();
         RuleFor(x => x.To).NotNull();
+        RuleFor(x => x.From)
+            .Must(from => from >= EarliestFrom)
+            .When(x => x.From is not null)
+            .WithMessage("'from' must be on or after 2000-01-01.");
+        RuleFor(x => x.To)
+            .Must(to => to <= DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime).AddYears(1))
+            .When(x => x.To is not null)
+            .WithMessage("'to' must be at most one year from today.");
         RuleFor(x => x)
             .Must(x => x.From <= x.To)
             .When(x => x.From is not null && x.To is not null)

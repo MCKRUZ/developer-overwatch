@@ -29,6 +29,10 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
     // On Linux "America" is a directory under the zoneinfo root, not a zone; reading it must be a 400, not a 500.
     [InlineData("from=2026-11-01&to=2026-11-10&granularity=day&timeZone=America", "known IANA time zone")]
     [InlineData("from=2026-11-01&to=2026-11-10&granularity=day&timeZone=" + TooLongZone, "known IANA time zone")]
+    // Year 1 and year 9999 used to reach the handler, where padding the window by a day ran past
+    // DateTime's range and threw: a 500 for a query string anyone can send.
+    [InlineData("from=0001-01-01&to=0001-01-07&granularity=day&timeZone=Etc/UTC", "'from' must be on or after 2000-01-01")]
+    [InlineData("from=9999-12-25&to=9999-12-31&granularity=day&timeZone=Etc/UTC", "'to' must be at most one year from today")]
     [InlineData("to=2026-11-10&granularity=day&timeZone=Etc/UTC", "From")]
     [InlineData("from=2026-11-01&granularity=day&timeZone=Etc/UTC", "To")]
     public async Task GetSummary_InvalidInput_Returns400NamingTheBrokenRule(string query, string message)
@@ -39,6 +43,16 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         body.RootElement.GetProperty("errors").EnumerateArray().Select(e => e.GetString())
             .Should().ContainSingle(e => e!.Contains(message));
+    }
+
+    // Control for the date bounds: the earliest allowed day is accepted.
+    [Fact]
+    public async Task GetSummary_FromTheEarliestAllowedDay_Returns200()
+    {
+        var response = await _factory.CreateClient()
+            .GetAsync("/api/usage/summary?from=2000-01-01&to=2000-01-07&granularity=day&timeZone=Etc/UTC");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // Control for the 400s, and the boundary of the range rule: 366 days counting both ends is allowed.
