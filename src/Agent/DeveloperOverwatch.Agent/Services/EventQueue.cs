@@ -18,8 +18,9 @@ public interface IEventQueue
     /// Pending starts do not count.</summary>
     Task<StartState> GetStartStateAsync(string sessionId, CancellationToken ct = default);
 
-    /// <summary>When the session's first start queued after <paramref name="after"/> was queued, whatever
-    /// its state; null when the queue holds none.</summary>
+    /// <summary>When the session's first start queued after <paramref name="after"/> that may reopen the
+    /// session (see <see cref="SessionStartPayload.MayReopen"/>) was queued, whatever its state; null when
+    /// the queue holds none.</summary>
     Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default);
 
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
@@ -199,16 +200,23 @@ public sealed class EventQueue : IEventQueue, IDisposable
         {
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = """
-                SELECT MIN(created_at) FROM events
+                SELECT created_at, payload_json FROM events
                 WHERE session_id = $sessionId AND event_type = $eventType AND created_at > $after
+                ORDER BY created_at
                 """;
             cmd.Parameters.AddWithValue("$sessionId", sessionId);
             cmd.Parameters.AddWithValue("$eventType", nameof(EventType.SessionStart));
             cmd.Parameters.AddWithValue("$after", ToUtc(after).ToString("o"));
 
-            var at = cmd.ExecuteScalar() as string;
-            return Task.FromResult<DateTime?>(
-                at is null ? null : DateTime.Parse(at, null, System.Globalization.DateTimeStyles.RoundtripKind));
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                if (SessionStartPayload.MayReopen(reader.GetString(1)))
+                    return Task.FromResult<DateTime?>(
+                        DateTime.Parse(reader.GetString(0), null, System.Globalization.DateTimeStyles.RoundtripKind));
+            }
+
+            return Task.FromResult<DateTime?>(null);
         }
     }
 

@@ -340,4 +340,17 @@ public sealed class ConversationCaptureTests : IDisposable
 
         result.Turns.Should().BeEmpty();
     }
+
+    // A summary restates prompts from before compaction, so the shipper must be able to tell it apart.
+    [Fact]
+    public async Task CaptureFromFileAsync_CompactSummaryLine_IsFlagged()
+    {
+        var path = WriteTranscript("s.jsonl",
+            """{"type":"user","isCompactSummary":true,"uuid":"u-s","message":{"role":"user","content":"SUMMARY"},"timestamp":"2026-01-01T00:00:00Z"}""",
+            UserPrompt("u-p", "plain prompt"));
+
+        var result = await _sut.CaptureFromFileAsync(path, 0);
+
+        result.Turns.Select(t => t.IsCompactSummary).Should().Equal(true, false);
+    }
 }

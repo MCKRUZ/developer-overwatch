@@ -186,7 +186,30 @@ internal sealed class ConversationShipper
         var shippable = turns
             .Where(t => marker.Backfill || _pilotSince is not { } since || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= since))
             .ToList();
+        if (_pilotSince is { } cutoff && !marker.UsageOnly)
+            shippable = await HoldPreEnrolmentSummariesAsync(sessionId, marker, shippable, cutoff, ct);
         return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, shippable);
+    }
+
+    /// <summary>A compaction summary is dated at compaction but restates the prompts it replaces, so its
+    /// text ships only when the whole transcript, read from its first line, is from after enrolment and
+    /// holds the summary. Otherwise it ships as usage alone. Capture reads only past the cursor, hence the
+    /// second, full read; it happens only when a summary is present, and a transcript that cannot be read
+    /// comes back empty, which holds the text.</summary>
+    private async Task<List<TurnRef>> HoldPreEnrolmentSummariesAsync(
+        string sessionId, ConversationMarker marker, List<TurnRef> shippable, DateTime cutoff, CancellationToken ct)
+    {
+        if (!shippable.Any(t => t.CursorKey == sessionId && t.Turn.IsCompactSummary))
+            return shippable;
+
+        var whole = (await _capture.CaptureFromFileAsync(marker.TranscriptPath, 0, false, ct)).Turns;
+        var allAfter = whole.Count > 0 && whole.All(t => t.Timestamp is { } ts && ToUtc(ts) >= cutoff);
+        var read = whole.Select(t => t.SourceId).ToHashSet(StringComparer.Ordinal);
+        return shippable
+            .Select(t => t.CursorKey != sessionId || !t.Turn.IsCompactSummary || (allAfter && read.Contains(t.Turn.SourceId))
+                ? t
+                : t with { Turn = t.Turn with { Content = null } })
+            .ToList();
     }
 
     /// <summary>Reads the session transcript plus every subagent transcript beside it. A subagent's

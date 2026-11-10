@@ -10,6 +10,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// a new transcript, so the server can recognise a resend and count it once.</param>
 /// <param name="Content">Conversational text, or null for a response that only called tools or
 /// only thought — those still carry token usage and must be counted.</param>
+/// <param name="IsCompactSummary">A compaction summary: dated when the session was compacted, but its
+/// text restates the earlier prompts it replaces.</param>
 public sealed record CapturedTurn(
     string SourceId,
     string Role,
@@ -22,7 +24,8 @@ public sealed record CapturedTurn(
     string? Model = null,
     string? GitBranch = null,
     string? SubagentName = null,
-    int StartLine = 0);
+    int StartLine = 0,
+    bool IsCompactSummary = false);
 
 /// <param name="ParseErrors">Lines read that were not valid JSON.</param>
 public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines, int ParseErrors = 0);

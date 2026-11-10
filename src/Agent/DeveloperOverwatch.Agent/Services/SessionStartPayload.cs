@@ -53,6 +53,29 @@ internal static class SessionStartPayload
         return body.ToJsonString();
     }
 
+    /// <summary>Whether this start may reopen a session kept on this machine. Only a new session or a
+    /// resume is the developer coming back to it; a compact or clear start is the same sitting continuing.
+    /// A start with no source is from a hook that predates the field.</summary>
+    public static bool MayReopen(string payloadJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!doc.RootElement.TryGetProperty("source", out var source) || source.ValueKind == JsonValueKind.Null)
+                return true;
+            return source.ValueKind == JsonValueKind.String
+                && source.GetString() is { } value
+                && (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("resume", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static string? ReadRepoPath(string rawPayload)
     {
         try

@@ -180,6 +180,29 @@ public sealed class HookScriptTests
         script.Should().Contain("startedAt = $now");
     }
 
+    // The agent keeps a pre-enrolment session local across a compact or clear start, so it needs the source.
+    [Theory]
+    [InlineData("compact", "compact")]
+    [InlineData("RESUME", "resume")]
+    [InlineData("garbage", null)]
+    [InlineData(42, null)]
+    public void SessionStartHook_RunInPwsh_ForwardsOnlyAKnownSource(object source, string? expected)
+    {
+        var home = CreateHome();
+        var line = RunHook("overwatch-session-start.ps1", home,
+            new { session_id = "claude-1", source, transcript_path = Path.Combine(home, "missing.jsonl") }) is null
+            ? null
+            : ReadLines(home).Single();
+        if (line is null) return;
+
+        using var doc = JsonDocument.Parse(line);
+        using var payload = JsonDocument.Parse(doc.RootElement.GetProperty("payload").GetString()!);
+        var sent = payload.RootElement.TryGetProperty("source", out var prop) && prop.ValueKind == JsonValueKind.String
+            ? prop.GetString()
+            : null;
+        sent.Should().Be(expected);
+    }
+
     private static string? RunHookAndReadLine(string hook, object input)
     {
         var home = CreateHome();

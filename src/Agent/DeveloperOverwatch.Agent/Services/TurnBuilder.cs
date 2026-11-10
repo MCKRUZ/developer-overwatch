@@ -74,7 +74,8 @@ internal sealed class TurnBuilder
             t.CacheReadInputTokens,
             t.Model,
             t.GitBranch,
-            StartLine: t.StartLine)).ToList();
+            StartLine: t.StartLine,
+            IsCompactSummary: t.IsCompactSummary)).ToList();
 
     private void AddResponseLine(JsonElement message, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
@@ -112,7 +113,12 @@ internal sealed class TurnBuilder
             return;
 
         var sourceId = GetString(root, "uuid") is { Length: > 0 } uuid ? $"uuid:{uuid}" : fallbackSourceId;
-        var turn = new PendingTurn(sourceId, role, timestamp) { GitBranch = gitBranch, StartLine = _lineIndex };
+        var turn = new PendingTurn(sourceId, role, timestamp)
+        {
+            GitBranch = gitBranch,
+            StartLine = _lineIndex,
+            IsCompactSummary = root.TryGetProperty("isCompactSummary", out var flag) && flag.ValueKind == JsonValueKind.True
+        };
         turn.Texts.AddRange(texts);
         _turns.Add(turn);
     }
@@ -167,6 +173,7 @@ internal sealed class TurnBuilder
     {
         public string SourceId { get; } = sourceId;
         public int StartLine { get; init; }
+        public bool IsCompactSummary { get; init; }
         public string Role { get; } = role;
         public DateTime? Timestamp { get; } = timestamp;
         public List<string> Texts { get; } = [];

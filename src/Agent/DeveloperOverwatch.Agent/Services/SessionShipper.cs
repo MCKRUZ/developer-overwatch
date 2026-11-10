@@ -11,7 +11,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// an item rejected alone is dead, and one too large even alone is held, never dead. Once the server no
 /// longer knows the session, its events are dropped up to its next start; a refused start leaves that to
 /// the server's answer to the items after it. A
-/// session whose start was handled locally keeps its items here, unsent, until a later start ships. The
+/// session whose start was handled locally keeps its items here, unsent, until a later new-session or resume
+/// start ships; a compact or clear start stays here with it. The
 /// first transient failure holds the rest of the session until the next poll.</summary>
 internal sealed class SessionShipper
 {
@@ -88,6 +89,8 @@ internal sealed class SessionShipper
                 await SweepAsync(sessionId, run, SessionUnknown, ct);
             else if (evt.EventType != EventType.SessionStart && run.Gate == StartState.Local)
                 await KeepLocalAsync(sessionId, run, evt, ct);
+            else if (run.Gate == StartState.Local && !SessionStartPayload.MayReopen(evt.PayloadJson))
+                await KeepStartLocalAsync(sessionId, run, evt, ct);
             else if (!await StepAsync(sessionId, run, evt, ct))
                 return;
         }
@@ -108,6 +111,14 @@ internal sealed class SessionShipper
         }
 
         await run.MarkShippedAsync([evt], ct);
+    }
+
+    /// <summary>A compact or clear start of a session kept here is the same sitting going on, not the
+    /// developer coming back to it, so it stays here like the session's first start.</summary>
+    private async Task KeepStartLocalAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
+    {
+        await RecordSessionProjectAsync(sessionId, start, ct);
+        await run.MarkLocalAsync([start], ct);
     }
 
     /// <returns>False when the session must stop for this poll.</returns>
@@ -277,6 +288,9 @@ internal sealed class SessionShipper
 
         public Task MarkDeadAsync(IReadOnlyList<QueuedEvent> toMark, CancellationToken ct) =>
             MarkAsync(toMark, queue.MarkDeadAsync, ct);
+
+        public Task MarkLocalAsync(IReadOnlyList<QueuedEvent> toMark, CancellationToken ct) =>
+            MarkAsync(toMark, queue.MarkLocalAsync, ct);
 
         private async Task MarkAsync(
             IReadOnlyList<QueuedEvent> toMark, Func<IReadOnlyList<string>, CancellationToken, Task> mark, CancellationToken ct)
