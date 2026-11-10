@@ -105,7 +105,7 @@ describe("useLiveRefresh", () => {
       const refetch = vi.fn();
       renderHook(() => useLiveRefresh(refetch));
 
-      act(() => hub.emit(event, { sessionId: "s1", developerEmail: "d", at: "t" }));
+      act(() => hub.emit(event, { sessionId: "s1", at: "t" }));
       act(() => vi.advanceTimersByTime(LIVE_REFRESH_INTERVAL_MS));
 
       expect(refetch).toHaveBeenCalledTimes(1);
@@ -118,7 +118,7 @@ describe("useLiveRefresh", () => {
 
     act(() => {
       hub.emit("SessionStarted", "s1", "d", null);
-      hub.emit("UsageUpdated", { sessionId: "s1", developerEmail: "d", at: "t" });
+      hub.emit("UsageUpdated", { sessionId: "s1", at: "t" });
       hub.emit("SessionEnded", "s1");
     });
     act(() => vi.advanceTimersByTime(LIVE_REFRESH_INTERVAL_MS));

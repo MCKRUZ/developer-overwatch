@@ -3,10 +3,9 @@ import type { HubConnection } from "@microsoft/signalr";
 import { HubConnectionState } from "@microsoft/signalr";
 import type { ViolationData } from "./useSessionUpdates";
 
-/** Sent by the API after it stores new turns for a session. */
+/** Sent by the API when an ingest accepts new turns or changes a session's activity state. */
 export interface UsageUpdate {
   sessionId: string;
-  developerEmail: string;
   at: string;
 }
 

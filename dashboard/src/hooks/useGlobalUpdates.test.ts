@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { HubConnectionState } from "@microsoft/signalr";
 import type { HubConnection } from "@microsoft/signalr";
 import { useGlobalUpdates } from "./useGlobalUpdates";
+import type { UsageUpdate } from "./useGlobalUpdates";
 import type { ViolationData } from "./useSessionUpdates";
 
 function makeConnection() {
@@ -120,7 +121,8 @@ describe("useGlobalUpdates", () => {
         onUsageUpdated,
       }),
     );
-    const update = { sessionId: "s1", developerEmail: "dev@x.com", at: "2026-11-10T12:00:00Z" };
+    // The API sends only these two fields; the developer is not part of the broadcast.
+    const update: UsageUpdate = { sessionId: "s1", at: "2026-11-10T12:00:00Z" };
 
     act(() => emit("UsageUpdated", update));
 
@@ -133,7 +135,7 @@ describe("useGlobalUpdates", () => {
       useGlobalUpdates({ connection, connectionState: HubConnectionState.Connected }),
     );
 
-    act(() => emit("UsageUpdated", { sessionId: "s1", developerEmail: "d", at: "t" }));
+    act(() => emit("UsageUpdated", { sessionId: "s1", at: "t" }));
 
     expect(result.current.counts.newSessions).toBe(0);
   });
