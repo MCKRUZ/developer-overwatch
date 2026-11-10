@@ -28,7 +28,7 @@ internal static class SessionStartPayload
     /// becomes <see cref="FieldLimits.UnknownEmail"/>. Runs on the redacted payload, since redaction
     /// may rewrite the email.</summary>
     /// <param name="redactedPayload">The payload that will be sent; returned unchanged when it is
-    /// not a JSON object, because a session start must never be dropped.</param>
+    /// not a JSON object, because a session start must never be dropped on an open session.</param>
     /// <param name="projectKey">From <see cref="ResolveProjectKeyAsync"/>.</param>
     /// <param name="eventId">The queued start's id, which lets the server report a redelivery as a duplicate.</param>
     /// <param name="session">The title goes only when the hook shows it was written at or above the session's

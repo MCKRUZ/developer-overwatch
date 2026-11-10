@@ -160,7 +160,7 @@ public sealed class QueueProcessor : BackgroundService
             var local = sessionGroup.Where(HandlesLocally).ToList();
             var toShip = sessionGroup.Where(e => !HandlesLocally(e)).ToList();
 
-            // Local first, so a start handled here is already marked when the shipped items ask for it.
+            // Local first: a start handled here has already closed the session when ShipAsync reads its access.
             if (local.Count > 0)
                 await _sessions.HandleLocallyAsync(sessionId, local, ct);
             if (toShip.Count == 0)
