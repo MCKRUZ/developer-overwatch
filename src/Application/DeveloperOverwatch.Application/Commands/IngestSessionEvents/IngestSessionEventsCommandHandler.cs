@@ -16,6 +16,7 @@ public sealed class IngestSessionEventsCommandHandler
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITokenPricingCalculator _pricing;
     private readonly IGovernanceViolationRepository _violations;
+    private readonly ISessionStaleThresholdProvider _staleThreshold;
     private readonly TimeProvider _time;
 
     public IngestSessionEventsCommandHandler(
@@ -23,12 +24,14 @@ public sealed class IngestSessionEventsCommandHandler
         IUnitOfWork unitOfWork,
         ITokenPricingCalculator pricing,
         IGovernanceViolationRepository violations,
+        ISessionStaleThresholdProvider staleThreshold,
         TimeProvider time)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
         _pricing = pricing;
         _violations = violations;
+        _staleThreshold = staleThreshold;
         _time = time;
     }
 
@@ -49,13 +52,26 @@ public sealed class IngestSessionEventsCommandHandler
         var batch = await ValidateAsync(request, results, cancellationToken);
         var now = _time.GetUtcNow().UtcDateTime;
         var stored = await StoreAsync(session, batch, results, now, cancellationToken);
+        var revived = 0;
         if (stored.Total > 0)
-            session.LastActivityAt = LatestActivity(session.LastActivityAt, batch.Stamps, now);
+        {
+            var before = session.LastActivityAt;
+            session.LastActivityAt = LatestActivity(before, batch.Stamps, now);
+            revived = ReturnsToRunningList(session, before, now) ? 1 : 0;
+        }
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(
-            stored.Total, results.Build(), stored.Turns, stored.LiveStateChanges));
+            stored.Total, results.Build(), stored.Turns, stored.LiveStateChanges + revived));
+    }
+
+    // The running list holds Active sessions whose last activity is within the stale threshold. A batch that moves
+    // an idle session back inside it changes that list, even when it holds only tools or files.
+    private bool ReturnsToRunningList(Session session, DateTime before, DateTime now)
+    {
+        var activeSince = now.AddMinutes(-_staleThreshold.StaleAfterMinutes);
+        return session.Status == SessionStatus.Active && before < activeSince && session.LastActivityAt >= activeSince;
     }
 
     // Each item gets its own outcome: invalid items are rejected without sinking the batch, and

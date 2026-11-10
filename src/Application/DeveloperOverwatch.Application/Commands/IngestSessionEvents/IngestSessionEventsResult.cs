@@ -4,7 +4,8 @@ namespace DeveloperOverwatch.Application.Commands.IngestSessionEvents;
 /// stored, as it always has. <see cref="Results"/> gives each turn, tool execution, file change and
 /// tool failure its own outcome by id. Activity events have no id and are not listed.</summary>
 /// <param name="TurnsStored">Turns newly stored by this batch; resent duplicates are not counted.</param>
-/// <param name="LiveStateChanges">Activity-state changes and new tool failures this batch applied.</param>
+/// <param name="LiveStateChanges">Activity-state changes and new tool failures this batch applied, plus one when it
+/// returned an idle session to the running list.</param>
 public sealed record IngestSessionEventsResult(
     int EventsIngested, IngestItemResults Results, int TurnsStored, int LiveStateChanges);
 

@@ -14,6 +14,7 @@ public class IngestSessionEventsTests
     private readonly IUnitOfWork _uow = Substitute.For<IUnitOfWork>();
     private readonly ITokenPricingCalculator _pricing = Substitute.For<ITokenPricingCalculator>();
     private readonly IGovernanceViolationRepository _violations = Substitute.For<IGovernanceViolationRepository>();
+    private readonly ISessionStaleThresholdProvider _staleThreshold = Substitute.For<ISessionStaleThresholdProvider>();
 
     [Fact]
     public async Task Handle_WithToolExecutions_AddsToSession()
@@ -22,7 +23,7 @@ public class IngestSessionEventsTests
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>())
             .Returns(new Session { Id = sessionId, Status = SessionStatus.Active });
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -68,7 +69,7 @@ public class IngestSessionEventsTests
         var old = new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc);
         var session = new Session { Id = sessionId, Status = SessionStatus.Active, LastActivityAt = old.AddDays(-1) };
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
 
         await handler.Handle(new IngestSessionEventsCommand
         {
@@ -83,13 +84,43 @@ public class IngestSessionEventsTests
         session.LastActivityAt.Should().Be(old.AddMinutes(5));
     }
 
+    // A tool-only batch on an idle session puts it back on the usage page's running list, so the page must be told;
+    // the same batch on a session already running changes nothing shown and must not make every dashboard refetch.
+    [Theory]
+    [InlineData(45, 1)]
+    [InlineData(1, 0)]
+    public async Task Handle_ToolOnlyBatch_CountsALiveStateChangeOnlyWhenItRevivesAnIdleSession(
+        int idleMinutes, int expectedLiveStateChanges)
+    {
+        _staleThreshold.StaleAfterMinutes.Returns(30);
+        var sessionId = Guid.NewGuid().ToString();
+        var session = new Session
+        {
+            Id = sessionId, Status = SessionStatus.Active, LastActivityAt = DateTime.UtcNow.AddMinutes(-idleMinutes)
+        };
+        _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
+
+        var result = await handler.Handle(new IngestSessionEventsCommand
+        {
+            SessionId = sessionId,
+            ToolExecutions =
+            [
+                new ToolExecutionDto { Id = "t-1", ToolName = "Read", InputParams = "{}", DurationMs = 1, Timestamp = DateTime.UtcNow }
+            ]
+        }, CancellationToken.None);
+
+        result.Value!.LiveStateChanges.Should().Be(expectedLiveStateChanges);
+        result.Value.EventsIngested.Should().Be(1, "a revival is not an event");
+    }
+
     [Fact]
     public async Task Handle_SessionNotFound_ReturnsFail()
     {
         _repo.GetByIdAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns((Session?)null);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = "nonexistent",
@@ -111,7 +142,7 @@ public class IngestSessionEventsTests
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
         _pricing.CalculateCost(null, 15, 8, null, null).Returns(0.001m);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -151,7 +182,7 @@ public class IngestSessionEventsTests
         List<ConversationTurn> stored = [];
         await _repo.AddTurnsAsync(Arg.Do<IEnumerable<ConversationTurn>>(ts => stored.AddRange(ts)), Arg.Any<CancellationToken>());
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -175,7 +206,7 @@ public class IngestSessionEventsTests
         var session = new Session { Id = sessionId, Status = SessionStatus.Active };
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -229,7 +260,7 @@ public class IngestSessionEventsTests
             Arg.Do<IEnumerable<ConversationTurn>>(ts => added = ts.Single()),
             Arg.Any<CancellationToken>());
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -263,7 +294,7 @@ public class IngestSessionEventsTests
         var session = new Session { Id = sessionId, Status = SessionStatus.Active, Title = "old-name" };
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -293,7 +324,7 @@ public class IngestSessionEventsTests
         _repo.GetExistingToolExecutionIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(new HashSet<string> { "tool-1" });
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -329,7 +360,7 @@ public class IngestSessionEventsTests
         _pricing.CalculateCost(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>())
             .Returns(1.50m);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -356,7 +387,7 @@ public class IngestSessionEventsTests
         var session = new Session { Id = sessionId, Status = SessionStatus.Active, Title = "keep-me" };
         _repo.GetByIdAsync(sessionId, Arg.Any<CancellationToken>()).Returns(session);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand { SessionId = sessionId };
 
         await handler.Handle(command, CancellationToken.None);
@@ -377,7 +408,7 @@ public class IngestSessionEventsTests
         _pricing.CalculateCost(Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<int?>())
             .Returns(0.25m);
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var command = new IngestSessionEventsCommand
         {
             SessionId = sessionId,
@@ -407,7 +438,7 @@ public class IngestSessionEventsTests
         _repo.GetExistingTurnIdsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(new HashSet<string>());
 
-        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, TimeProvider.System);
+        var handler = new IngestSessionEventsCommandHandler(_repo, _uow, _pricing, _violations, _staleThreshold, TimeProvider.System);
         var turn = new ConversationTurnDto { Id = "dup", Role = "assistant", InputTokens = 40, Timestamp = DateTime.UtcNow };
         var command = new IngestSessionEventsCommand { SessionId = sessionId, ConversationTurns = [turn, turn] };
 

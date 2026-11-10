@@ -97,8 +97,9 @@ public sealed class SessionsController : ControllerBase
             command.ToolExecutions.Count,
             command.FileChanges.Count);
 
-        // The usage page shows turn totals and each running session's live state. Tool and file events alone,
-        // and resent duplicates, change neither, so they do not make every dashboard refetch.
+        // The usage page shows turn totals, which sessions are running, and each one's live state. Tool and file
+        // events on a session already running, and resent duplicates, change none of these, so they do not make every
+        // dashboard refetch. On an idle session they return it to the running list, which counts as a live-state change.
         if (result.Value!.TurnsStored > 0 || result.Value.LiveStateChanges > 0)
         {
             await _hub.Clients.All.UsageUpdated(new UsageUpdatedNotification(

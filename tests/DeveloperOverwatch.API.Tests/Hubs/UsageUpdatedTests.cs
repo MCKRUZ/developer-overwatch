@@ -52,6 +52,28 @@ public class UsageUpdatedTests : IClassFixture<OverwatchWebApplicationFactory>
         (await Next(received)).GetProperty("sessionId").GetString().Should().Be(failureOnly);
     }
 
+    // A tool batch on a session idle past the running-list window puts it back on the list, so it must broadcast,
+    // unlike the same batch on a running session above. The failure batch after it is the sentinel.
+    [Fact]
+    public async Task IngestEvents_ToolBatchOnIdleSession_BroadcastsBecauseItReturnsToTheRunningList()
+    {
+        var received = Channel.CreateUnbounded<JsonElement>();
+        await using var connection = Connect();
+        connection.On<JsonElement>("UsageUpdated", notification => received.Writer.TryWrite(notification));
+        await connection.StartAsync();
+
+        // A backfilled start keeps its old StartedAt as the last activity, leaving the session Active but idle.
+        var idle = await StartSession("idle@team.dev", startedAt: DateTime.UtcNow.AddHours(-2), isBackfill: true);
+        var sentinel = await StartSession("sentinel@team.dev");
+
+        await PostEvents(idle, new { ToolExecutions = new[] { Tool() } });
+        await PostEvents(sentinel, new { ToolFailures = new[] { Failure() } });
+
+        (await Next(received)).GetProperty("sessionId").GetString().Should().Be(
+            idle, "the idle session's tool batch returned it to the running list before the sentinel broadcast");
+        (await Next(received)).GetProperty("sessionId").GetString().Should().Be(sentinel);
+    }
+
     [Fact]
     public async Task UsageUpdated_Payload_IsSessionIdAndUtcTimeOnly()
     {
@@ -90,12 +112,13 @@ public class UsageUpdatedTests : IClassFixture<OverwatchWebApplicationFactory>
             .Build();
     }
 
-    private async Task<string> StartSession(string developer)
+    private async Task<string> StartSession(string developer, DateTime? startedAt = null, bool isBackfill = false)
     {
         var sessionId = Guid.NewGuid().ToString();
         var response = await _factory.CreateAuthenticatedClient().PostAsJsonAsync("/api/sessions/start", new
         {
-            SessionId = sessionId, DeveloperEmail = developer, RepoPath = "/src/meter", StartedAt = DateTime.UtcNow,
+            SessionId = sessionId, DeveloperEmail = developer, RepoPath = "/src/meter",
+            StartedAt = startedAt ?? DateTime.UtcNow, IsBackfill = isBackfill,
         });
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         return sessionId;
