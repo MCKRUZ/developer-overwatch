@@ -6,6 +6,7 @@ using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Hubs;
 using DeveloperOverwatch.API.Middleware;
+using DeveloperOverwatch.API.RateLimiting;
 using DeveloperOverwatch.API.Telemetry;
 using DeveloperOverwatch.Application;
 using DeveloperOverwatch.Application.Services;
@@ -160,7 +161,7 @@ builder.Services.AddRateLimiter(options =>
             return RateLimitPartition.GetNoLimiter("webhook-global-bypass");
 
         return RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            RateLimitPartitionKey.For(context),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = defaultPermitLimit,
@@ -278,8 +279,10 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
 app.UseMiddleware<WebhookSignatureMiddleware>();
-app.UseRateLimiter();
+// Authentication first: the global limiter partitions by the signed-in user, which it can only see once
+// the request is authenticated. Authorization stays after, so an over-limit caller gets 429, not 401.
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<OverwatchHub>("/hubs/overwatch");
