@@ -36,7 +36,7 @@ public class UsageControllerTests : IClassFixture<OverwatchWebApplicationFactory
     }
 
     // The usage page is a dashboard read. Without OIDC configured the dashboard runs anonymously, so the
-    // endpoint must use the default (Smart) scheme, not the JwtBearer-only Dashboard policy.
+    // endpoint must use the DashboardRead policy, not the JwtBearer-only Dashboard policy.
     [Fact]
     public async Task GetRunning_NoOidcConfiguredAndNoCredentials_Returns200()
     {
@@ -45,14 +45,16 @@ public class UsageControllerTests : IClassFixture<OverwatchWebApplicationFactory
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    // DashboardRead never consults the agent API key, so a key header neither grants nor blocks anything:
+    // without OIDC the route is anonymous whatever the header says.
     [Fact]
-    public async Task GetRunning_WrongApiKey_Returns401()
+    public async Task GetRunning_NoOidcAndWrongApiKey_IgnoresTheKeyAndReturns200()
     {
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Api-Key", "wrong-key");
 
         var response = await client.GetAsync("/api/usage/running");
 
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

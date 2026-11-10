@@ -6,11 +6,11 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-/// <summary>Usage meter reads. Plain <c>[Authorize]</c> uses the Smart scheme, so the dashboard reaches it
-/// anonymously when OIDC is not configured and with a JWT when it is.</summary>
+/// <summary>Usage meter reads. The DashboardRead policy lets the dashboard in anonymously when OIDC is not
+/// configured and with a JWT when it is, and never accepts the agent API key.</summary>
 [ApiController]
 [Route("api/usage")]
-[Authorize]
+[Authorize(Policy = AuthPolicies.DashboardRead)]
 [Produces("application/json")]
 [Tags("Usage")]
 public sealed class UsageController : ControllerBase

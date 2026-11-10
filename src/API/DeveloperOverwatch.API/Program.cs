@@ -252,6 +252,14 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy(AuthPolicies.Dashboard, policy =>
         policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
               .RequireAuthenticatedUser());
+
+    // Team-wide reads (the hub, the usage meter): a signed-in user with OIDC on, anonymous without it.
+    // Never the agent API key, which every developer machine holds.
+    options.AddPolicy(AuthPolicies.DashboardRead, policy =>
+        policy.AddAuthenticationSchemes(hasOidc
+                  ? JwtBearerDefaults.AuthenticationScheme
+                  : AnonymousDashboardDefaults.AuthenticationScheme)
+              .RequireAuthenticatedUser());
 });
 
 var app = builder.Build();
@@ -308,4 +316,5 @@ public static class AuthPolicies
 {
     public const string Agent = "Agent";
     public const string Dashboard = "Dashboard";
+    public const string DashboardRead = "DashboardRead";
 }
