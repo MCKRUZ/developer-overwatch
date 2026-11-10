@@ -53,7 +53,7 @@ internal sealed class SessionShipper
             if (evt.EventType == EventType.SessionStart)
                 await RecordSessionProjectAsync(sessionId, evt, ct);
             else if (evt.EventType == EventType.ConversationTurn)
-                await _conversations.RecordLocallyAsync(sessionId, evt, ct);
+                await RecordTurnsLocallyAsync(sessionId, evt, ct);
         }
 
         var starts = events.Where(e => e.EventType == EventType.SessionStart).ToList();
@@ -99,18 +99,22 @@ internal sealed class SessionShipper
     }
 
     /// <summary>An item of a session that began before enrolment, queued after it: handled here like the
-    /// session's earlier items. A turn marker reads the transcript as it is now, which may already hold turns
-    /// from after the session's next start, so its cursors pass only the turns before that start (or, with
-    /// none queued, before the marker), and a later resume does not send them.</summary>
+    /// session's earlier items.</summary>
     private async Task KeepLocalAsync(string sessionId, SessionRun run, QueuedEvent evt, CancellationToken ct)
     {
         if (evt.EventType == EventType.ConversationTurn)
-        {
-            var resumedAt = await _queue.GetNextStartAtAsync(sessionId, evt.CreatedAt, ct);
-            await _conversations.RecordLocallyAsync(sessionId, evt, ct, keepFrom: resumedAt ?? evt.CreatedAt);
-        }
+            await RecordTurnsLocallyAsync(sessionId, evt, ct);
 
         await run.MarkShippedAsync([evt], ct);
+    }
+
+    /// <summary>A turn marker kept here reads the transcript as it is now, which may already hold turns from
+    /// after the session's next start, so its cursors pass only the turns before that start (or, with none
+    /// queued, before the marker), and a later resume does not send them.</summary>
+    private async Task RecordTurnsLocallyAsync(string sessionId, QueuedEvent marker, CancellationToken ct)
+    {
+        var resumedAt = await _queue.GetNextStartAtAsync(sessionId, marker.CreatedAt, ct);
+        await _conversations.RecordLocallyAsync(sessionId, marker, ct, keepFrom: resumedAt ?? marker.CreatedAt);
     }
 
     /// <summary>A compact or clear start of a session kept here is the same sitting going on, not the
@@ -196,9 +200,11 @@ internal sealed class SessionShipper
         return stop.ToOutcome(outcome);
     }
 
+    /// <summary>A reopened session's turns from before it reopened are not sent, even when no marker moved
+    /// its cursors past them while it was Local.</summary>
     private async Task<EventOutcome> ShipItemAsync(string sessionId, QueuedEvent evt, CancellationToken ct) =>
         evt.EventType == EventType.ConversationTurn
-            ? await _conversations.ShipAsync(sessionId, evt, ct)
+            ? await _conversations.ShipAsync(sessionId, evt, ct, await _queue.GetReopenedAtAsync(sessionId, ct))
             : await _tools.ShipAsync(sessionId, evt, ct);
 
     private async Task<bool> FlushSignalsAsync(string sessionId, SessionRun run, CancellationToken ct)

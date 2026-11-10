@@ -23,6 +23,10 @@ public interface IEventQueue
     /// the queue holds none.</summary>
     Task<DateTime?> GetNextStartAtAsync(string sessionId, DateTime after, CancellationToken ct = default);
 
+    /// <summary>When the start that took the session out of Local was queued; null when it never was Local
+    /// or no start has shipped since. Only its turns from this instant on may ship.</summary>
+    Task<DateTime?> GetReopenedAtAsync(string sessionId, CancellationToken ct = default);
+
     Task MarkShippedAsync(IReadOnlyList<string> ids, CancellationToken ct = default);
 
     /// <summary>Never dequeued again: the server does not know the session. Purged like shipped events.</summary>
@@ -100,6 +104,10 @@ public sealed class EventQueue : IEventQueue, IDisposable
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_unshipped
                     ON events (shipped, created_at) WHERE shipped = 0;
+                CREATE TABLE IF NOT EXISTS session_reopens (
+                    session_id TEXT PRIMARY KEY,
+                    reopened_at TEXT NOT NULL
+                );
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -220,6 +228,19 @@ public sealed class EventQueue : IEventQueue, IDisposable
         }
     }
 
+    public Task<DateTime?> GetReopenedAtAsync(string sessionId, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "SELECT reopened_at FROM session_reopens WHERE session_id = $sessionId";
+            cmd.Parameters.AddWithValue("$sessionId", sessionId);
+            return Task.FromResult(cmd.ExecuteScalar() is string at
+                ? DateTime.Parse(at, null, System.Globalization.DateTimeStyles.RoundtripKind)
+                : (DateTime?)null);
+        }
+    }
+
     // Values of the `shipped` column. Only Pending is ever dequeued.
     private const int Pending = 0;
     private const int Shipped = 1;
@@ -265,11 +286,18 @@ public sealed class EventQueue : IEventQueue, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>Also records when each released session reopened, the first time it does: its turns from
+    /// before then stay here even though its Local starts no longer say so.</summary>
     private void ReleaseLocalStarts(SqliteTransaction transaction, IReadOnlyList<string> shippedIds)
     {
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandText = $"""
+            INSERT OR IGNORE INTO session_reopens (session_id, reopened_at)
+            SELECT s.session_id, MIN(s.created_at) FROM events s
+            WHERE s.event_type = $eventType AND s.id IN (SELECT value FROM json_each($ids))
+                AND EXISTS (SELECT 1 FROM events l WHERE l.session_id = s.session_id AND l.shipped = {Local})
+            GROUP BY s.session_id;
             UPDATE events SET shipped = {Shipped}
             WHERE shipped = {Local} AND session_id IN (
                 SELECT session_id FROM events

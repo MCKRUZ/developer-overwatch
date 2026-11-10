@@ -42,10 +42,10 @@ internal sealed class ConversationShipper
     public async Task RecordLocallyAsync(
         string sessionId, QueuedEvent marker, CancellationToken ct, DateTime? keepFrom = null)
     {
-        if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
+        if (await CaptureAsync(sessionId, marker, _pilotSince, ct) is not { } captured)
             return;
 
-        var bound = keepFrom ?? _pilotSince;
+        var bound = _pilotSince is null ? null : keepFrom ?? _pilotSince;
         foreach (var transcript in captured.Transcripts)
         {
             var stop = bound is { } from ? FirstLineFrom(transcript, from) : null;
@@ -62,9 +62,11 @@ internal sealed class ConversationShipper
 
     /// <summary>Done once every captured turn has a definitive outcome. A transient chunk stops there:
     /// the cursors keep what earlier chunks earned, and the next poll resumes from them.</summary>
-    public async Task<EventOutcome> ShipAsync(string sessionId, QueuedEvent marker, CancellationToken ct)
+    /// <param name="reopenedAt">When the session left Local: its turns from before then are never sent.</param>
+    public async Task<EventOutcome> ShipAsync(
+        string sessionId, QueuedEvent marker, CancellationToken ct, DateTime? reopenedAt = null)
     {
-        if (await CaptureAsync(sessionId, marker, ct) is not { } captured)
+        if (await CaptureAsync(sessionId, marker, Later(_pilotSince, reopenedAt), ct) is not { } captured)
             return EventOutcome.Done;
 
         var answered = new HashSet<string>(StringComparer.Ordinal);
@@ -162,7 +164,10 @@ internal sealed class ConversationShipper
     /// <summary>Captures the new turns and records their usage on this machine before anything is sent,
     /// so a failed send never loses it; re-capture after a failure is deduplicated by the turns' stable
     /// ids. Null when the marker names no transcript.</summary>
-    private async Task<CapturedConversation?> CaptureAsync(string sessionId, QueuedEvent evt, CancellationToken ct)
+    /// <param name="shipFrom">Turns dated before it are recorded but never sent: enrolment, or the later
+    /// instant the session reopened.</param>
+    private async Task<CapturedConversation?> CaptureAsync(
+        string sessionId, QueuedEvent evt, DateTime? shipFrom, CancellationToken ct)
     {
         if (ConversationMarker.Parse(evt.PayloadJson) is not { } marker)
         {
@@ -184,9 +189,9 @@ internal sealed class ConversationShipper
         // A turn with no timestamp cannot be shown to postdate enrolment, so with a cutoff it is never sent either.
         // Backfill is the explicit opt-in for that usage, and never carries text.
         var shippable = turns
-            .Where(t => marker.Backfill || _pilotSince is not { } since || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= since))
+            .Where(t => marker.Backfill || shipFrom is not { } since || (t.Turn.Timestamp is { } ts && ToUtc(ts) >= since))
             .ToList();
-        if (_pilotSince is { } cutoff && !marker.UsageOnly)
+        if (shipFrom is { } cutoff && !marker.UsageOnly)
             shippable = await HoldPreEnrolmentSummariesAsync(sessionId, marker, shippable, cutoff, ct);
         return new CapturedConversation(marker, marker.UsageOnly ? [] : transcripts, shippable);
     }
@@ -238,4 +243,7 @@ internal sealed class ConversationShipper
 
     private static DateTime ToUtc(DateTime value) =>
         value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
+
+    private static DateTime? Later(DateTime? a, DateTime? b) =>
+        a is null ? b : b is null ? a : (ToUtc(a.Value) >= ToUtc(b.Value) ? a : b);
 }

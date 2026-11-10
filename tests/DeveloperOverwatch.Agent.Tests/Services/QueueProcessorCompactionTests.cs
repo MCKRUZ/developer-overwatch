@@ -10,8 +10,9 @@ using NSubstitute;
 
 namespace DeveloperOverwatch.Agent.Tests.Services;
 
-/// <summary>A compaction summary is dated at compaction but restates the prompts before it, and compaction
-/// fires a SessionStart. Neither may carry a pre-enrolment session's text off this machine.</summary>
+/// <summary>A session open at enrolment is captured only from its next new-session or resume start. A
+/// compaction summary is dated at compaction but restates the prompts before it, and compaction fires a
+/// SessionStart; neither may carry such a session's earlier text off this machine.</summary>
 public sealed class QueueProcessorCompactionTests : IDisposable
 {
     private const string Transcript = "C:/transcripts/compaction.jsonl";
@@ -120,6 +121,65 @@ public sealed class QueueProcessorCompactionTests : IDisposable
 
         var sent = string.Join("\n", _http.Bodies);
         sent.Should().Contain("post-resume text").And.NotContain("between text");
+    }
+
+    // A marker queued before enrolment is handled locally, and is bounded by the resume, not by enrolment.
+    [Theory]
+    [InlineData(50)]
+    [InlineData(1)]
+    public async Task PreEnrolmentMarker_ThenResume_TurnsBeforeTheResumeAreNeverSent(int batchSize)
+    {
+        CaptureTurns(
+            Turn("uuid:pre", "pre-enrolment prompt", _pilotSince.AddMinutes(-8)),
+            Turn("uuid:between", "between text", _pilotSince.AddMinutes(5)),
+            Turn("uuid:after", "post-resume text", _pilotSince.AddMinutes(11)));
+        await EnqueueAsync(Start("start", "startup"), _pilotSince.AddMinutes(-10));
+        await EnqueueAsync(Marker("m0"), _pilotSince.AddMinutes(-5));
+        await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Marker("m2"), _pilotSince.AddMinutes(12));
+
+        await DrainAsync(CreateSut(batchSize));
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain("post-resume text").And.NotContain("between text").And.NotContain("pre-enrolment prompt");
+    }
+
+    // No marker runs between enrolment and the resume, so nothing moved the cursor past the turns before it.
+    [Theory]
+    [InlineData(50)]
+    [InlineData(1)]
+    public async Task LocalSession_NoMarkerBeforeTheResume_TurnsBeforeTheResumeAreNeverSent(int batchSize)
+    {
+        var sut = CreateSut(batchSize);
+        await EnqueueAsync(Start("start", "startup"), _pilotSince.AddMinutes(-10));
+        await DrainAsync(sut);
+
+        CaptureTurns(
+            Turn("uuid:pre", "pre-enrolment prompt", _pilotSince.AddMinutes(-5)),
+            Turn("uuid:between", "between text", _pilotSince.AddMinutes(5)),
+            Turn("uuid:after", "post-resume text", _pilotSince.AddMinutes(11)));
+        await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(12));
+        await DrainAsync(sut);
+
+        var sent = string.Join("\n", _http.Bodies);
+        sent.Should().Contain("post-resume text").And.NotContain("between text").And.NotContain("pre-enrolment prompt");
+    }
+
+    // Guards against over-blocking: only a session that was Local has a reopen floor.
+    [Fact]
+    public async Task PostEnrolmentSession_Resumed_ShipsItsTurnsFromBeforeTheResume()
+    {
+        CaptureTurns(
+            Turn("uuid:a", "before resume text", _pilotSince.AddMinutes(2)),
+            Turn("uuid:b", "post-resume text", _pilotSince.AddMinutes(11)));
+        await EnqueueAsync(Start("start", "startup"), _pilotSince.AddMinutes(1));
+        await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(12));
+
+        await DrainAsync(CreateSut());
+
+        string.Join("\n", _http.Bodies).Should().Contain("before resume text").And.Contain("post-resume text");
     }
 
     [Theory]
