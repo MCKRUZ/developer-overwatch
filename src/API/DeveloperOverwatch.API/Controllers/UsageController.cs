@@ -1,6 +1,7 @@
 namespace DeveloperOverwatch.API.Controllers;
 
 using DeveloperOverwatch.Application.Queries.GetRunningSessions;
+using DeveloperOverwatch.Application.Queries.GetUsageSummary;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -27,5 +28,31 @@ public sealed class UsageController : ControllerBase
     {
         var result = await _mediator.Send(new GetRunningSessionsQuery(), ct);
         return result.IsSuccess ? Ok(result.Value) : BadRequest(result.Error);
+    }
+
+    /// <summary>Usage of the local days <paramref name="from"/>..<paramref name="to"/> (inclusive) in
+    /// <paramref name="timeZone"/>, in day, week or month buckets, with splits and burn.</summary>
+    /// <remarks>Every parameter binds as nullable so a missing one reaches the validator and gets its own
+    /// message, instead of defaulting to 0001-01-01 or being refused by model binding.</remarks>
+    [HttpGet("summary")]
+    [ProducesResponseType(typeof(UsageSummary), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetSummary(
+        [FromQuery] DateOnly? from,
+        [FromQuery] DateOnly? to,
+        [FromQuery] string? granularity,
+        [FromQuery] string? timeZone,
+        [FromQuery] string? developer,
+        [FromQuery] string? project,
+        CancellationToken ct)
+    {
+        var result = await _mediator.Send(
+            new GetUsageSummaryQuery(from, to, granularity, timeZone, developer, project), ct);
+        if (result.IsSuccess)
+            return Ok(result.Value);
+        return result.ValidationErrors.Count > 0
+            ? BadRequest(new { errors = result.ValidationErrors })
+            : BadRequest(result.Error);
     }
 }
