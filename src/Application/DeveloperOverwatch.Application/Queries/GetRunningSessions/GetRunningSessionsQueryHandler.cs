@@ -31,9 +31,11 @@ public sealed class GetRunningSessionsQueryHandler
         var now = _time.GetUtcNow().UtcDateTime;
         var activeSince = now.AddMinutes(-_staleThreshold.StaleAfterMinutes);
 
-        var sessions = await _repository.GetRunningSessionsAsync(activeSince, cancellationToken);
+        var filter = new UsageFilter(request.Developer, request.Project);
+
+        var sessions = await _repository.GetRunningSessionsAsync(activeSince, filter, cancellationToken);
         var turns = await _repository.GetRecentTurnsOfRunningSessionsAsync(
-            activeSince, now - BurnLookback, cancellationToken);
+            activeSince, now - BurnLookback, filter, cancellationToken);
         var pointsBySession = turns.ToLookup(t => t.SessionId, ToUsagePoint);
 
         IReadOnlyList<RunningSessionItem> items = sessions

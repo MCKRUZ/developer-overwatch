@@ -7,15 +7,15 @@ using DeveloperOverwatch.Domain.Metering;
 public interface IUsageRepository
 {
     /// <summary>Sessions stored Active whose last activity is at or after <paramref name="activeSince"/>,
-    /// which is the exact complement of the read-time Stale label.</summary>
+    /// which is the exact complement of the read-time Stale label, narrowed by <paramref name="filter"/>.</summary>
     Task<IReadOnlyList<RunningSessionRow>> GetRunningSessionsAsync(
-        DateTime activeSince, CancellationToken ct = default);
+        DateTime activeSince, UsageFilter filter, CancellationToken ct = default);
 
     /// <summary>Per-turn usage, main thread and subagents alike, of the sessions that
-    /// <see cref="GetRunningSessionsAsync"/> returns for the same <paramref name="activeSince"/>,
+    /// <see cref="GetRunningSessionsAsync"/> returns for the same <paramref name="activeSince"/> and <paramref name="filter"/>,
     /// limited to turns after <paramref name="turnsAfter"/>.</summary>
     Task<IReadOnlyList<SessionTurnUsageRow>> GetRecentTurnsOfRunningSessionsAsync(
-        DateTime activeSince, DateTime turnsAfter, CancellationToken ct = default);
+        DateTime activeSince, DateTime turnsAfter, UsageFilter filter, CancellationToken ct = default);
 
     /// <summary>Turns with <c>fromUtc &lt;= Timestamp &lt; toUtc</c> that match <paramref name="filter"/>, summed
     /// per UTC 15-minute slot and <paramref name="dimension"/> key in the database. Every turn is counted however

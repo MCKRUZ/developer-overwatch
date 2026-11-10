@@ -172,11 +172,42 @@ public sealed class GetRunningSessionsTests : IDisposable
         items.Single(i => i.Id == "unkeyed").Project.Should().Be("/home/dev/tool");
     }
 
-    private async Task<IReadOnlyList<RunningSessionItem>> Run()
+    // The usage page shows one developer's or one project's sessions; the running list must match the summary.
+    [Theory]
+    [InlineData("a@team.dev", null, new[] { "a-keyed", "a-unkeyed" })]
+    [InlineData(null, "github.com/acme/api", new[] { "a-keyed", "b-keyed" })]
+    [InlineData(null, "/home/dev/tool", new[] { "a-unkeyed" })] // no project key: the repository path is the project
+    [InlineData("b@team.dev", "github.com/acme/api", new[] { "b-keyed" })]
+    [InlineData("A@TEAM.DEV", null, new string[0])] // exact match, as on the summary
+    public async Task Handle_Filters_ReturnOnlyMatchingSessions(string? developer, string? project, string[] expected)
+    {
+        await Seed(
+            Session("a-keyed", email: "a@team.dev", projectKey: "github.com/acme/api", repoPath: "/home/dev/api"),
+            Session("a-unkeyed", email: "a@team.dev", repoPath: "/home/dev/tool"),
+            Session("b-keyed", email: "b@team.dev", projectKey: "github.com/acme/api", repoPath: "/home/dev/tool"));
+
+        var items = await Run(developer, project);
+
+        items.Select(i => i.Id).Should().BeEquivalentTo(expected);
+    }
+
+    // SQLite hands stored times back unmarked; serialised without a Z, the dashboard would read them as local.
+    [Fact]
+    public async Task Handle_LastActivityAt_IsMarkedUtc()
+    {
+        await Seed(Session("s1"));
+
+        var item = (await Run()).Single();
+
+        item.LastActivityAt.Kind.Should().Be(DateTimeKind.Utc);
+        item.LastActivityAt.Should().Be(Now.AddMinutes(-1));
+    }
+
+    private async Task<IReadOnlyList<RunningSessionItem>> Run(string? developer = null, string? project = null)
     {
         var handler = new GetRunningSessionsQueryHandler(
             new UsageRepository(_db), new FixedStaleThreshold(StaleAfterMinutes), new FixedTime(Now));
-        var result = await handler.Handle(new GetRunningSessionsQuery(), CancellationToken.None);
+        var result = await handler.Handle(new GetRunningSessionsQuery(developer, project), CancellationToken.None);
         result.IsSuccess.Should().BeTrue();
         return result.Value!;
     }
@@ -188,10 +219,13 @@ public sealed class GetRunningSessionsTests : IDisposable
         _db.ChangeTracker.Clear();
     }
 
-    private static Session Session(string id, DateTime? lastActivityAt = null) => new()
+    private static Session Session(string id, DateTime? lastActivityAt = null, string email = "dev@team.dev",
+        string? projectKey = null, string? repoPath = null) => new()
     {
         Id = id,
-        DeveloperEmail = "dev@team.dev",
+        DeveloperEmail = email,
+        ProjectKey = projectKey,
+        RepoPath = repoPath,
         StartedAt = Now.AddHours(-1),
         LastActivityAt = lastActivityAt ?? Now.AddMinutes(-1),
     };

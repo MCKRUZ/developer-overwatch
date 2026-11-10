@@ -24,9 +24,10 @@ public sealed class UsageController : ControllerBase
     [ProducesResponseType(typeof(IReadOnlyList<RunningSessionItem>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> GetRunning(CancellationToken ct)
+    public async Task<IActionResult> GetRunning(
+        [FromQuery] string? developer, [FromQuery] string? project, CancellationToken ct)
     {
-        var result = await _mediator.Send(new GetRunningSessionsQuery(), ct);
+        var result = await _mediator.Send(new GetRunningSessionsQuery(developer, project), ct);
         return result.IsSuccess ? Ok(result.Value) : BadRequest(result.Error);
     }
 

@@ -5,7 +5,10 @@ using DeveloperOverwatch.Domain.Enums;
 using MediatR;
 
 /// <summary>Sessions that are running right now: stored Active and not past the stale threshold.</summary>
-public sealed record GetRunningSessionsQuery : IRequest<Result<IReadOnlyList<RunningSessionItem>>>;
+/// <param name="Developer">Exact developer email to narrow to, as on the usage summary; null does not filter.</param>
+/// <param name="Project">Project key, or repository path when a session has none; null does not filter.</param>
+public sealed record GetRunningSessionsQuery(string? Developer = null, string? Project = null)
+    : IRequest<Result<IReadOnlyList<RunningSessionItem>>>;
 
 /// <summary>One running session with its usage so far and its burn over the last 15 minutes.</summary>
 /// <param name="Project">The project key when the Agent sent one, otherwise the repository path.</param>

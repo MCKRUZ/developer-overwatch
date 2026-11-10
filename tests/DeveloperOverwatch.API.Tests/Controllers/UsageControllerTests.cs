@@ -33,6 +33,11 @@ public class UsageControllerTests : IClassFixture<OverwatchWebApplicationFactory
         var row = body.RootElement.EnumerateArray().Single(e => e.GetProperty("id").GetString() == sessionId);
         row.GetProperty("project").GetString().Should().Be("/src/meter");
         row.GetProperty("burnTokensPerMinute").GetDouble().Should().Be(0);
+
+        // The query string reaches the filter: a project the session is not in excludes it.
+        var filtered = await _factory.CreateClient().GetAsync("/api/usage/running?developer=dev%40team.dev&project=%2Fsrc%2Fother");
+        using var filteredBody = JsonDocument.Parse(await filtered.Content.ReadAsStringAsync());
+        filteredBody.RootElement.EnumerateArray().Should().NotContain(e => e.GetProperty("id").GetString() == sessionId);
     }
 
     // The usage page is a dashboard read. Without OIDC configured the dashboard runs anonymously, so the

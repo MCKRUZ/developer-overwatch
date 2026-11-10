@@ -13,11 +13,11 @@ public sealed class UsageRepository : IUsageRepository
     public UsageRepository(OverwatchDbContext db) => _db = db;
 
     public async Task<IReadOnlyList<RunningSessionRow>> GetRunningSessionsAsync(
-        DateTime activeSince, CancellationToken ct = default) =>
-        await RunningSessions(activeSince)
+        DateTime activeSince, UsageFilter filter, CancellationToken ct = default) =>
+        await RunningSessions(activeSince, filter)
             .Select(s => new RunningSessionRow(
                 s.Id, s.DeveloperEmail, s.DeveloperName, s.RepoPath, s.ProjectKey, s.MachineName, s.Agent,
-                s.ActivityState, s.ActivityStateAt, s.LastActivityAt,
+                s.ActivityState, AsUtc(s.ActivityStateAt), AsUtc(s.LastActivityAt),
                 s.TotalInputTokens, s.TotalOutputTokens, s.TotalCacheCreationInputTokens, s.TotalCacheReadInputTokens,
                 s.EstimatedCostUsd,
                 s.ConversationTurns
@@ -29,8 +29,8 @@ public sealed class UsageRepository : IUsageRepository
 
     // Joined through the session rather than an id list, so the query needs no per-session parameters.
     public async Task<IReadOnlyList<SessionTurnUsageRow>> GetRecentTurnsOfRunningSessionsAsync(
-        DateTime activeSince, DateTime turnsAfter, CancellationToken ct = default) =>
-        await _db.ConversationTurns
+        DateTime activeSince, DateTime turnsAfter, UsageFilter filter, CancellationToken ct = default) =>
+        await Matching(filter)
             .Where(t => t.Timestamp > turnsAfter
                 && t.Session!.Status == SessionStatus.Active
                 && t.Session.LastActivityAt >= activeSince)
@@ -115,8 +115,17 @@ public sealed class UsageRepository : IUsageRepository
     // Stored times are UTC, but SQLite hands them back unmarked.
     private static DateTime AsUtc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
 
-    private IQueryable<Session> RunningSessions(DateTime activeSince) =>
-        _db.Sessions.Where(s => s.Status == SessionStatus.Active && s.LastActivityAt >= activeSince);
+    private static DateTime? AsUtc(DateTime? value) => value is { } at ? AsUtc(at) : null;
+
+    private IQueryable<Session> RunningSessions(DateTime activeSince, UsageFilter filter)
+    {
+        var sessions = _db.Sessions.Where(s => s.Status == SessionStatus.Active && s.LastActivityAt >= activeSince);
+        if (filter.DeveloperEmail is { } email)
+            sessions = sessions.Where(s => s.DeveloperEmail == email);
+        if (filter.Project is { } project)
+            sessions = sessions.Where(s => (s.ProjectKey ?? s.RepoPath) == project);
+        return sessions;
+    }
 
     // A member-init class, not a positional record: EF Core can translate member access on it after GroupBy.
     private sealed class KeyedTurn
