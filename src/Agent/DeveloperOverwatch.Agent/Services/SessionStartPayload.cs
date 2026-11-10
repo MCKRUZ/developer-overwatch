@@ -62,8 +62,9 @@ internal static class SessionStartPayload
     private static DateTime? WrittenAt(string? writtenAt) =>
         DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at) ? at : null;
 
-    /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session or a resume is
-    /// the developer coming to it. A clear opens only a session this machine has never decided on; in a known
+    /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session, a resume or a
+    /// fork (<c>--fork-session</c>, <c>/fork</c>, <c>/branch</c>, a session moved to the background) is the developer
+    /// coming to it. A clear opens only a session this machine has never decided on; in a known
     /// session it is the same sitting continuing. So does a start with no source, from a hook or Claude Code
     /// version that predates the field: it cannot show the developer came back. Any other source, including the
     /// hook's "unknown", never opens.</summary>
@@ -79,7 +80,8 @@ internal static class SessionStartPayload
             if (source.ValueKind != JsonValueKind.String || source.GetString() is not { } value)
                 return false;
             if (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
-                || value.Equals("resume", StringComparison.OrdinalIgnoreCase))
+                || value.Equals("resume", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("fork", StringComparison.OrdinalIgnoreCase))
                 return true;
             return state == AccessState.New && value.Equals("clear", StringComparison.OrdinalIgnoreCase);
         }

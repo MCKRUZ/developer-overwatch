@@ -106,7 +106,25 @@ public sealed class QueueProcessorContentFloorTests : IDisposable
         _http.Bodies.Should().BeEmpty("a session whose first start is a compact was already open before it");
     }
 
-    // --resume --fork-session writes a new session id, but the copied lines keep their original timestamps.
+    // Guard: a fork's session is new here, but its transcript is not, so it opens at the fork, not at enrolment.
+    [Fact]
+    public async Task NewSession_FirstStartIsFork_FloorsAtTheFork_NotAtEnrolment()
+    {
+        CaptureTurns(
+            Turn("uuid:copied", "copied after enrolment", _pilotSince.AddMinutes(5)),
+            Turn("uuid:fresh", "fresh fork text", _pilotSince.AddMinutes(11)));
+        await EnqueueAsync(Start("fork", "fork"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(12));
+
+        await DrainAsync(CreateSut());
+
+        var sent = Sent();
+        sent.Should().NotContain("copied after enrolment", "a fork opens at its own start");
+        sent.Should().Contain("fresh fork text");
+        (await _queue.GetAccessAsync("s")).OpenFrom.Should().Be(UtcInstant.Utc(_pilotSince.AddMinutes(10)));
+    }
+
+    // --fork-session, /fork and /branch write a new session id, but the copied lines keep their original timestamps.
     [Fact]
     public async Task ForkedSession_CopiedHistoryAndItsSummary_NeverShip_FreshTurnsDo()
     {
@@ -115,7 +133,7 @@ public sealed class QueueProcessorContentFloorTests : IDisposable
             Turn("uuid:copy-2", "copied prompt two", _pilotSince.AddMinutes(3)),
             Turn("uuid:copy-sum", Sentinel, _pilotSince.AddMinutes(4), summary: true),
             Turn("uuid:fresh", "fresh fork text", _pilotSince.AddMinutes(11)));
-        await EnqueueAsync(Start("fork", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Start("fork", "fork"), _pilotSince.AddMinutes(10));
         await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(12));
 
         await DrainAsync(CreateSut());
@@ -133,7 +151,7 @@ public sealed class QueueProcessorContentFloorTests : IDisposable
         CaptureTurns(
             Turn("uuid:sum", Sentinel, _pilotSince.AddMinutes(11), summary: true),
             Turn("uuid:fresh", "fresh fork text", _pilotSince.AddMinutes(12)));
-        await EnqueueAsync(Start("fork", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Start("fork", "fork"), _pilotSince.AddMinutes(10));
         await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(13));
 
         await DrainAsync(CreateSut());
