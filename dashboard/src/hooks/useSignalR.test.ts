@@ -3,26 +3,30 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HubConnectionState } from "@microsoft/signalr";
 import { setTokenGetter, clearTokenGetter } from "../api";
 
-const { conn, builder, auth } = vi.hoisted(() => {
-  const conn: Record<string, unknown> = {};
-  conn.start = vi.fn().mockResolvedValue(undefined);
-  conn.stop = vi.fn().mockResolvedValue(undefined);
-  conn.onreconnecting = vi.fn((cb: () => void) => {
-    conn._reconnecting = cb;
-  });
-  conn.onreconnected = vi.fn((cb: () => void) => {
-    conn._reconnected = cb;
-  });
-  conn.onclose = vi.fn((cb: () => void) => {
-    conn._close = cb;
-  });
+const { conn, makeConn, builder, auth } = vi.hoisted(() => {
+  function makeConn(): Record<string, unknown> {
+    const c: Record<string, unknown> = {};
+    c.start = vi.fn().mockResolvedValue(undefined);
+    c.stop = vi.fn().mockResolvedValue(undefined);
+    c.onreconnecting = vi.fn((cb: () => void) => {
+      c._reconnecting = cb;
+    });
+    c.onreconnected = vi.fn((cb: () => void) => {
+      c._reconnected = cb;
+    });
+    c.onclose = vi.fn((cb: () => void) => {
+      c._close = cb;
+    });
+    return c;
+  }
+  const conn = makeConn();
   const builder: Record<string, unknown> = {};
   builder.withUrl = vi.fn(() => builder);
   builder.withAutomaticReconnect = vi.fn(() => builder);
   builder.configureLogging = vi.fn(() => builder);
   builder.build = vi.fn(() => conn);
   const auth = { configured: false, token: null as string | null };
-  return { conn, builder, auth };
+  return { conn, makeConn, builder, auth };
 });
 
 vi.mock("@microsoft/signalr", async (importOriginal) => {
@@ -160,5 +164,42 @@ describe("useSignalR", () => {
 
     expect(conn.stop).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Disconnected));
+  });
+
+  it("should ignore late callbacks from a replaced connection, so a stopped old one cannot mark the live one disconnected", async () => {
+    let rejectOldStart: (e: Error) => void = () => {};
+    (conn.start as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectOldStart = reject;
+      }),
+    );
+    const replacement = makeConn();
+    (builder.build as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => conn)
+      .mockImplementationOnce(() => replacement);
+    auth.configured = true;
+    auth.token = "tok-1";
+    const { result, rerender } = renderHook(() => useSignalR());
+
+    auth.token = null;
+    rerender();
+    auth.token = "tok-2";
+    rerender();
+    await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Connected));
+    expect(result.current.connection).toBe(replacement);
+
+    // Stopping a connection mid-start rejects its start and fires its close handler afterwards.
+    await act(async () => {
+      rejectOldStart(new Error("stopped during negotiation"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(result.current.state).toBe(HubConnectionState.Connected);
+    act(() => (conn._reconnecting as () => void)());
+    act(() => (conn._close as () => void)());
+    expect(result.current.state).toBe(HubConnectionState.Connected);
+
+    act(() => (replacement._close as () => void)());
+    act(() => (conn._reconnected as () => void)());
+    expect(result.current.state).toBe(HubConnectionState.Disconnected);
   });
 });

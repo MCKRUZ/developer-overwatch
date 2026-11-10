@@ -35,14 +35,21 @@ export function useSignalR() {
 
     connectionRef.current = connection;
 
-    connection.onreconnecting(() => setState(HubConnectionState.Reconnecting));
-    connection.onreconnected(() => setState(HubConnectionState.Connected));
-    connection.onclose(() => setState(HubConnectionState.Disconnected));
+    // A stopped connection still settles its start and fires onclose afterwards; only the
+    // current connection may report state, or a replaced one would mark the live one disconnected.
+    const setStateIfCurrent = (next: HubConnectionState) => {
+      if (connectionRef.current !== connection) return;
+      setState(next);
+    };
+
+    connection.onreconnecting(() => setStateIfCurrent(HubConnectionState.Reconnecting));
+    connection.onreconnected(() => setStateIfCurrent(HubConnectionState.Connected));
+    connection.onclose(() => setStateIfCurrent(HubConnectionState.Disconnected));
 
     connection
       .start()
-      .then(() => setState(HubConnectionState.Connected))
-      .catch(() => setState(HubConnectionState.Disconnected));
+      .then(() => setStateIfCurrent(HubConnectionState.Connected))
+      .catch(() => setStateIfCurrent(HubConnectionState.Disconnected));
 
     return () => {
       connectionRef.current = null;
