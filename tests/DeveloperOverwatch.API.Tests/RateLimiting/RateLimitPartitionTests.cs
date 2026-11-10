@@ -1,12 +1,14 @@
 namespace DeveloperOverwatch.API.Tests.RateLimiting;
 
 using System.Net;
+using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Tests.Authentication;
 using DeveloperOverwatch.API.Tests.Controllers;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 /// <summary>Sends requests straight into the test server so each one can carry its own client IP.</summary>
@@ -52,6 +54,40 @@ public sealed class AnonymousRateLimitFactory : OverwatchWebApplicationFactory
     {
         base.ConfigureWebHost(builder);
         builder.UseSetting("RateLimiting:Default:PermitLimit", RateLimitProbe.Limit.ToString());
+    }
+}
+
+/// <summary>No keys configured: the API key handler then accepts any non-empty key (local and dev runs).</summary>
+public sealed class OpenApiKeyRateLimitFactory : OverwatchWebApplicationFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.UseSetting("RateLimiting:Default:PermitLimit", RateLimitProbe.Limit.ToString());
+        builder.ConfigureTestServices(services => services.PostConfigure<ApiKeyAuthenticationOptions>(
+            ApiKeyDefaults.AuthenticationScheme, options => options.ValidKeys.Clear()));
+    }
+}
+
+/// <summary>With no keys configured any key authenticates, so a bucket per key would let a caller dodge the
+/// limit by sending a new key on every request. Agents stay on their machine's IP bucket.</summary>
+public class OpenApiKeyRateLimitTests : IClassFixture<OpenApiKeyRateLimitFactory>
+{
+    private readonly TestServer _server;
+
+    public OpenApiKeyRateLimitTests(OpenApiKeyRateLimitFactory factory) => _server = factory.Server;
+
+    [Fact]
+    public async Task RotatingApiKeysFromOneIp_StillGets429()
+    {
+        const string ip = "10.4.0.1";
+        for (var i = 0; i < RateLimitProbe.Limit; i++)
+            (await RateLimitProbe.Get(_server, ip, apiKey: Guid.NewGuid().ToString()))
+                .Should().Be(StatusCodes.Status200OK);
+
+        var status = await RateLimitProbe.Get(_server, ip, apiKey: Guid.NewGuid().ToString());
+
+        status.Should().Be(StatusCodes.Status429TooManyRequests);
     }
 }
 

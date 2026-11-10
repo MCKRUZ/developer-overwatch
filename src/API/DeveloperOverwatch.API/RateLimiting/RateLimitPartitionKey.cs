@@ -1,8 +1,6 @@
 namespace DeveloperOverwatch.API.RateLimiting;
 
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 using DeveloperOverwatch.API.Authentication;
 
 /// <summary>Chooses whose bucket a request draws from in the global rate limit. Must run after authentication,
@@ -22,9 +20,9 @@ public static class RateLimitPartitionKey
         {
             // Every caller gets the same "anonymous" identity, so it says nothing about who is calling.
             AnonymousDashboardDefaults.AuthenticationScheme => $"ip:{ip}",
-            // Every agent gets the same "agent" identity and a team may share one key, so the key alone
-            // would pool all agents into one bucket; key plus machine keeps them apart.
-            ApiKeyDefaults.AuthenticationScheme => $"key:{KeyFingerprint(context)}:{ip}",
+            // Every agent gets the same "agent" identity, and with no keys configured any key authenticates,
+            // so a bucket per key would let a caller dodge the limit by rotating keys. Agents stay per IP.
+            ApiKeyDefaults.AuthenticationScheme => $"ip:{ip}",
             _ => SignedInUser(context.User) is { } user ? $"user:{user}" : $"ip:{ip}",
         };
     }
@@ -37,8 +35,4 @@ public static class RateLimitPartitionKey
         ?? user.FindFirst("oid")?.Value
         ?? user.FindFirst(ObjectIdClaim)?.Value
         ?? user.Identity?.Name;
-
-    // A fingerprint, not the key, so the secret is never held as a limiter key.
-    private static string KeyFingerprint(HttpContext context) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context.Request.Headers["X-Api-Key"].ToString())))[..16];
 }
