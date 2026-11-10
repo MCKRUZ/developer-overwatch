@@ -30,11 +30,12 @@ public static class UsageAggregation
             cost, CacheHitRate.Of(input, cacheRead, cacheWrite), turns);
     }
 
-    /// <summary>One row per key, sorted by cost (highest first), then by label so equal costs keep a stable order.</summary>
+    /// <summary>One row per <paramref name="dimension"/> key, sorted by cost (highest first), then by label so equal
+    /// costs keep a stable order.</summary>
     public static IReadOnlyList<UsageSplitRow> Split(
         IEnumerable<UsageSlotRow> slots, UsageDimension dimension, decimal periodCost) =>
         slots
-            .GroupBy(s => s.Key)
+            .GroupBy(s => s.KeyOf(dimension))
             .Select(g =>
             {
                 var totals = Totals(g);

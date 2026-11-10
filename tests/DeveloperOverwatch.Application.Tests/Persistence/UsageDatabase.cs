@@ -16,10 +16,17 @@ public sealed class UsageDatabase : IDisposable
     {
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
-        Db = new OverwatchDbContext(new DbContextOptionsBuilder<OverwatchDbContext>().UseSqlite(_connection).Options);
+        Db = new OverwatchDbContext(new DbContextOptionsBuilder<OverwatchDbContext>()
+            .UseSqlite(_connection)
+            .AddInterceptors(Commands)
+            .Options);
         Db.Database.EnsureCreated();
         Repository = new UsageRepository(Db);
     }
+
+    /// <summary>Every command the context has executed, schema creation and seeding included; clear it before
+    /// the step a test counts.</summary>
+    public CommandLog Commands { get; } = new();
 
     public OverwatchDbContext Db { get; }
 

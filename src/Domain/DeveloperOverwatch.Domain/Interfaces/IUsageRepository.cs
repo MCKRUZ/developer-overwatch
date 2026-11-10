@@ -18,10 +18,10 @@ public interface IUsageRepository
         DateTime activeSince, DateTime turnsAfter, UsageFilter filter, CancellationToken ct = default);
 
     /// <summary>Turns with <c>fromUtc &lt;= Timestamp &lt; toUtc</c> that match <paramref name="filter"/>, summed
-    /// per UTC 15-minute slot and <paramref name="dimension"/> key in the database. Every turn is counted however
-    /// old it is: the server never purges turns.</summary>
+    /// in one database query per UTC 15-minute slot, session, model, subagent and branch, each row carrying its
+    /// session's attributes. Every turn is counted however old it is: the server never purges turns.</summary>
     Task<IReadOnlyList<UsageSlotRow>> GetSlotsAsync(
-        DateTime fromUtc, DateTime toUtc, UsageFilter filter, UsageDimension dimension, CancellationToken ct = default);
+        DateTime fromUtc, DateTime toUtc, UsageFilter filter, CancellationToken ct = default);
 
     /// <summary>One point per turn with <c>afterUtc &lt; Timestamp &lt;= untilUtc</c> that matches
     /// <paramref name="filter"/>, carrying all four token kinds and the estimated cost.</summary>

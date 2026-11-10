@@ -32,12 +32,31 @@ public sealed class UsageRepositorySlotTests : IDisposable
     {
         await SeedTwoSessionsInOneSlot();
 
-        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None, dimension);
+        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None);
 
         rows.Should().OnlyContain(r => r.SlotStartUtc == Utc(2026, 11, 10, 10, 0) && r.SlotStartUtc.Kind == DateTimeKind.Utc);
-        rows.Select(r => (r.Key, r.InputTokens, r.OutputTokens, r.CacheCreationInputTokens, r.CacheReadInputTokens,
-                r.EstimatedCostUsd))
+        rows.GroupBy(r => r.KeyOf(dimension))
+            .Select(g => (g.Key, g.Sum(r => r.InputTokens), g.Sum(r => r.OutputTokens),
+                g.Sum(r => r.CacheCreationInputTokens), g.Sum(r => r.CacheReadInputTokens), g.Sum(r => r.EstimatedCostUsd)))
             .Should().BeEquivalentTo(expected.Select(Units));
+    }
+
+    // Every split regroups these rows in memory, so each row must carry its own session's attributes.
+    [Fact]
+    public async Task GetSlotsAsync_EachRow_CarriesItsTurnKeysAndItsSessionsAttributes()
+    {
+        await SeedTwoSessionsInOneSlot();
+
+        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None);
+
+        rows.Select(r => (r.SessionId, r.Model, r.SubagentName, r.GitBranch, r.Project, r.DeveloperEmail,
+                r.MachineName, r.Agent, r.TurnCount))
+            .Should().BeEquivalentTo(new (string, string?, string?, string?, string?, string, string?, string, int)[]
+            {
+                ("session-a", "claude-sonnet", null, "main", "proj-a", "a@team.dev", "m1", "claude-code", 1),
+                ("session-a", "claude-opus", "Explore", "feat", "proj-a", "a@team.dev", "m1", "claude-code", 1),
+                ("session-b", "claude-sonnet", null, null, "/src/b", "b@team.dev", null, "codex", 1),
+            });
     }
 
     [Fact]
@@ -50,7 +69,7 @@ public sealed class UsageRepositorySlotTests : IDisposable
             Turn(Utc(2026, 11, 10, 10, 0), input: 4),
         ]));
 
-        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None, UsageDimension.Model);
+        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None);
 
         rows.OrderBy(r => r.SlotStartUtc).Select(r => (r.SlotStartUtc, r.InputTokens, r.TurnCount))
             .Should().Equal((Utc(2026, 11, 10, 9, 45), 3L, 2), (Utc(2026, 11, 10, 10, 0), 4L, 1));
@@ -66,7 +85,7 @@ public sealed class UsageRepositorySlotTests : IDisposable
             Turn(Utc(2026, 11, 10, 10, 12)),
         ]));
 
-        var row = (await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None, UsageDimension.Session)).Single();
+        var row = (await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None)).Single();
 
         row.FirstAtUtc.Should().Be(Utc(2026, 11, 10, 10, 1, 5));
         row.LastAtUtc.Should().Be(Utc(2026, 11, 10, 10, 12));
@@ -85,7 +104,7 @@ public sealed class UsageRepositorySlotTests : IDisposable
             Turn(To, input: 8),
         ]));
 
-        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None, UsageDimension.Model);
+        var rows = await _data.Repository.GetSlotsAsync(From, To, UsageFilter.None);
 
         rows.Sum(r => r.InputTokens).Should().Be(6, "adjacent ranges must never count a turn twice or drop one");
     }
@@ -98,7 +117,7 @@ public sealed class UsageRepositorySlotTests : IDisposable
         var longAgo = From.AddDays(-400);
         await _data.Seed(Session("old", turns: [Turn(longAgo.AddHours(3), input: 7, cost: 0.5m)]));
 
-        var rows = await _data.Repository.GetSlotsAsync(longAgo, To, UsageFilter.None, UsageDimension.Model);
+        var rows = await _data.Repository.GetSlotsAsync(longAgo, To, UsageFilter.None);
 
         rows.Should().ContainSingle().Which.InputTokens.Should().Be(7);
     }
@@ -108,10 +127,9 @@ public sealed class UsageRepositorySlotTests : IDisposable
     {
         await SeedTwoSessionsInOneSlot();
 
-        var rows = await _data.Repository.GetSlotsAsync(
-            From, To, new UsageFilter("b@team.dev", null), UsageDimension.Developer);
+        var rows = await _data.Repository.GetSlotsAsync(From, To, new UsageFilter("b@team.dev", null));
 
-        rows.Select(r => r.Key).Should().Equal("b@team.dev");
+        rows.Select(r => r.DeveloperEmail).Should().Equal("b@team.dev");
     }
 
     [Theory]
@@ -121,10 +139,9 @@ public sealed class UsageRepositorySlotTests : IDisposable
     {
         await SeedTwoSessionsInOneSlot();
 
-        var rows = await _data.Repository.GetSlotsAsync(
-            From, To, new UsageFilter(null, project), UsageDimension.Session);
+        var rows = await _data.Repository.GetSlotsAsync(From, To, new UsageFilter(null, project));
 
-        rows.Select(r => r.Key).Should().Equal(session);
+        rows.Select(r => r.SessionId).Distinct().Should().Equal(session);
     }
 
     [Fact]

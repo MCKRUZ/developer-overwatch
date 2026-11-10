@@ -207,6 +207,25 @@ public sealed class GetUsageSummaryTests : IDisposable
         (summary.Developer, summary.Project).Should().Be((developer, project));
     }
 
+    // The page refreshes this summary on a timer for every viewer, so it must cost one grouped scan of the period
+    // plus the burn window, however many splits it shows.
+    [Fact]
+    public async Task Handle_OneSummary_RunsOneGroupedQueryPlusTheBurnQuery()
+    {
+        await _data.Seed(
+            Session("a", email: "a@team.dev", projectKey: "p", turns:
+            [
+                Turn(Now.AddHours(-2), cost: 1m, model: "claude-opus", branch: "feat", subagent: "Explore"),
+                Turn(Now.AddMinutes(-5), cost: 2m),
+            ]),
+            Session("b", email: "b@team.dev", machine: "desktop", agent: "codex", turns: [Turn(Now.AddHours(-1), cost: 4m)]));
+        _data.Commands.Clear();
+
+        await Run(new(2026, 11, 1), new(2026, 11, 10), "day", "Etc/UTC");
+
+        _data.Commands.Executed.Should().HaveCount(2, string.Join("\n---\n", _data.Commands.Executed));
+    }
+
     private Task<UsageSummary> Run(
         DateOnly from, DateOnly to, string granularity, string zone, string? developer = null) =>
         Handle(new GetUsageSummaryQuery(from, to, granularity, zone, developer));

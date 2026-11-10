@@ -39,34 +39,47 @@ public sealed class UsageRepository : IUsageRepository
                 t.CacheCreationInputTokens, t.CacheReadInputTokens, t.EstimatedCostUsd))
             .ToListAsync(ct);
 
-    // One GROUP BY in the database. Sums cast each column to long first: SQL Server sums an int column as int,
-    // and a month of a team's cache reads passes int.MaxValue.
+    // One GROUP BY in the database. The session's attributes depend only on SessionId, so grouping on them adds
+    // no rows; it just carries them through the join the filter already makes. Sums cast each column to long
+    // first: SQL Server sums an int column as int, and a month of a team's cache reads passes int.MaxValue.
     public async Task<IReadOnlyList<UsageSlotRow>> GetSlotsAsync(
-        DateTime fromUtc, DateTime toUtc, UsageFilter filter, UsageDimension dimension, CancellationToken ct = default)
+        DateTime fromUtc, DateTime toUtc, UsageFilter filter, CancellationToken ct = default)
     {
-        var turns = Matching(filter).Where(t => t.Timestamp >= fromUtc && t.Timestamp < toUtc);
-        var groups = await KeyedBy(turns, dimension)
-            .GroupBy(k => new { k.Key, k.Turn.Timestamp.Date, k.Turn.Timestamp.Hour, Quarter = k.Turn.Timestamp.Minute / 15 })
+        var groups = await Matching(filter)
+            .Where(t => t.Timestamp >= fromUtc && t.Timestamp < toUtc)
+            .GroupBy(t => new
+            {
+                t.Timestamp.Date,
+                t.Timestamp.Hour,
+                Quarter = t.Timestamp.Minute / 15,
+                t.SessionId,
+                t.Model,
+                t.SubagentName,
+                t.GitBranch,
+                Project = t.Session!.ProjectKey ?? t.Session.RepoPath,
+                t.Session.DeveloperEmail,
+                t.Session.MachineName,
+                t.Session.Agent,
+            })
             .Select(g => new
             {
-                DimensionKey = g.Key.Key,
-                g.Key.Date,
-                g.Key.Hour,
-                g.Key.Quarter,
-                Input = g.Sum(k => (long)(k.Turn.InputTokens ?? 0)),
-                Output = g.Sum(k => (long)(k.Turn.OutputTokens ?? 0)),
-                CacheWrite = g.Sum(k => (long)(k.Turn.CacheCreationInputTokens ?? 0)),
-                CacheRead = g.Sum(k => (long)(k.Turn.CacheReadInputTokens ?? 0)),
-                Cost = g.Sum(k => k.Turn.EstimatedCostUsd ?? 0m),
+                g.Key,
+                Input = g.Sum(t => (long)(t.InputTokens ?? 0)),
+                Output = g.Sum(t => (long)(t.OutputTokens ?? 0)),
+                CacheWrite = g.Sum(t => (long)(t.CacheCreationInputTokens ?? 0)),
+                CacheRead = g.Sum(t => (long)(t.CacheReadInputTokens ?? 0)),
+                Cost = g.Sum(t => t.EstimatedCostUsd ?? 0m),
                 Count = g.Count(),
-                FirstAt = g.Min(k => k.Turn.Timestamp),
-                LastAt = g.Max(k => k.Turn.Timestamp),
+                FirstAt = g.Min(t => t.Timestamp),
+                LastAt = g.Max(t => t.Timestamp),
             })
             .ToListAsync(ct);
 
         return groups
             .Select(g => new UsageSlotRow(
-                AsUtc(g.Date).AddHours(g.Hour).AddMinutes(15 * g.Quarter), g.DimensionKey,
+                AsUtc(g.Key.Date).AddHours(g.Key.Hour).AddMinutes(15 * g.Key.Quarter),
+                g.Key.SessionId, g.Key.Model, g.Key.SubagentName, g.Key.GitBranch,
+                g.Key.Project, g.Key.DeveloperEmail, g.Key.MachineName, g.Key.Agent,
                 g.Input, g.Output, g.CacheWrite, g.CacheRead, g.Cost, g.Count, AsUtc(g.FirstAt), AsUtc(g.LastAt)))
             .ToList();
     }
@@ -98,20 +111,6 @@ public sealed class UsageRepository : IUsageRepository
         return turns;
     }
 
-    private static IQueryable<KeyedTurn> KeyedBy(IQueryable<ConversationTurn> turns, UsageDimension dimension) =>
-        dimension switch
-        {
-            UsageDimension.Model => turns.Select(t => new KeyedTurn { Key = t.Model, Turn = t }),
-            UsageDimension.Project => turns.Select(t => new KeyedTurn { Key = t.Session!.ProjectKey ?? t.Session.RepoPath, Turn = t }),
-            UsageDimension.Session => turns.Select(t => new KeyedTurn { Key = t.SessionId, Turn = t }),
-            UsageDimension.Subagent => turns.Select(t => new KeyedTurn { Key = t.SubagentName, Turn = t }),
-            UsageDimension.Branch => turns.Select(t => new KeyedTurn { Key = t.GitBranch, Turn = t }),
-            UsageDimension.Developer => turns.Select(t => new KeyedTurn { Key = t.Session!.DeveloperEmail, Turn = t }),
-            UsageDimension.Machine => turns.Select(t => new KeyedTurn { Key = t.Session!.MachineName, Turn = t }),
-            UsageDimension.Agent => turns.Select(t => new KeyedTurn { Key = t.Session!.Agent, Turn = t }),
-            _ => throw new ArgumentOutOfRangeException(nameof(dimension), dimension, null),
-        };
-
     // Stored times are UTC, but SQLite hands them back unmarked.
     private static DateTime AsUtc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
 
@@ -125,13 +124,5 @@ public sealed class UsageRepository : IUsageRepository
         if (filter.Project is { } project)
             sessions = sessions.Where(s => (s.ProjectKey ?? s.RepoPath) == project);
         return sessions;
-    }
-
-    // A member-init class, not a positional record: EF Core can translate member access on it after GroupBy.
-    private sealed class KeyedTurn
-    {
-        public string? Key { get; init; }
-
-        public ConversationTurn Turn { get; init; } = null!;
     }
 }

@@ -6,8 +6,9 @@ using DeveloperOverwatch.Domain.Interfaces;
 using DeveloperOverwatch.Domain.Metering;
 using MediatR;
 
-/// <summary>The database sums turns per UTC 15-minute slot; this places each slot on its local day in the
-/// viewer's zone (DST and half-hour offsets included), drops slots outside the period, and rolls the rest up.</summary>
+/// <summary>The database sums turns per UTC 15-minute slot in one grouped query; this places each slot on its local
+/// day in the viewer's zone (DST and half-hour offsets included), drops slots outside the period, and rolls the
+/// rest up into the totals, the buckets and every split.</summary>
 public sealed class GetUsageSummaryQueryHandler : IRequestHandler<GetUsageSummaryQuery, Result<UsageSummary>>
 {
     public static readonly TimeSpan BurnLookback = TimeSpan.FromMinutes(15);
@@ -30,28 +31,23 @@ public sealed class GetUsageSummaryQueryHandler : IRequestHandler<GetUsageSummar
         UsageCalendar.TryFindZone(request.TimeZone, out var zone);
         var filter = new UsageFilter(request.Developer, request.Project);
 
-        var slots = new Dictionary<UsageDimension, IReadOnlyList<(DateOnly Day, UsageSlotRow Row)>>();
-        foreach (var dimension in Enum.GetValues<UsageDimension>())
-            slots[dimension] = await SlotsInPeriod(from, to, zone, filter, dimension, cancellationToken);
-
-        // Every turn has exactly one model key (null included), so any one dimension holds all the period's turns.
-        var all = slots[UsageDimension.Model];
-        var totals = UsageAggregation.Totals(all.Select(s => s.Row));
+        var slots = await SlotsInPeriod(from, to, zone, filter, cancellationToken);
+        var rows = slots.Select(s => s.Row).ToList();
+        var totals = UsageAggregation.Totals(rows);
 
         return Result<UsageSummary>.Success(new UsageSummary(
             from, to, granularity, request.TimeZone!, _pricing.PricesAsOf, totals,
-            Buckets(all, from, to, granularity),
-            Splits(slots, totals.EstimatedCostUsd),
+            Buckets(slots, from, to, granularity),
+            Splits(rows, totals.EstimatedCostUsd),
             await Burn(filter, cancellationToken),
             request.Developer, request.Project));
     }
 
     private async Task<IReadOnlyList<(DateOnly Day, UsageSlotRow Row)>> SlotsInPeriod(
-        DateOnly from, DateOnly to, TimeZoneInfo zone, UsageFilter filter, UsageDimension dimension,
-        CancellationToken ct)
+        DateOnly from, DateOnly to, TimeZoneInfo zone, UsageFilter filter, CancellationToken ct)
     {
         var (fromUtc, toUtc) = UsageCalendar.QueryWindow(from, to);
-        var rows = await _repository.GetSlotsAsync(fromUtc, toUtc, filter, dimension, ct);
+        var rows = await _repository.GetSlotsAsync(fromUtc, toUtc, filter, ct);
         return rows
             .Select(r => (Day: UsageCalendar.LocalDate(r.SlotStartUtc, zone), Row: r))
             .Where(s => s.Day >= from && s.Day <= to)
@@ -67,11 +63,9 @@ public sealed class GetUsageSummaryQueryHandler : IRequestHandler<GetUsageSummar
             .ToList();
     }
 
-    private static UsageSplits Splits(
-        Dictionary<UsageDimension, IReadOnlyList<(DateOnly Day, UsageSlotRow Row)>> slots, decimal periodCost)
+    private static UsageSplits Splits(IReadOnlyList<UsageSlotRow> rows, decimal periodCost)
     {
-        IReadOnlyList<UsageSplitRow> Of(UsageDimension dimension) =>
-            UsageAggregation.Split(slots[dimension].Select(s => s.Row), dimension, periodCost);
+        IReadOnlyList<UsageSplitRow> Of(UsageDimension dimension) => UsageAggregation.Split(rows, dimension, periodCost);
 
         return new UsageSplits(
             Of(UsageDimension.Model), Of(UsageDimension.Project), Of(UsageDimension.Session),
