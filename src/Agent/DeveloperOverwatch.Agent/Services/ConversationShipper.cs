@@ -62,11 +62,13 @@ internal sealed class ConversationShipper
 
     /// <summary>Done once every captured turn has a definitive outcome. A transient chunk stops there:
     /// the cursors keep what earlier chunks earned, and the next poll resumes from them.</summary>
-    /// <param name="reopenedAt">When the session left Local: its turns from before then are never sent.</param>
+    /// <param name="reopenedAt">When the session left Local: its turns, and a title, from before then are
+    /// never sent.</param>
     public async Task<EventOutcome> ShipAsync(
         string sessionId, QueuedEvent marker, CancellationToken ct, DateTime? reopenedAt = null)
     {
-        if (await CaptureAsync(sessionId, marker, Later(_pilotSince, reopenedAt), ct) is not { } captured)
+        var shipFrom = Later(_pilotSince, reopenedAt);
+        if (await CaptureAsync(sessionId, marker, shipFrom, ct) is not { } captured)
             return EventOutcome.Done;
 
         var answered = new HashSet<string>(StringComparer.Ordinal);
@@ -79,7 +81,7 @@ internal sealed class ConversationShipper
 
         var title = captured.Marker.Backfill
             ? null
-            : await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, _pilotSince, ct);
+            : await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, shipFrom, ct);
         var callbacks = Callbacks(sessionId, title, captured, answered, ct);
         foreach (var chunk in turns.Chunk(MaxTurnsPerPost))
         {

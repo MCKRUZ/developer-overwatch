@@ -153,11 +153,13 @@ internal sealed class SessionShipper
     /// <summary>An accepted start lets the session's later items ship. A rejected one, or one the server
     /// answers session_not_found, is dead and leaves the gate as it was: an earlier start may have reached
     /// the server, so its items are sent and the server's answer to them decides, unless the session is
-    /// Local. A transient start, or one too large to send, holds the session.</summary>
+    /// Local. A transient start, or one too large to send, holds the session. A start that reopens a Local
+    /// session sends only a title written from that start on.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
         var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
-        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, _pilotSince);
+        var titleFrom = run.Gate == StartState.Local ? Later(_pilotSince, start.CreatedAt) : _pilotSince;
+        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, titleFrom);
         var outcome = await SendAloneAsync(sessionId, start, () => _api.SendSessionStartAsync(payload, ct));
         switch (outcome)
         {
@@ -256,6 +258,9 @@ internal sealed class SessionShipper
         await _usageStore.SetSessionProjectAsync(sessionId, projectKey, ct);
         return projectKey;
     }
+
+    private static DateTime Later(DateTime? a, DateTime b) =>
+        a is { } first && first.ToUniversalTime() > b.ToUniversalTime() ? first : b;
 
     /// <summary>The session's events from this poll in the order they happened, the walk's position in
     /// them, and which of them are already marked.</summary>
