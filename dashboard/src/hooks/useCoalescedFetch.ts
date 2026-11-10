@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface CoalescedFetch<T> {
+  /** The last successful result, which may belong to an earlier key: see `isStale`. */
   data: T | null;
+  /** True while `data` was loaded for a key other than the current one. */
+  isStale: boolean;
+  /** The current key's last failure; a key change clears it. */
   error: string | null;
   /** True from a key change until the first load for that key settles; a refresh never sets it. */
   loading: boolean;
@@ -10,6 +14,7 @@ export interface CoalescedFetch<T> {
 
 interface FetchState<T> {
   data: T | null;
+  dataKey: string | null;
   error: string | null;
   loading: boolean;
 }
@@ -27,8 +32,9 @@ function messageOf(e: unknown): string {
  * still shows every response, and any number of refreshes during one load cost one request.
  */
 export function useCoalescedFetch<T>(key: string, load: () => Promise<T>): CoalescedFetch<T> {
-  const [state, setState] = useState<FetchState<T>>({ data: null, error: null, loading: true });
+  const [state, setState] = useState<FetchState<T>>({ data: null, dataKey: null, error: null, loading: true });
   const loadRef = useRef(load);
+  const keyRef = useRef(key);
   const generationRef = useRef(0);
   const activeRef = useRef(false);
   const inFlightRef = useRef(false);
@@ -38,7 +44,7 @@ export function useCoalescedFetch<T>(key: string, load: () => Promise<T>): Coale
     loadRef.current = load;
   });
 
-  const run = useCallback((generation: number) => {
+  const run = useCallback((generation: number, forKey: string) => {
     const isCurrent = () => activeRef.current && generation === generationRef.current;
     inFlightRef.current = true;
     dirtyRef.current = false;
@@ -46,7 +52,7 @@ export function useCoalescedFetch<T>(key: string, load: () => Promise<T>): Coale
       .current()
       .then(
         (data) => {
-          if (isCurrent()) setState({ data, error: null, loading: false });
+          if (isCurrent()) setState({ data, dataKey: forKey, error: null, loading: false });
         },
         (e: unknown) => {
           if (isCurrent()) setState((prev) => ({ ...prev, error: messageOf(e), loading: false }));
@@ -55,15 +61,16 @@ export function useCoalescedFetch<T>(key: string, load: () => Promise<T>): Coale
       .finally(() => {
         if (!isCurrent()) return;
         inFlightRef.current = false;
-        if (dirtyRef.current) run(generation);
+        if (dirtyRef.current) run(generation, forKey);
       });
   }, []);
 
   useEffect(() => {
     const generation = ++generationRef.current;
+    keyRef.current = key;
     activeRef.current = true;
-    setState((prev) => (prev.loading ? prev : { ...prev, loading: true }));
-    run(generation);
+    setState((prev) => (prev.loading && prev.error === null ? prev : { ...prev, error: null, loading: true }));
+    run(generation, key);
     return () => {
       activeRef.current = false;
       inFlightRef.current = false;
@@ -77,8 +84,9 @@ export function useCoalescedFetch<T>(key: string, load: () => Promise<T>): Coale
       dirtyRef.current = true;
       return;
     }
-    run(generationRef.current);
+    run(generationRef.current, keyRef.current);
   }, [run]);
 
-  return { ...state, refresh };
+  const { data, dataKey, error, loading } = state;
+  return { data, isStale: data !== null && dataKey !== key, error, loading, refresh };
 }

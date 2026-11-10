@@ -61,9 +61,11 @@ export function useUsageData(params: UsageSummaryParams) {
     return () => clearInterval(timer);
   }, [refreshSummary]);
 
+  // Data loaded for other params is dropped, so an old period's numbers never show under the new
+  // period's label, not while the new one loads and not after it fails.
   return {
-    summary: summary.data,
-    running: running.data ?? [],
+    summary: summary.isStale ? null : summary.data,
+    running: running.isStale ? null : running.data,
     error: summary.error,
     runningError: running.error,
   };

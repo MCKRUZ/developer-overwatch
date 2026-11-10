@@ -108,12 +108,14 @@ export default function UsagePage() {
             <h3 className="text-lg font-medium">Running now</h3>
             {runningError ? (
               <p className="text-sm text-red-600 dark:text-red-400">{`Running sessions unavailable: ${runningError}`}</p>
-            ) : (
+            ) : running ? (
               <RunningSessionsList sessions={running} />
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading running sessions...</p>
             )}
           </section>
           <section className="space-y-2">
-            <h3 className="text-lg font-medium">By {period.granularity}</h3>
+            <h3 className="text-lg font-medium">By {summary.granularity}</h3>
             <UsageBucketsTable buckets={summary.buckets} />
           </section>
           <section className="space-y-2">

@@ -174,4 +174,45 @@ describe("UsagePage", () => {
 
     expect(screen.getByTestId("tile-cost")).toHaveTextContent("$99.00");
   });
+
+  it("should show loading and hide the old period's numbers while a new period loads, so old totals never sit under the new label", async () => {
+    render(<UsagePage />);
+    await screen.findByTestId("tile-cost");
+    mockApi.usage.summary.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.setup().selectOptions(screen.getByLabelText("Granularity"), "month");
+
+    expect(await screen.findByText("Loading usage...")).toBeInTheDocument();
+    expect(screen.queryByTestId("tile-cost")).not.toBeInTheDocument();
+    expect(screen.queryByText("Export CSV")).not.toBeInTheDocument();
+  });
+
+  it("should show only the error when the new period fails, never the previous period's numbers", async () => {
+    render(<UsagePage />);
+    await screen.findByTestId("tile-cost");
+    mockApi.usage.summary.mockRejectedValue(new Error("500: boom"));
+
+    await userEvent.setup().selectOptions(screen.getByLabelText("Developer"), "alice@x.io");
+
+    expect(await screen.findByText("500: boom")).toBeInTheDocument();
+    expect(screen.queryByTestId("tile-cost")).not.toBeInTheDocument();
+  });
+
+  it("should keep the numbers beside the error when a refresh of the same period fails, since they still describe that period", async () => {
+    render(<UsagePage />);
+    await screen.findByTestId("tile-cost");
+    mockApi.usage.summary.mockRejectedValue(new Error("503: busy"));
+
+    act(() => live.onResync?.());
+
+    expect(await screen.findByText("503: busy")).toBeInTheDocument();
+    expect(screen.getByTestId("tile-cost")).toBeInTheDocument();
+  });
+
+  it("should head the bucket table with the granularity the numbers were computed for", async () => {
+    mockApi.usage.summary.mockResolvedValue({ ...summary, granularity: "week" });
+    render(<UsagePage />);
+
+    expect(await screen.findByText("By week")).toBeInTheDocument();
+  });
 });

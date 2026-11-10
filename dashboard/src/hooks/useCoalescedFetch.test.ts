@@ -94,4 +94,29 @@ describe("useCoalescedFetch", () => {
 
     expect(load).toHaveBeenCalledTimes(1);
   });
+
+  it("should flag the previous key's data as stale until the new key loads, so callers can avoid showing it under the new key", async () => {
+    const next = deferred<string>();
+    const load = vi.fn().mockResolvedValueOnce("a").mockReturnValueOnce(next.promise);
+    const { result, rerender } = renderHook(({ k }) => useCoalescedFetch(k, load), { initialProps: { k: "a" } });
+    await waitFor(() => expect(result.current.isStale).toBe(false));
+
+    rerender({ k: "b" });
+    expect(result.current.isStale).toBe(true);
+    expect(result.current.data).toBe("a");
+    await act(async () => next.resolve("b"));
+
+    expect(result.current.isStale).toBe(false);
+    expect(result.current.data).toBe("b");
+  });
+
+  it("should clear the previous key's error on a key change, so it is not shown against the new key", async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error("old")).mockReturnValue(new Promise(() => {}));
+    const { result, rerender } = renderHook(({ k }) => useCoalescedFetch(k, load), { initialProps: { k: "a" } });
+    await waitFor(() => expect(result.current.error).toBe("old"));
+
+    rerender({ k: "b" });
+
+    expect(result.current.error).toBeNull();
+  });
 });
