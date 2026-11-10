@@ -62,9 +62,11 @@ internal static class SessionStartPayload
     private static DateTime? WrittenAt(string? writtenAt) =>
         DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at) ? at : null;
 
-    /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session, a resume or a
-    /// fork (<c>--fork-session</c>, <c>/fork</c>, <c>/branch</c>, a session moved to the background) is the developer
-    /// coming to it. A clear opens only a session this machine has never decided on; in a known
+    /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session or a resume is the
+    /// developer coming to it. A fork (<c>--fork-session</c>, <c>/fork</c>, <c>/branch</c>, a session moved to the
+    /// background) writes a new session id, so it opens only a session this machine has never decided on: a fork
+    /// that reused a known id would otherwise reopen a closed session without a resume. A clear opens only a
+    /// session this machine has never decided on; in a known
     /// session it is the same sitting continuing. So does a start with no source, from a hook or Claude Code
     /// version that predates the field: it cannot show the developer came back. Any other source, including the
     /// hook's "unknown", never opens.</summary>
@@ -75,10 +77,11 @@ internal static class SessionStartPayload
         if (value is null)
             return state == AccessState.New;
         if (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
-            || value.Equals("resume", StringComparison.OrdinalIgnoreCase)
-            || value.Equals("fork", StringComparison.OrdinalIgnoreCase))
+            || value.Equals("resume", StringComparison.OrdinalIgnoreCase))
             return true;
-        return state == AccessState.New && value.Equals("clear", StringComparison.OrdinalIgnoreCase);
+        return state == AccessState.New
+            && (value.Equals("clear", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("fork", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>The instant a start opens a session in <paramref name="state"/> from. A session first seen here

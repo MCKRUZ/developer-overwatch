@@ -11,7 +11,7 @@ using NSubstitute;
 namespace DeveloperOverwatch.Agent.Tests.Services;
 
 /// <summary>What may let a session in: backfill never does, and only the developer coming back to a session
-/// (a startup, resume or fork) opens one this machine has already decided on. A period of Local mode is a
+/// (a startup or resume) opens one this machine has already decided on. A period of Local mode is a
 /// decision too, whether or not a start was queued in it.</summary>
 public sealed class QueueProcessorContentFloorGateTests : IDisposable
 {
