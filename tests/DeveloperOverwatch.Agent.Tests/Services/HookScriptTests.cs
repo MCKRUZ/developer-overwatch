@@ -208,6 +208,28 @@ public sealed class HookScriptTests
         sent.Should().Be(expected);
     }
 
+    // The agent keeps a title written before enrolment on this machine, so it needs to know when.
+    [Fact]
+    public void SessionStartHook_RunInPwsh_SendsWhenTheTitleWasWritten()
+    {
+        var home = CreateHome();
+        var transcript = Path.Combine(home, "abc-session.jsonl");
+        File.WriteAllText(transcript, "{}");
+        var titlePath = Path.Combine(Directory.CreateDirectory(Path.Combine(home, "abc-session")).FullName, "custom-title.json");
+        File.WriteAllText(titlePath, "{\"customTitle\":\"renamed\"}");
+        var writtenAt = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(titlePath, writtenAt);
+
+        if (RunHook("overwatch-session-start.ps1", home, new { session_id = "claude-1", source = "resume", transcript_path = transcript }) is null)
+            return;
+
+        using var doc = JsonDocument.Parse(ReadLines(home).Single());
+        using var payload = JsonDocument.Parse(doc.RootElement.GetProperty("payload").GetString()!);
+        payload.RootElement.GetProperty("title").GetString().Should().Be("renamed");
+        DateTime.Parse(payload.RootElement.GetProperty("titleWrittenAt").GetString()!, null,
+            System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime().Should().Be(writtenAt);
+    }
+
     private static string? RunHookAndReadLine(string hook, object input)
     {
         var home = CreateHome();

@@ -27,11 +27,14 @@ internal sealed class SessionShipper
     private readonly ToolEventShipper _tools;
     private readonly SignalShipper _signals;
     private readonly ILogger _logger;
+    private readonly DateTime? _pilotSince;
 
+    /// <param name="pilotSince">A start's title written before Pilot enrolment is not sent.</param>
     public SessionShipper(
         IEventQueue queue, IApiClient api, IPrivacyRedactor redactor, IGitReader gitRemote,
-        IUsageStore usageStore, ConversationShipper conversations, ILogger logger)
+        IUsageStore usageStore, ConversationShipper conversations, ILogger logger, DateTime? pilotSince)
     {
+        _pilotSince = pilotSince;
         _queue = queue;
         _api = api;
         _redactor = redactor;
@@ -154,7 +157,7 @@ internal sealed class SessionShipper
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
         var projectKey = await RecordSessionProjectAsync(sessionId, start, ct);
-        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id);
+        var payload = SessionStartPayload.Enrich(_redactor.Redact(start.PayloadJson), projectKey, start.Id, _pilotSince);
         var outcome = await SendAloneAsync(sessionId, start, () => _api.SendSessionStartAsync(payload, ct));
         switch (outcome)
         {

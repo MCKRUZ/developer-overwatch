@@ -61,13 +61,18 @@ $repoPath = git rev-parse --show-toplevel 2>$null
 # A `/resume`d session may already have a `/rename`d title sitting in Claude Code's own sidecar
 # file (<projects-dir>/<encoded-repo>/<session-id>/custom-title.json) — surface it immediately
 # instead of waiting for the first captured turn to pick it up.
+# When it was written goes too: the agent keeps a title from before enrolment on this machine.
 $title = $null
+$titleWrittenAt = $null
 $transcriptPath = if ($hookInput) { $hookInput.transcript_path } else { $null }
 if ($transcriptPath -and (Test-Path $transcriptPath)) {
     $sessionFolder = [System.IO.Path]::GetFileNameWithoutExtension($transcriptPath)
     $titlePath = Join-Path (Split-Path $transcriptPath -Parent) "$sessionFolder\custom-title.json"
     if (Test-Path $titlePath) {
-        try { $title = (Get-Content $titlePath -Raw | ConvertFrom-Json).customTitle } catch { }
+        try {
+            $titleWrittenAt = (Get-Item $titlePath).LastWriteTimeUtc.ToString("o")
+            $title = (Get-Content $titlePath -Raw | ConvertFrom-Json).customTitle
+        } catch { }
     }
 }
 
@@ -87,6 +92,7 @@ $payload = @{
     developerName = $developerName
     repoPath = $repoPath
     title = $title
+    titleWrittenAt = $titleWrittenAt
     source = $source
     startedAt = $now
 } | ConvertTo-Json -Compress

@@ -61,28 +61,6 @@ internal sealed record TranscriptHeader(string? Cwd, DateTime? StartedAt)
         return last;
     }
 
-    /// <summary>The <c>/rename</c>d title Claude Code keeps in <c>&lt;session-id&gt;/custom-title.json</c>
-    /// beside the transcript, as overwatch-session-start.ps1 reads it; null when there is none.</summary>
-    public static string? ReadCustomTitle(string transcriptPath)
-    {
-        var path = Path.Combine(
-            Path.GetDirectoryName(transcriptPath) ?? string.Empty,
-            Path.GetFileNameWithoutExtension(transcriptPath),
-            "custom-title.json");
-        try
-        {
-            if (!File.Exists(path) || TryParseObject(File.ReadAllText(path)) is not { } doc)
-                return null;
-
-            using (doc)
-                return ReadString(doc.RootElement, "customTitle");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     private static JsonDocument? TryParseObject(string json)
     {
         try

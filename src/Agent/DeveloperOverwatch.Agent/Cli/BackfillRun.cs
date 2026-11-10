@@ -180,7 +180,6 @@ internal sealed class BackfillRun(BackfillServices services, AgentConfig config,
             developerEmail = repo.Email ?? UnknownDeveloperEmail,
             developerName = repo.Name,
             repoPath = repo.Root,
-            title = TranscriptHeader.ReadCustomTitle(transcript),
             startedAt = Iso(header.StartedAt ?? File.GetLastWriteTimeUtc(transcript)),
             isBackfill = true,
         });

@@ -79,7 +79,9 @@ internal static class ConversationPayload
     // (<projects-dir>/<encoded-repo>/<session-id>/custom-title.json), not in the transcript
     // itself — read it fresh on every capture so a mid-session rename shows up on the dashboard
     // instead of the raw session GUID.
-    public static async Task<string?> ResolveSessionTitleAsync(string transcriptPath, CancellationToken ct)
+    /// <param name="keptBefore">A title file last written before it names a session from before enrolment,
+    /// and stays on this machine.</param>
+    public static async Task<string?> ResolveSessionTitleAsync(string transcriptPath, DateTime? keptBefore, CancellationToken ct)
     {
         try
         {
@@ -89,7 +91,7 @@ internal static class ConversationPayload
 
             var sessionFolder = Path.GetFileNameWithoutExtension(transcriptPath);
             var titlePath = Path.Combine(dir, sessionFolder, "custom-title.json");
-            if (!File.Exists(titlePath))
+            if (!File.Exists(titlePath) || (keptBefore is { } cutoff && File.GetLastWriteTimeUtc(titlePath) < cutoff))
                 return null;
 
             using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(titlePath, ct));

@@ -77,7 +77,9 @@ internal sealed class ConversationShipper
             return EventOutcome.Done;
         }
 
-        var title = await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, ct);
+        var title = captured.Marker.Backfill
+            ? null
+            : await ConversationPayload.ResolveSessionTitleAsync(captured.Marker.TranscriptPath, _pilotSince, ct);
         var callbacks = Callbacks(sessionId, title, captured, answered, ct);
         foreach (var chunk in turns.Chunk(MaxTurnsPerPost))
         {

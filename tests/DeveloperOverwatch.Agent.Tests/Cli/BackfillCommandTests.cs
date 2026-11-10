@@ -104,6 +104,20 @@ public sealed class BackfillCommandTests : IDisposable
         (await AllRowsAsync()).Should().HaveCount(5);
     }
 
+    // Backfill sends usage only: a /rename'd title stays on this machine.
+    [Fact]
+    public async Task Pilot_RenamedSession_QueuesAStartWithNoTitle()
+    {
+        WriteMapping(SessionA, MappedId);
+        var sidecar = Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(_transcriptA)!, SessionA));
+        File.WriteAllText(Path.Combine(sidecar.FullName, "custom-title.json"), "{\"customTitle\":\"renamed\"}");
+
+        await RunAsync(AgentMode.Pilot);
+
+        var start = (await _queue.DequeueBatchAsync(100)).Single(e => e.SessionId == MappedId && e.EventType == EventType.SessionStart);
+        start.PayloadJson.Should().NotContain("renamed");
+    }
+
     [Fact]
     public async Task Pilot_MappedSession_QueuesSessionStartAndMarkerUnderTheMappedId()
     {

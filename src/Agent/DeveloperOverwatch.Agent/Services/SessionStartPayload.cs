@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -30,7 +31,9 @@ internal static class SessionStartPayload
     /// not a JSON object, because a session start must never be dropped.</param>
     /// <param name="projectKey">From <see cref="ResolveProjectKeyAsync"/>.</param>
     /// <param name="eventId">The queued start's id, which lets the server report a redelivery as a duplicate.</param>
-    public static string Enrich(string redactedPayload, string? projectKey, string eventId)
+    /// <param name="pilotSince">With it, the title goes only when the hook shows it was written at or after
+    /// enrolment; a title from before names a session that began before.</param>
+    public static string Enrich(string redactedPayload, string? projectKey, string eventId, DateTime? pilotSince)
     {
         JsonObject? body;
         try
@@ -50,8 +53,15 @@ internal static class SessionStartPayload
         body["projectKey"] = FieldLimits.Clamp(projectKey, FieldLimits.ProjectKey);
         body["developerEmail"] = FieldLimits.Email(AgentPayload.StringValue(body, "developerEmail"));
         body["eventId"] = eventId;
+        if (pilotSince is { } cutoff && !WrittenFrom(AgentPayload.StringValue(body, "titleWrittenAt"), cutoff))
+            body.Remove("title");
+        body.Remove("titleWrittenAt");
         return body.ToJsonString();
     }
+
+    private static bool WrittenFrom(string? writtenAt, DateTime cutoff) =>
+        DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at)
+        && at.ToUniversalTime() >= cutoff;
 
     /// <summary>Whether this start may reopen a session kept on this machine. Only a new session or a
     /// resume is the developer coming back to it; a compact or clear start is the same sitting continuing.
