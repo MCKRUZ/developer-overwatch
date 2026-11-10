@@ -10,13 +10,14 @@ const { hub } = vi.hoisted(() => {
     off: (event: string) => handlers.delete(event),
   };
   const emit = (event: string, ...args: unknown[]) => handlers.get(event)?.(...args);
-  return { hub: { connection, emit, handlers } };
+  return { hub: { connection, emit, handlers, connectedEpoch: 1 } };
 });
 
 vi.mock("./useSignalR", () => ({
   useSignalR: () => ({
     connection: hub.connection as unknown as HubConnection,
     state: HubConnectionState.Connected,
+    connectedEpoch: hub.connectedEpoch,
   }),
 }));
 
@@ -92,7 +93,10 @@ describe("useTrailingThrottle", () => {
 });
 
 describe("useLiveRefresh", () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    hub.connectedEpoch = 0;
+  });
   afterEach(() => vi.useRealTimers());
 
   it.each(["SessionStarted", "SessionEnded", "UsageUpdated"])(
@@ -128,6 +132,25 @@ describe("useLiveRefresh", () => {
 
     act(() => hub.emit("ViolationResolved", "v1"));
     act(() => vi.advanceTimersByTime(LIVE_REFRESH_INTERVAL_MS));
+
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("should refetch at once on every new hub connect, because events sent while disconnected were lost", () => {
+    hub.connectedEpoch = 1;
+    const refetch = vi.fn();
+    const { rerender } = renderHook(() => useLiveRefresh(refetch));
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    hub.connectedEpoch = 2;
+    rerender();
+
+    expect(refetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("should not refetch before the hub has ever connected, since the mount load is already current", () => {
+    const refetch = vi.fn();
+    renderHook(() => useLiveRefresh(refetch));
 
     expect(refetch).not.toHaveBeenCalled();
   });

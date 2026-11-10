@@ -34,10 +34,14 @@ export function useTrailingThrottle(fn: () => void, intervalMs: number): () => v
   }, [intervalMs]);
 }
 
-/** Calls `refetch` (throttled) whenever the hub reports a session start, end, or new usage. */
+/**
+ * Calls `refetch` (throttled) whenever the hub reports a session start, end, or new usage, and
+ * at once on every new hub connect, since events sent while disconnected were lost.
+ */
 export function useLiveRefresh(refetch: () => void): void {
   const requestRefresh = useTrailingThrottle(refetch, LIVE_REFRESH_INTERVAL_MS);
-  const { connection, state } = useSignalR();
+  const { connection, state, connectedEpoch } = useSignalR();
+  useResync(connectedEpoch, refetch);
 
   useGlobalUpdates({
     connection,
@@ -46,4 +50,17 @@ export function useLiveRefresh(refetch: () => void): void {
     onSessionEnded: requestRefresh,
     onUsageUpdated: requestRefresh,
   });
+}
+
+/** Runs `resync` each time `connectedEpoch` moves past 0, i.e. on every transition into Connected. */
+function useResync(connectedEpoch: number, resync: () => void): void {
+  const resyncRef = useRef(resync);
+
+  useEffect(() => {
+    resyncRef.current = resync;
+  }, [resync]);
+
+  useEffect(() => {
+    if (connectedEpoch > 0) resyncRef.current();
+  }, [connectedEpoch]);
 }

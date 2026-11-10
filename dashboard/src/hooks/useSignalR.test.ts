@@ -96,13 +96,6 @@ describe("useSignalR", () => {
     expect(result.current.state).toBe(HubConnectionState.Disconnected);
   });
 
-  it("should fall back to Disconnected when start rejects", async () => {
-    (conn.start as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
-    const { result } = renderHook(() => useSignalR());
-
-    await waitFor(() => expect(result.current.state).toBe(HubConnectionState.Disconnected));
-  });
-
   it("should stop the connection on unmount", () => {
     const { unmount } = renderHook(() => useSignalR());
     unmount();
@@ -201,5 +194,116 @@ describe("useSignalR", () => {
     act(() => (replacement._close as () => void)());
     act(() => (conn._reconnected as () => void)());
     expect(result.current.state).toBe(HubConnectionState.Disconnected);
+  });
+
+  describe("start retry", () => {
+    const start = () => conn.start as ReturnType<typeof vi.fn>;
+    const advance = (ms: number) => act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("should retry a failed first start on a 2, 5, 10, 30 s backoff until it connects, so a hub that was down at page load still goes live", async () => {
+      start()
+        .mockRejectedValueOnce(new Error("down"))
+        .mockRejectedValueOnce(new Error("down"))
+        .mockRejectedValueOnce(new Error("down"))
+        .mockRejectedValueOnce(new Error("down"))
+        .mockRejectedValueOnce(new Error("down"));
+      const { result } = renderHook(() => useSignalR());
+      await advance(0);
+      expect(result.current.state).toBe(HubConnectionState.Disconnected);
+
+      await advance(1_999);
+      expect(start()).toHaveBeenCalledTimes(1);
+      await advance(1);
+      expect(start()).toHaveBeenCalledTimes(2);
+      await advance(5_000);
+      expect(start()).toHaveBeenCalledTimes(3);
+      await advance(10_000);
+      expect(start()).toHaveBeenCalledTimes(4);
+      await advance(30_000);
+      expect(start()).toHaveBeenCalledTimes(5);
+      // The schedule is capped: every later attempt waits 30 s.
+      await advance(30_000);
+      expect(start()).toHaveBeenCalledTimes(6);
+
+      expect(result.current.state).toBe(HubConnectionState.Connected);
+      expect(result.current.connectedEpoch).toBe(1);
+    });
+
+    it("should restart after the server closes the connection, as it does when the token expires, and count it as a new connect", async () => {
+      const { result } = renderHook(() => useSignalR());
+      await advance(0);
+      expect(result.current.connectedEpoch).toBe(1);
+
+      act(() => (conn._close as () => void)());
+      expect(result.current.state).toBe(HubConnectionState.Disconnected);
+      await advance(2_000);
+
+      expect(start()).toHaveBeenCalledTimes(2);
+      expect(result.current.state).toBe(HubConnectionState.Connected);
+      expect(result.current.connectedEpoch).toBe(2);
+    });
+
+    it("should restart the backoff from 2 s after a connect, so one old outage does not slow the next recovery", async () => {
+      start().mockRejectedValueOnce(new Error("down"));
+      renderHook(() => useSignalR());
+      await advance(2_000);
+      expect(start()).toHaveBeenCalledTimes(2);
+
+      act(() => (conn._close as () => void)());
+      await advance(2_000);
+
+      expect(start()).toHaveBeenCalledTimes(3);
+    });
+
+    it("should count an automatic reconnect as a new connect, so subscribers resync what they missed", async () => {
+      const { result } = renderHook(() => useSignalR());
+      await advance(0);
+
+      act(() => (conn._reconnecting as () => void)());
+      act(() => (conn._reconnected as () => void)());
+
+      expect(result.current.connectedEpoch).toBe(2);
+    });
+
+    it("should cancel a pending retry on unmount, so a closed page never reconnects", async () => {
+      start().mockRejectedValueOnce(new Error("down"));
+      const { unmount } = renderHook(() => useSignalR());
+      await advance(0);
+
+      unmount();
+      await advance(60_000);
+
+      expect(start()).toHaveBeenCalledTimes(1);
+    });
+
+    it("should cancel a pending retry on sign-out, so a signed-out page does not keep knocking on the hub", async () => {
+      start().mockRejectedValueOnce(new Error("down"));
+      auth.configured = true;
+      auth.token = "tok-1";
+      const { rerender } = renderHook(() => useSignalR());
+      await advance(0);
+
+      auth.token = null;
+      rerender();
+      await advance(60_000);
+
+      expect(start()).toHaveBeenCalledTimes(1);
+    });
+
+    it("should not schedule a retry from the close a deliberate stop fires", async () => {
+      const { unmount } = renderHook(() => useSignalR());
+      await advance(0);
+
+      unmount();
+      act(() => (conn._close as () => void)());
+      await advance(60_000);
+
+      expect(start()).toHaveBeenCalledTimes(1);
+    });
   });
 });
