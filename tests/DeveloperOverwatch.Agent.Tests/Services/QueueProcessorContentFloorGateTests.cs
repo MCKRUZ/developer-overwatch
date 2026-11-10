@@ -64,6 +64,23 @@ public sealed class QueueProcessorContentFloorGateTests : IDisposable
         (await _queue.GetAccessAsync("s")).State.Should().Be(AccessState.New, "backfill decides nothing about the session");
     }
 
+    // An old hook queues starts with no source; one of them must not let a held session back in.
+    [Fact]
+    public async Task ClosedSession_StartWithNoSource_LetsNothingIn()
+    {
+        await EnqueueAsync(Start("start", "startup"), _pilotSince.AddMinutes(-10));
+        await DrainAsync(CreateSut(_pilotSince));
+
+        CaptureTurns(Turn("uuid:after", "post-start text", _pilotSince.AddMinutes(6)));
+        await EnqueueAsync(Start("no-source", null), _pilotSince.AddMinutes(5));
+        await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(7));
+        await EnqueueAsync(Tool("tool", "te-after"), _pilotSince.AddMinutes(8));
+        await DrainAsync(CreateSut(_pilotSince));
+
+        _http.Bodies.Should().BeEmpty("a start with no source does not show the developer came back to the session");
+        (await _queue.GetAccessAsync("s")).State.Should().Be(AccessState.Closed);
+    }
+
     private async Task BackfillThenLiveMarkerAsync()
     {
         var backfillAt = _pilotSince.AddMinutes(5);

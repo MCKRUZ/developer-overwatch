@@ -82,7 +82,7 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
         await sut.PollOnceAsync(CancellationToken.None);
         _http.Bodies.Should().BeEmpty("the session began before enrolment and has not been resumed since");
 
-        await EnqueueAsync(Start("resume", "s"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Start("resume", "s", "resume"), _pilotSince.AddMinutes(10));
         await EnqueueAsync(Event("after", "s", EventType.ToolExecution, ToolExecution("s", "te-after")), _pilotSince.AddMinutes(11));
         await sut.PollOnceAsync(CancellationToken.None);
 
@@ -115,7 +115,7 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
             ("uuid:pre", "text from before the resume", resumeAt.AddMinutes(-2)),
             ("uuid:post", "text from after the resume", resumeAt.AddMinutes(1)));
         await EnqueueAsync(Event("marker", "s", EventType.ConversationTurn, Marker()), _pilotSince.AddMinutes(5));
-        await EnqueueAsync(Start("resume", "s"), resumeAt);
+        await EnqueueAsync(Start("resume", "s", "resume"), resumeAt);
         await DrainAsync(sut);
 
         string.Join("\n", _http.Bodies).Should().NotContain("text from");
@@ -234,9 +234,10 @@ public sealed class QueueProcessorEnrolmentTests : IDisposable
     private static QueuedEvent Event(string id, string sessionId, EventType type, string payload) =>
         new() { Id = id, SessionId = sessionId, EventType = type, PayloadJson = payload };
 
-    private static QueuedEvent Start(string id, string sessionId) =>
-        Event(id, sessionId, EventType.SessionStart,
-            JsonSerializer.Serialize(new { sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow }));
+    private static QueuedEvent Start(string id, string sessionId, string? source = null) =>
+        Event(id, sessionId, EventType.SessionStart, source is null
+            ? JsonSerializer.Serialize(new { sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow })
+            : JsonSerializer.Serialize(new { sessionId, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = DateTime.UtcNow, source }));
 
     private static string Marker() => JsonSerializer.Serialize(new { transcriptPath = Transcript });
 

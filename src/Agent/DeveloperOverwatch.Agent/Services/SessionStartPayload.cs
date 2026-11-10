@@ -63,9 +63,10 @@ internal static class SessionStartPayload
         DateTime.TryParse(writtenAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at) ? at : null;
 
     /// <summary>Whether this start may open a session in <paramref name="state"/>. A new session or a resume is
-    /// the developer coming to it, as is a start from a hook that predates the source field. A clear opens only a
-    /// session this machine has never decided on; in a known session it is the same sitting continuing. Any other
-    /// source, including the hook's "unknown", never opens.</summary>
+    /// the developer coming to it. A clear opens only a session this machine has never decided on; in a known
+    /// session it is the same sitting continuing. So does a start with no source, from a hook or Claude Code
+    /// version that predates the field: it cannot show the developer came back. Any other source, including the
+    /// hook's "unknown", never opens.</summary>
     public static bool MayOpen(string payloadJson, AccessState state)
     {
         try
@@ -74,7 +75,7 @@ internal static class SessionStartPayload
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
             if (!doc.RootElement.TryGetProperty("source", out var source) || source.ValueKind == JsonValueKind.Null)
-                return true;
+                return state == AccessState.New;
             if (source.ValueKind != JsonValueKind.String || source.GetString() is not { } value)
                 return false;
             if (value.Equals("startup", StringComparison.OrdinalIgnoreCase)

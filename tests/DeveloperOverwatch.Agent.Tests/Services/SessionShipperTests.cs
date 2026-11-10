@@ -200,7 +200,7 @@ public sealed class SessionShipperTests : IDisposable
         _onStart = _ => ApiResult.Rejected;
         await EnqueueAsync(Start("S1"), T0);
         await _queue.MarkClosedAsync((await _queue.DequeueBatchAsync(10)).Single(e => e.Id == "S1"));
-        await EnqueueAsync(Start("R"), T0.AddMinutes(1));
+        await EnqueueAsync(Start("R", "resume"), T0.AddMinutes(1));
         await EnqueueAsync(Event("t1", EventType.ToolExecution, ToolExecution("te-1")), T0.AddMinutes(2));
         var sut = CreateSut();
         await sut.PollOnceAsync(CancellationToken.None);
@@ -256,9 +256,10 @@ public sealed class SessionShipperTests : IDisposable
     private static QueuedEvent Event(string id, EventType type, string payload = "{}") =>
         new() { Id = id, SessionId = Session, EventType = type, PayloadJson = payload };
 
-    private static QueuedEvent Start(string id) =>
-        Event(id, EventType.SessionStart,
-            JsonSerializer.Serialize(new { sessionId = Session, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = T0 }));
+    private static QueuedEvent Start(string id, string? source = null) =>
+        Event(id, EventType.SessionStart, source is null
+            ? JsonSerializer.Serialize(new { sessionId = Session, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = T0 })
+            : JsonSerializer.Serialize(new { sessionId = Session, developerEmail = "dev@example.com", repoPath = "C:/repo", startedAt = T0, source }));
 
     private static string? ToolIdIn(string payload)
     {
