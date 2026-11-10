@@ -190,6 +190,8 @@ public sealed class QueueProcessorCompactionTests : IDisposable
     [InlineData("""{"source":"clear"}""", false)]
     [InlineData("""{"source":"compact"}""", false)]
     [InlineData("""{"source":"something-new"}""", false)]
+    [InlineData("""{"source":"unknown"}""", false)]
+    [InlineData("""{"source":""}""", false)]
     [InlineData("""{"source":7}""", false)]
     [InlineData("not json", false)]
     [InlineData("""["startup"]""", false)]

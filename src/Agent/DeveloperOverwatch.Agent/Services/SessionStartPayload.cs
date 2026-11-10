@@ -55,7 +55,8 @@ internal static class SessionStartPayload
 
     /// <summary>Whether this start may reopen a session kept on this machine. Only a new session or a
     /// resume is the developer coming back to it; a compact or clear start is the same sitting continuing.
-    /// A start with no source is from a hook that predates the field.</summary>
+    /// A start with no source is from a hook that predates the field. Any other source, including the hook's
+    /// "unknown" for a value it could not forward, keeps the session here.</summary>
     public static bool MayReopen(string payloadJson)
     {
         try

@@ -181,12 +181,17 @@ public sealed class HookScriptTests
     }
 
     // The agent keeps a pre-enrolment session local across a compact or clear start, so it needs the source.
+    // Only a missing source reads as an old hook; any other source the agent cannot use arrives as "unknown".
     [Theory]
     [InlineData("compact", "compact")]
     [InlineData("RESUME", "resume")]
-    [InlineData("garbage", null)]
-    [InlineData(42, null)]
-    public void SessionStartHook_RunInPwsh_ForwardsOnlyAKnownSource(object source, string? expected)
+    [InlineData("new_source", "new_source")]
+    [InlineData("not-a-word", "unknown")]
+    [InlineData("abcdefghijklmnopqrstuvwxyzabcdefg", "unknown")]
+    [InlineData("", "unknown")]
+    [InlineData(42, "unknown")]
+    [InlineData(null, null)]
+    public void SessionStartHook_RunInPwsh_ForwardsOnlyAKnownSource(object? source, string? expected)
     {
         var home = CreateHome();
         var line = RunHook("overwatch-session-start.ps1", home,
