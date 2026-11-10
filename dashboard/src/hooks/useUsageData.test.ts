@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { UsageSummaryParams } from "../api";
 import type { RunningSession, UsageSummary } from "../types";
 import { buildRunningSession, buildUsageSummary } from "../test/usageFactories";
-import { RUNNING_REFRESH_THROTTLE_MS, SUMMARY_REFRESH_INTERVAL_MS, useUsageData } from "./useUsageData";
+import { RUNNING_REFRESH_THROTTLE_MS, RUNNING_STALE_AFTER_MS, SUMMARY_REFRESH_INTERVAL_MS, useUsageData } from "./useUsageData";
 
 vi.mock("../api", () => ({
   api: { usage: { summary: vi.fn(), running: vi.fn() } },
@@ -128,6 +128,40 @@ describe("useUsageData", () => {
       await advance(SUMMARY_REFRESH_INTERVAL_MS);
 
       expect(mockApi.usage.summary).toHaveBeenCalledTimes(2);
+    });
+
+    it("should refetch the running list once it is a minute old with no events, so idle times, the stale cutoff and burn rates keep moving", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      await advance(RUNNING_STALE_AFTER_MS - 1);
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(1);
+      await advance(1);
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
+      await advance(RUNNING_STALE_AFTER_MS);
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(3);
+    });
+
+    it("should measure staleness from the last running fetch, so an event-driven refresh postpones the idle one", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(30_000);
+
+      act(() => live.onChange?.());
+      await advance(RUNNING_REFRESH_THROTTLE_MS);
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
+      await advance(RUNNING_STALE_AFTER_MS - 1);
+
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
+    });
+
+    it("should stop the idle refresh on unmount", async () => {
+      const { unmount } = renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      unmount();
+      await advance(RUNNING_STALE_AFTER_MS * 2);
+
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(1);
     });
 
     it("should refetch the summary at once and the running list within the throttle on a hub reconnect, so missed events are recovered", async () => {
