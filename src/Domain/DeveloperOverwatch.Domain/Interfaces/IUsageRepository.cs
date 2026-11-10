@@ -1,6 +1,7 @@
 namespace DeveloperOverwatch.Domain.Interfaces;
 
 using DeveloperOverwatch.Domain.Enums;
+using DeveloperOverwatch.Domain.Metering;
 
 /// <summary>Read-side usage queries for the usage meter, kept apart from <see cref="ISessionRepository"/>.</summary>
 public interface IUsageRepository
@@ -15,6 +16,17 @@ public interface IUsageRepository
     /// limited to turns after <paramref name="turnsAfter"/>.</summary>
     Task<IReadOnlyList<SessionTurnUsageRow>> GetRecentTurnsOfRunningSessionsAsync(
         DateTime activeSince, DateTime turnsAfter, CancellationToken ct = default);
+
+    /// <summary>Turns with <c>fromUtc &lt;= Timestamp &lt; toUtc</c> that match <paramref name="filter"/>, summed
+    /// per UTC 15-minute slot and <paramref name="dimension"/> key in the database. Every turn is counted however
+    /// old it is: the server never purges turns.</summary>
+    Task<IReadOnlyList<UsageSlotRow>> GetSlotsAsync(
+        DateTime fromUtc, DateTime toUtc, UsageFilter filter, UsageDimension dimension, CancellationToken ct = default);
+
+    /// <summary>One point per turn with <c>afterUtc &lt; Timestamp &lt;= untilUtc</c> that matches
+    /// <paramref name="filter"/>, carrying all four token kinds and the estimated cost.</summary>
+    Task<IReadOnlyList<UsagePoint>> GetTurnPointsAsync(
+        DateTime afterUtc, DateTime untilUtc, UsageFilter filter, CancellationToken ct = default);
 }
 
 /// <summary>A running session's identity, activity and running totals.</summary>
