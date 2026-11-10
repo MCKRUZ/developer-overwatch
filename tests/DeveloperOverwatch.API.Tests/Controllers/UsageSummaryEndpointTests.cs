@@ -46,8 +46,7 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
     }
 
     // Browsers can still report the pre-rename IANA ids. On Ubuntu noble those files ship in tzdata-legacy,
-    // not tzdata. The aspnet:10.0 (noble) image installs both; a host with only tzdata (the CI runner)
-    // resolves them through the link lines of tzdata.zi (UsageCalendarZoneTests).
+    // not tzdata; the aspnet:10.0 (noble) image installs both through its runtime-deps base.
     [Theory]
     [InlineData("Asia/Calcutta")]
     [InlineData("Europe/Kiev")]
