@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using DeveloperOverwatch.Agent.Services;
@@ -63,6 +64,28 @@ public sealed class QueueProcessorContentFloorTests : IDisposable
         var sent = Sent();
         sent.Should().NotContain("window text", "the session existed before its first start here, a resume");
         sent.Should().Contain("post-resume text");
+    }
+
+    // A refused opening resume still shows the session existed before it, so a later clear cannot open it.
+    [Theory]
+    [InlineData(50)]
+    [InlineData(1)]
+    public async Task NewSession_FirstStartIsResume_Refused_LaterClearStartShipsNoWindowTurn(int batchSize)
+    {
+        _http.Respond = (path, body) => path == "/api/sessions/start" && body.Contains("\"eventId\":\"resume\"")
+            ? HttpStatusCode.BadRequest
+            : HttpStatusCode.OK;
+        CaptureTurns(
+            Turn("uuid:window", "window text", _pilotSince.AddMinutes(5)),
+            Turn("uuid:after", "post-clear text", _pilotSince.AddMinutes(21)));
+        await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
+        await EnqueueAsync(Start("clear", "clear"), _pilotSince.AddMinutes(20));
+        await EnqueueAsync(Marker("m"), _pilotSince.AddMinutes(22));
+
+        await DrainAsync(CreateSut(batchSize));
+
+        Sent().Should().NotContain("window text", "the refused resume showed the session existed before it");
+        (await _queue.GetAccessAsync("s")).State.Should().Be(AccessState.Closed);
     }
 
     // A compact start is the same sitting going on, so it cannot be the start that lets a session in.

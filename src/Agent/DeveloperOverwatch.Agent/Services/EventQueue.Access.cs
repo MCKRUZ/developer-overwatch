@@ -67,30 +67,41 @@ public sealed partial class EventQueue
         }
     }
 
-    /// <summary>open_from and created_at are both UTC "o" text, so the text comparison orders by instant. A
-    /// session already closed stays closed: NULL &lt; x is not true.</summary>
     public Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default)
     {
         lock (_lock)
         {
             using var transaction = _connection.BeginTransaction();
             MarkStartShipped(transaction, start);
-
-            using var upsert = _connection.CreateCommand();
-            upsert.Transaction = transaction;
-            upsert.CommandText = """
-                INSERT INTO session_access (session_id, open_from) VALUES ($sessionId, NULL)
-                ON CONFLICT(session_id) DO UPDATE SET open_from = NULL
-                WHERE session_access.open_from < $createdAt
-                """;
-            upsert.Parameters.AddWithValue("$sessionId", start.SessionId);
-            upsert.Parameters.AddWithValue("$createdAt", UtcInstant.Utc(start.CreatedAt).ToString("o"));
-            upsert.ExecuteNonQuery();
-
+            Close(transaction, start);
             transaction.Commit();
         }
 
         return Task.CompletedTask;
+    }
+
+    public Task CloseAsync(QueuedEvent start, CancellationToken ct = default)
+    {
+        lock (_lock)
+            Close(null, start);
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>open_from and created_at are both UTC "o" text, so the text comparison orders by instant. A
+    /// session already closed stays closed: NULL &lt; x is not true.</summary>
+    private void Close(SqliteTransaction? transaction, QueuedEvent start)
+    {
+        using var upsert = _connection.CreateCommand();
+        upsert.Transaction = transaction;
+        upsert.CommandText = """
+            INSERT INTO session_access (session_id, open_from) VALUES ($sessionId, NULL)
+            ON CONFLICT(session_id) DO UPDATE SET open_from = NULL
+            WHERE session_access.open_from < $createdAt
+            """;
+        upsert.Parameters.AddWithValue("$sessionId", start.SessionId);
+        upsert.Parameters.AddWithValue("$createdAt", UtcInstant.Utc(start.CreatedAt).ToString("o"));
+        upsert.ExecuteNonQuery();
     }
 
     private void MarkStartShipped(SqliteTransaction transaction, QueuedEvent start)

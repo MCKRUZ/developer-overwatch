@@ -53,6 +53,10 @@ public interface IEventQueue
     /// <summary>Settles <paramref name="start"/> and closes its session, unless the session opened after the
     /// start was queued.</summary>
     Task MarkClosedAsync(QueuedEvent start, CancellationToken ct = default);
+
+    /// <summary>Closes the session of <paramref name="start"/> like <see cref="MarkClosedAsync"/>, but leaves
+    /// the start's own state alone.</summary>
+    Task CloseAsync(QueuedEvent start, CancellationToken ct = default);
 }
 
 /// <summary>What the queue says about a session's settled starts. <see cref="Unknown"/> is the default.</summary>

@@ -168,8 +168,9 @@ internal sealed class SessionShipper
     }
 
     /// <summary>An accepted start opens the session if it was not open, and lets its later items ship. A
-    /// rejected one, or one the server answers session_not_found, is dead and changes nothing in the session's
-    /// access. A transient start, or one too large to send, holds the session. The title goes only when it was
+    /// rejected one, or one the server answers session_not_found, is dead; if it was to open the session, it
+    /// closes it instead, since it still shows the session existed by then, and only a later startup or resume
+    /// can open it. A transient start, or one too large to send, holds the session. The title goes only when it was
     /// written at or above the floor the session has, or would have once this start opens it.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
@@ -189,6 +190,12 @@ internal sealed class SessionShipper
             case EventOutcome.SessionGone:
                 _logger.LogWarning("Server refused start {EventId} of session {SessionId}: {Why}", start.Id, sessionId, SessionUnknown);
                 break;
+        }
+
+        if (run.Session is null)
+        {
+            await _queue.CloseAsync(start, ct);
+            run.State = AccessState.Closed;
         }
 
         await run.MarkDeadAsync([start], ct);
