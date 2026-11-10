@@ -175,7 +175,7 @@ public sealed partial class EventQueue : IEventQueue, IDisposable
             {
                 if (SessionStartPayload.MayOpen(reader.GetString(1), AccessState.Closed))
                     return Task.FromResult<DateTime?>(
-                        DateTime.Parse(reader.GetString(0), null, System.Globalization.DateTimeStyles.RoundtripKind));
+                        ParseInstant(reader.GetString(0)));
             }
 
             return Task.FromResult<DateTime?>(null);
@@ -275,7 +275,7 @@ public sealed partial class EventQueue : IEventQueue, IDisposable
         SessionId = reader.GetString(2),
         EventType = Enum.Parse<EventType>(reader.GetString(3)),
         PayloadJson = reader.GetString(4),
-        CreatedAt = DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
+        CreatedAt = ParseInstant(reader.GetString(5)),
         RetryCount = reader.GetInt32(6),
         Shipped = reader.GetInt32(7) == 1
     };

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using DeveloperOverwatch.Agent.Models;
 using Microsoft.Extensions.Logging;
 
@@ -219,7 +218,7 @@ internal sealed class SessionShipper
     /// written at or above the floor the session has, or would have once this start opens it.</summary>
     private async Task<bool> ShipStartAsync(string sessionId, SessionRun run, QueuedEvent start, CancellationToken ct)
     {
-        var openFrom = OpenFrom(run.State, start);
+        var openFrom = SessionStartPayload.OpenFrom(start.PayloadJson, start.CreatedAt, run.State, _pilotSince);
         var titleSession = run.Session ?? new OpenSession(sessionId, UtcInstant.Later(_pilotSince, openFrom));
         switch (await SendStartAsync(sessionId, start, titleSession, ct))
         {
@@ -268,32 +267,6 @@ internal sealed class SessionShipper
         }
 
         run.Dead = false;
-    }
-
-    /// <summary>A session first seen here through a new-session or clear start began here, so it opens from
-    /// enrolment and keeps a first prompt written just before the hook stamped the start. Any other start shows
-    /// the session existed before it, so it opens at the start.</summary>
-    private DateTime OpenFrom(AccessState state, QueuedEvent start) =>
-        state == AccessState.New && SourceOf(start.PayloadJson) is "startup" or "clear"
-            ? _pilotSince ?? DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc)
-            : UtcInstant.Utc(start.CreatedAt);
-
-    /// <summary>The start's source in lower case; null when it is missing or the payload is not an object.</summary>
-    private static string? SourceOf(string payloadJson)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("source", out var source)
-                && source.ValueKind == JsonValueKind.String
-                    ? source.GetString()?.ToLowerInvariant()
-                    : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 
     private async Task<bool> ShipEndAsync(OpenSession session, SessionRun run, QueuedEvent end, CancellationToken ct)

@@ -70,20 +70,44 @@ internal static class SessionStartPayload
     /// hook's "unknown", never opens.</summary>
     public static bool MayOpen(string payloadJson, AccessState state)
     {
+        if (!TryReadSource(payloadJson, out var value))
+            return false;
+        if (value is null)
+            return state == AccessState.New;
+        if (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("resume", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("fork", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return state == AccessState.New && value.Equals("clear", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The instant a start opens a session in <paramref name="state"/> from. A session first seen here
+    /// through a new-session or clear start began here, so it opens from enrolment and keeps a first prompt written
+    /// just before the hook stamped the start. Any other start shows the session existed before it, so it opens at
+    /// the start.</summary>
+    public static DateTime OpenFrom(string payloadJson, DateTime createdAt, AccessState state, DateTime? pilotSince) =>
+        state == AccessState.New
+        && TryReadSource(payloadJson, out var source)
+        && source?.ToLowerInvariant() is "startup" or "clear"
+            ? pilotSince ?? DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc)
+            : UtcInstant.Utc(createdAt);
+
+    /// <returns>False when the payload is not JSON or not an object, or its source is not a string. Otherwise
+    /// true, with <paramref name="source"/> null when the source is missing or JSON null.</returns>
+    private static bool TryReadSource(string payloadJson, out string? source)
+    {
+        source = null;
         try
         {
             using var doc = JsonDocument.Parse(payloadJson);
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
-            if (!doc.RootElement.TryGetProperty("source", out var source) || source.ValueKind == JsonValueKind.Null)
-                return state == AccessState.New;
-            if (source.ValueKind != JsonValueKind.String || source.GetString() is not { } value)
-                return false;
-            if (value.Equals("startup", StringComparison.OrdinalIgnoreCase)
-                || value.Equals("resume", StringComparison.OrdinalIgnoreCase)
-                || value.Equals("fork", StringComparison.OrdinalIgnoreCase))
+            if (!doc.RootElement.TryGetProperty("source", out var element) || element.ValueKind == JsonValueKind.Null)
                 return true;
-            return state == AccessState.New && value.Equals("clear", StringComparison.OrdinalIgnoreCase);
+            if (element.ValueKind != JsonValueKind.String)
+                return false;
+            source = element.GetString();
+            return true;
         }
         catch (JsonException)
         {
