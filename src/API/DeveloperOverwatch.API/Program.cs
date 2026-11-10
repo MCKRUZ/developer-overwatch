@@ -24,6 +24,7 @@ using OpenTelemetry.Instrumentation.AspNetCore;
 using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddHostingLogFloor();
 
 var connectionString = builder.Configuration.GetValue<string>("Database:ConnectionString")
     ?? "Data Source=overwatch.db";
