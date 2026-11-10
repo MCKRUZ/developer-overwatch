@@ -95,6 +95,8 @@ public class UsageSummaryEndpointTests : IClassFixture<OverwatchWebApplicationFa
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = body.RootElement;
         root.GetProperty("granularity").GetString().Should().Be("day");
+        root.GetProperty("developer").GetString().Should().Be(developer, "an export must say whose usage it is");
+        root.TryGetProperty("project", out _).Should().BeFalse("an unset filter is omitted");
         root.GetProperty("from").GetString().Should().Be("2026-11-01");
         root.GetProperty("pricesAsOf").GetString().Should().MatchRegex(@"^\d{4}-\d{2}-\d{2}$");
         root.GetProperty("totals").GetProperty("outputTokens").GetInt64().Should().Be(40);

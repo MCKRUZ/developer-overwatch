@@ -196,6 +196,17 @@ public sealed class GetUsageSummaryTests : IDisposable
         summary.Buckets.Should().AllSatisfy(b => b.TurnCount.Should().Be(0));
     }
 
+    [Theory]
+    [InlineData("a@team.dev", "/src/meter")]
+    [InlineData(null, null)]
+    public async Task Handle_EchoesTheAppliedFilters(string? developer, string? project)
+    {
+        var summary = await Handle(new GetUsageSummaryQuery(
+            new(2026, 11, 1), new(2026, 11, 3), "day", "Etc/UTC", developer, project));
+
+        (summary.Developer, summary.Project).Should().Be((developer, project));
+    }
+
     private Task<UsageSummary> Run(
         DateOnly from, DateOnly to, string granularity, string zone, string? developer = null) =>
         Handle(new GetUsageSummaryQuery(from, to, granularity, zone, developer));

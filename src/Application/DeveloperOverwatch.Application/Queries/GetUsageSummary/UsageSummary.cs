@@ -63,6 +63,8 @@ public sealed record UsageBurn(double TokensPerMinute, decimal CostPerMinute, in
 /// <summary>The usage page's whole read for one period.</summary>
 /// <param name="PricesAsOf">Date of the price table every estimated cost was computed from.</param>
 /// <param name="Buckets">Every bucket in the period, zero-filled, ascending.</param>
+/// <param name="Developer">The developer filter applied, so an export says whose usage it is; null when unset.</param>
+/// <param name="Project">The project filter applied; null when unset.</param>
 public sealed record UsageSummary(
     DateOnly From,
     DateOnly To,
@@ -72,4 +74,6 @@ public sealed record UsageSummary(
     UsageTotals Totals,
     IReadOnlyList<UsageBucket> Buckets,
     UsageSplits Splits,
-    UsageBurn Burn);
+    UsageBurn Burn,
+    string? Developer,
+    string? Project);

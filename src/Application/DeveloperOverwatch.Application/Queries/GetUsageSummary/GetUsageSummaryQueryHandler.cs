@@ -42,7 +42,8 @@ public sealed class GetUsageSummaryQueryHandler : IRequestHandler<GetUsageSummar
             from, to, granularity, request.TimeZone!, _pricing.PricesAsOf, totals,
             Buckets(all, from, to, granularity),
             Splits(slots, totals.EstimatedCostUsd),
-            await Burn(filter, cancellationToken)));
+            await Burn(filter, cancellationToken),
+            request.Developer, request.Project));
     }
 
     private async Task<IReadOnlyList<(DateOnly Day, UsageSlotRow Row)>> SlotsInPeriod(
