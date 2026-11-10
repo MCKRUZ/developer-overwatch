@@ -1,20 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { api } from "../api";
 import type { UsageSummaryParams } from "../api";
 import type { RunningSession, UsageSummary } from "../types";
 import { buildRunningSession, buildUsageSummary } from "../test/usageFactories";
-import { useUsageData } from "./useUsageData";
+import { RUNNING_REFRESH_THROTTLE_MS, SUMMARY_REFRESH_INTERVAL_MS, useUsageData } from "./useUsageData";
 
 vi.mock("../api", () => ({
   api: { usage: { summary: vi.fn(), running: vi.fn() } },
 }));
 
-const live = vi.hoisted(() => ({ refetch: null as (() => void) | null }));
+const live = vi.hoisted(() => ({
+  onChange: null as (() => void) | null,
+  onResync: null as (() => void) | null,
+}));
 
-vi.mock("./useLiveRefresh", () => ({
-  useLiveRefresh: (refetch: () => void) => {
-    live.refetch = refetch;
+vi.mock("./useLiveRefresh", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./useLiveRefresh")>()),
+  useLiveEvents: (handlers: { onChange: () => void; onResync: () => void }) => {
+    live.onChange = handlers.onChange;
+    live.onResync = handlers.onResync;
   },
 }));
 
@@ -80,14 +85,61 @@ describe("useUsageData", () => {
     const { result } = renderHook(() => useUsageData(dayParams));
 
     act(() => {
-      live.refetch?.();
-      live.refetch?.();
+      live.onResync?.();
+      live.onResync?.();
     });
     await act(async () => first.resolve(buildUsageSummary({ pricesAsOf: "first" })));
 
     expect(result.current.summary?.pricesAsOf).toBe("first");
     // Both ticks fold into one follow-up request once the first settles, not one request each.
     expect(mockApi.usage.summary).toHaveBeenCalledTimes(2);
-    expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
+  });
+
+  describe("live budget", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mockApi.usage.summary.mockResolvedValue(buildUsageSummary());
+      mockApi.usage.running.mockResolvedValue([]);
+    });
+    afterEach(() => vi.useRealTimers());
+
+    const advance = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    it("should refetch only the running list on live events, throttled, because one turn barely moves the period totals", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      act(() => {
+        for (let i = 0; i < 20; i++) live.onChange?.();
+      });
+      await advance(RUNNING_REFRESH_THROTTLE_MS);
+
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
+      expect(mockApi.usage.summary).toHaveBeenCalledTimes(1);
+    });
+
+    it("should refetch the summary on its interval even with no events, so the burn tile decays when activity stops", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      await advance(SUMMARY_REFRESH_INTERVAL_MS);
+
+      expect(mockApi.usage.summary).toHaveBeenCalledTimes(2);
+    });
+
+    it("should refetch the summary at once and the running list within the throttle on a hub reconnect, so missed events are recovered", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      act(() => live.onResync?.());
+      await advance(0);
+      expect(mockApi.usage.summary).toHaveBeenCalledTimes(2);
+      await advance(RUNNING_REFRESH_THROTTLE_MS);
+
+      expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
+    });
   });
 });

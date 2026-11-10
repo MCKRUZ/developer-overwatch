@@ -19,11 +19,17 @@ vi.mock("../utils/exportCsv", () => ({ exportCsv: vi.fn() }));
 vi.mock("../utils/exportJson", () => ({ exportJson: vi.fn() }));
 vi.mock("../utils/exportPdf", () => ({ exportPdf: vi.fn() }));
 
-const live = vi.hoisted(() => ({ refetch: null as (() => void) | null }));
+const live = vi.hoisted(() => ({
+  onChange: null as (() => void) | null,
+  onResync: null as (() => void) | null,
+}));
 
+// Throttling is pinned in useLiveRefresh.test and UsagePage.budget.test; here events act at once.
 vi.mock("../hooks/useLiveRefresh", () => ({
-  useLiveRefresh: (refetch: () => void) => {
-    live.refetch = refetch;
+  useTrailingThrottle: (fn: () => void) => fn,
+  useLiveEvents: (handlers: { onChange: () => void; onResync: () => void }) => {
+    live.onChange = handlers.onChange;
+    live.onResync = handlers.onResync;
   },
 }));
 
@@ -99,17 +105,27 @@ describe("UsagePage", () => {
     );
   });
 
-  it("should refetch summary and running sessions on a live hub event without a manual refresh (rule 1)", async () => {
+  it("should refresh the running list on a live hub event without a manual refresh (rule 1), and leave the summary to its interval", async () => {
+    render(<UsagePage />);
+    await screen.findByText("1 running");
+    mockApi.usage.running.mockResolvedValue([buildRunningSession({ id: "a" }), buildRunningSession({ id: "b" })]);
+
+    act(() => live.onChange?.());
+
+    expect(await screen.findByText("2 running")).toBeInTheDocument();
+    expect(mockApi.usage.summary).toHaveBeenCalledTimes(1);
+  });
+
+  it("should refetch the summary when the hub reconnects, so totals catch up on events missed while it was down", async () => {
     render(<UsagePage />);
     await screen.findByTestId("tile-cost");
     mockApi.usage.summary.mockResolvedValue(
       buildUsageSummary({ totals: { ...summary.totals, estimatedCostUsd: 14.2 } }),
     );
 
-    act(() => live.refetch?.());
+    act(() => live.onResync?.());
 
     await waitFor(() => expect(screen.getByTestId("tile-cost")).toHaveTextContent("$14.20"));
-    expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
   });
 
   it("should export the buckets as CSV, JSON and PDF from the same columns, with the price date", async () => {

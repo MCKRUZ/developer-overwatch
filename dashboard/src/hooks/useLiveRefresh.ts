@@ -34,33 +34,46 @@ export function useTrailingThrottle(fn: () => void, intervalMs: number): () => v
   }, [intervalMs]);
 }
 
+export interface LiveEventHandlers {
+  /** A session started or ended, or a session's usage changed. Unthrottled. */
+  onChange: () => void;
+  /** The hub (re)connected, so anything sent while it was down was missed. */
+  onResync: () => void;
+}
+
+/**
+ * Subscribes to the hub events that change usage and session data, over this page's one hub
+ * connection. Handlers may change identity on every render without resubscribing.
+ */
+export function useLiveEvents({ onChange, onResync }: LiveEventHandlers): void {
+  const onChangeRef = useRef(onChange);
+  const onResyncRef = useRef(onResync);
+  const { connection, state, connectedEpoch } = useSignalR();
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    onResyncRef.current = onResync;
+  }, [onChange, onResync]);
+
+  useEffect(() => {
+    if (connectedEpoch > 0) onResyncRef.current();
+  }, [connectedEpoch]);
+
+  const handleChange = useCallback(() => onChangeRef.current(), []);
+  useGlobalUpdates({
+    connection,
+    connectionState: state,
+    onSessionStarted: handleChange,
+    onSessionEnded: handleChange,
+    onUsageUpdated: handleChange,
+  });
+}
+
 /**
  * Calls `refetch` (throttled) whenever the hub reports a session start, end, or new usage, and
  * at once on every new hub connect, since events sent while disconnected were lost.
  */
 export function useLiveRefresh(refetch: () => void): void {
   const requestRefresh = useTrailingThrottle(refetch, LIVE_REFRESH_INTERVAL_MS);
-  const { connection, state, connectedEpoch } = useSignalR();
-  useResync(connectedEpoch, refetch);
-
-  useGlobalUpdates({
-    connection,
-    connectionState: state,
-    onSessionStarted: requestRefresh,
-    onSessionEnded: requestRefresh,
-    onUsageUpdated: requestRefresh,
-  });
-}
-
-/** Runs `resync` each time `connectedEpoch` moves past 0, i.e. on every transition into Connected. */
-function useResync(connectedEpoch: number, resync: () => void): void {
-  const resyncRef = useRef(resync);
-
-  useEffect(() => {
-    resyncRef.current = resync;
-  }, [resync]);
-
-  useEffect(() => {
-    if (connectedEpoch > 0) resyncRef.current();
-  }, [connectedEpoch]);
+  useLiveEvents({ onChange: requestRefresh, onResync: refetch });
 }
