@@ -171,14 +171,17 @@ public sealed class QueueProcessorContentFloorTests : IDisposable
         await DrainAsync(sut);
         _http.Bodies.Skip(before).Should().BeEmpty("the session was used in Local mode and has not been resumed since");
 
+        // m1 already moved the cursor past "between text"; only the resume's floor keeps the late window turn out.
         CaptureTurns(
             Turn("uuid:between", "between text", _pilotSince.AddMinutes(2)),
+            Turn("uuid:late-window", "late window text", _pilotSince.AddMinutes(8)),
             Turn("uuid:after", "post-resume text", _pilotSince.AddMinutes(11)));
         await EnqueueAsync(Start("resume", "resume"), _pilotSince.AddMinutes(10));
         await EnqueueAsync(Marker("m2"), _pilotSince.AddMinutes(12));
         await DrainAsync(sut);
 
         var sent = string.Join("\n", _http.Bodies.Skip(before));
+        sent.Should().NotContain("late window text", "the session reopens at this resume, not at its period-1 start");
         sent.Should().NotContain("between text").And.NotContain("te-between");
         sent.Should().Contain("post-resume text");
     }
