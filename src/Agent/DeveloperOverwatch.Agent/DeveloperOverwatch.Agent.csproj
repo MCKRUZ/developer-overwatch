@@ -22,6 +22,8 @@
   <ItemGroup>
     <!-- Tests drive QueueProcessor one poll at a time, without the timer or the backoff delay. -->
     <InternalsVisibleTo Include="DeveloperOverwatch.Agent.Tests" />
+    <!-- The real-server delivery test drives the same poll against the API in memory. -->
+    <InternalsVisibleTo Include="DeveloperOverwatch.API.Tests" />
   </ItemGroup>
   <ItemGroup>
     <None Remove="Resources\default-prices.json" />

@@ -17,5 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\API\DeveloperOverwatch.API\DeveloperOverwatch.API.csproj" />
+    <!-- Aliased: the agent and the API both declare a global Program. -->
+    <ProjectReference Include="..\..\src\Agent\DeveloperOverwatch.Agent\DeveloperOverwatch.Agent.csproj" Aliases="agent" />
   </ItemGroup>
 </Project>
