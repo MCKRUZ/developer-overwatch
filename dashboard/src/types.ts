@@ -292,6 +292,9 @@ export interface UsageSummary {
   granularity: UsageGranularity;
   timeZone: string;
   pricesAsOf: string;
+  /** The developer and project filters the server applied, echoed back; omitted when not set. */
+  developer?: string;
+  project?: string;
   totals: UsageTotals;
   buckets: UsageBucket[];
   splits: UsageSplits;

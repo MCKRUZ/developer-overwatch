@@ -139,7 +139,11 @@ describe("UsagePage", () => {
 
     expect(vi.mocked(exportCsv).mock.calls[0]![0]).toBe("usage-2026-11-04-to-2026-11-10");
     expect(vi.mocked(exportCsv).mock.calls[0]![1]).toContain("Prices as of");
-    expect(vi.mocked(exportJson).mock.calls[0]![1]).toMatchObject({ pricesAsOf: "2026-11-01" });
+    expect(vi.mocked(exportCsv).mock.calls[0]![2].map((row) => row[0])).toContain("Developer");
+    expect(vi.mocked(exportJson).mock.calls[0]![1]).toMatchObject({
+      pricesAsOf: "2026-11-01",
+      splits: { developer: [expect.objectContaining({ key: "alice@x.io" })] },
+    });
     expect(vi.mocked(exportPdf).mock.calls[0]![1]).toContain("prices as of 2026-11-01");
   });
 
@@ -214,5 +218,21 @@ describe("UsagePage", () => {
     render(<UsagePage />);
 
     expect(await screen.findByText("By week")).toBeInTheDocument();
+  });
+
+  it("should carry the filters the server applied into every export, so a filtered file is never mistaken for the whole fleet", async () => {
+    mockApi.usage.summary.mockResolvedValue({ ...summary, developer: "alice@x.io", project: "overwatch" });
+    render(<UsagePage />);
+    await screen.findByTestId("tile-cost");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText("Export CSV"));
+    await user.click(screen.getByText("Export JSON"));
+    await user.click(screen.getByText("Export PDF"));
+
+    const [, headers, rows] = vi.mocked(exportCsv).mock.calls[0]!;
+    expect(rows[0]![headers.indexOf("Developer filter")]).toBe("alice@x.io");
+    expect(vi.mocked(exportJson).mock.calls[0]![1]).toMatchObject({ developer: "alice@x.io", project: "overwatch" });
+    expect(vi.mocked(exportPdf).mock.calls[0]![1]).toContain("developer alice@x.io, project overwatch");
   });
 });

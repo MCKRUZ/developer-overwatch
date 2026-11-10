@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { USAGE_COLUMNS, usageCsvTable, usageJsonExport, usagePdfTable } from "./usageColumns";
-import { buildUsageBucket, buildUsageSummary } from "../test/usageFactories";
+import { SPLIT_DIMENSIONS, USAGE_COLUMNS, usageCsvTable, usageJsonExport, usagePdfTable, usagePdfTitle } from "./usageColumns";
+import { buildUsageBucket, buildUsageSplitRow, buildUsageSplits, buildUsageSummary } from "../test/usageFactories";
 
 describe("usageColumns", () => {
   const bucket = buildUsageBucket({
@@ -29,18 +29,99 @@ describe("usageColumns", () => {
     ]);
   });
 
-  it("should export CSV with the screen's columns plus the price date, as raw numbers a spreadsheet can sum", () => {
-    const table = usageCsvTable([bucket], "2026-11-01");
+  const modelRow = buildUsageSplitRow({
+    key: "claude-opus-4-1",
+    label: "Opus 4.1",
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheReadInputTokens: 30,
+    cacheCreationInputTokens: 40,
+    totalTokens: 100,
+    estimatedCostUsd: 2.5,
+    cacheHitRate: 0.5,
+    turnCount: 3,
+    costShare: 0.25,
+    firstAt: "2026-11-04T09:00:00Z",
+    lastAt: "2026-11-04T10:00:00Z",
+  });
+  const mainThreadRow = buildUsageSplitRow({ key: undefined, label: "Main thread", cacheHitRate: undefined });
+  const fullSummary = buildUsageSummary({
+    granularity: "day",
+    pricesAsOf: "2026-11-01",
+    developer: "alice@x.io",
+    project: "overwatch",
+    buckets: [bucket],
+    splits: buildUsageSplits({ model: [modelRow], subagent: [mainThreadRow] }),
+  });
 
-    expect(table.headers).toEqual([...USAGE_COLUMNS.map((c) => c.header), "Prices as of"]);
+  it("should export CSV as one rectangular table, buckets then every split, with a Section column so a spreadsheet can filter it", () => {
+    const table = usageCsvTable(fullSummary);
+
+    expect(table.headers).toEqual([
+      "Section",
+      "Key",
+      "Name",
+      ...USAGE_COLUMNS.slice(1).map((c) => c.header),
+      "Share of cost",
+      "First at",
+      "Last at",
+      "Prices as of",
+      "Developer filter",
+      "Project filter",
+    ]);
     expect(table.rows).toEqual([
-      ["2026-11-04", "1204318", "84112", "9840220", "1120400", "12249050", "18.403912", "0.874", "212", "2026-11-01"],
+      ["By day", "2026-11-04", "2026-11-04", "1204318", "84112", "9840220", "1120400", "12249050", "18.403912", "0.874", "212", "", "", "", "2026-11-01", "alice@x.io", "overwatch"],
+      ["Model", "claude-opus-4-1", "Opus 4.1", "10", "20", "30", "40", "100", "2.5", "0.5", "3", "0.25", "2026-11-04T09:00:00Z", "2026-11-04T10:00:00Z", "2026-11-01", "alice@x.io", "overwatch"],
+      ["Subagent", "", "Main thread", "1000", "200", "4000", "300", "5500", "1.25", "", "10", "1", "2026-11-04T09:00:00Z", "2026-11-04T10:30:00Z", "2026-11-01", "alice@x.io", "overwatch"],
     ]);
   });
 
+  it("should leave the CSV filter cells empty when the summary was not filtered", () => {
+    const table = usageCsvTable(buildUsageSummary({ buckets: [bucket] }));
+    expect(table.rows[0]!.slice(-2)).toEqual(["", ""]);
+  });
+
   it("should leave the CSV hit-rate cell empty when there was no input, not write the screen's dash", () => {
-    const table = usageCsvTable([buildUsageBucket({ cacheHitRate: undefined })], "2026-11-01");
-    expect(table.rows[0]![7]).toBe("");
+    const table = usageCsvTable(buildUsageSummary({ buckets: [buildUsageBucket({ cacheHitRate: undefined })] }));
+    expect(table.rows[0]![table.headers.indexOf("Cache hit rate")]).toBe("");
+  });
+
+  it("should export every split in JSON, keyed by dimension, as raw values", () => {
+    const json = usageJsonExport(fullSummary);
+
+    expect(Object.keys(json.splits)).toEqual(SPLIT_DIMENSIONS.map((d) => d.key));
+    expect(json.splits.model).toEqual([
+      {
+        key: "claude-opus-4-1",
+        label: "Opus 4.1",
+        inputTokens: 10,
+        outputTokens: 20,
+        cacheReadInputTokens: 30,
+        cacheCreationInputTokens: 40,
+        totalTokens: 100,
+        estimatedCostUsd: 2.5,
+        cacheHitRate: 0.5,
+        turnCount: 3,
+        costShare: 0.25,
+        firstAt: "2026-11-04T09:00:00Z",
+        lastAt: "2026-11-04T10:00:00Z",
+      },
+    ]);
+    expect(json.splits.subagent[0]).toMatchObject({ key: null, cacheHitRate: null });
+  });
+
+  it("should put the server's filter echo on top of the JSON, and null when unfiltered, so the file says what it covers", () => {
+    expect(usageJsonExport(fullSummary)).toMatchObject({ developer: "alice@x.io", project: "overwatch" });
+    expect(usageJsonExport(buildUsageSummary())).toMatchObject({ developer: null, project: null });
+  });
+
+  it("should title the PDF with the period, the filters and the price date", () => {
+    expect(usagePdfTitle(fullSummary)).toBe(
+      "Developer Overwatch - Usage 2026-11-04 to 2026-11-10, developer alice@x.io, project overwatch (API-equivalent estimate, prices as of 2026-11-01)",
+    );
+    expect(usagePdfTitle(buildUsageSummary({ pricesAsOf: "2026-11-01" }))).toBe(
+      "Developer Overwatch - Usage 2026-11-04 to 2026-11-10 (API-equivalent estimate, prices as of 2026-11-01)",
+    );
   });
 
   it("should export JSON with the same fields as raw values and the period and price date on top", () => {

@@ -2,17 +2,7 @@ import { useState } from "react";
 import type { UsageSplitRow, UsageSplits } from "../../types";
 import { formatCost } from "../../utils/tokenFormat";
 import { formatPercent, formatSpan } from "../../utils/usageFormat";
-
-const TABS: readonly { key: keyof UsageSplits; label: string }[] = [
-  { key: "model", label: "Model" },
-  { key: "project", label: "Project" },
-  { key: "session", label: "Session" },
-  { key: "subagent", label: "Subagent" },
-  { key: "branch", label: "Branch" },
-  { key: "developer", label: "Developer" },
-  { key: "machine", label: "Machine" },
-  { key: "agent", label: "Agent" },
-];
+import { SPLIT_DIMENSIONS } from "../../utils/usageColumns";
 
 function SplitTable({ rows, showDuration }: { rows: readonly UsageSplitRow[]; showDuration: boolean }) {
   if (rows.length === 0) {
@@ -56,7 +46,7 @@ export default function UsageSplitTabs({ splits }: { splits: UsageSplits }) {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-x-auto">
       <div role="tablist" className="flex flex-wrap gap-1 border-b dark:border-gray-700 px-2 pt-2">
-        {TABS.map((tab) => (
+        {SPLIT_DIMENSIONS.map((tab) => (
           <button
             key={tab.key}
             type="button"

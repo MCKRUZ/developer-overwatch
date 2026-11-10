@@ -12,7 +12,7 @@ import { exportCsv } from "../utils/exportCsv";
 import { exportJson } from "../utils/exportJson";
 import { exportPdf } from "../utils/exportPdf";
 import { lastDaysRange } from "../utils/localDate";
-import { usageCsvTable, usageJsonExport, usagePdfTable } from "../utils/usageColumns";
+import { usageCsvTable, usageJsonExport, usagePdfTable, usagePdfTitle } from "../utils/usageColumns";
 
 const SELECT_CLASS = "border dark:border-gray-600 rounded px-3 py-1.5 text-sm dark:bg-gray-800 dark:text-gray-100";
 
@@ -43,19 +43,15 @@ function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
 }
 
 function exportAll(summary: UsageSummary, format: "csv" | "json" | "pdf") {
+  // Filters stay out of the filename: a project can be a repo path with characters a filename cannot hold.
   const filename = `usage-${summary.from}-to-${summary.to}`;
   if (format === "json") return exportJson(filename, usageJsonExport(summary));
   if (format === "csv") {
-    const table = usageCsvTable(summary.buckets, summary.pricesAsOf);
+    const table = usageCsvTable(summary);
     return exportCsv(filename, table.headers, table.rows);
   }
   const table = usagePdfTable(summary.buckets);
-  exportPdf(
-    filename,
-    `Developer Overwatch - Usage ${summary.from} to ${summary.to} (API-equivalent estimate, prices as of ${summary.pricesAsOf})`,
-    table.headers,
-    table.rows,
-  );
+  exportPdf(filename, usagePdfTitle(summary), table.headers, table.rows);
 }
 
 export default function UsagePage() {
