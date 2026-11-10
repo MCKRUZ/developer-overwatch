@@ -25,13 +25,16 @@ public sealed class SessionsController : ControllerBase
 {
     private readonly IMediator _mediator;
     private readonly IHubContext<OverwatchHub, IOverwatchHubClient> _hub;
+    private readonly TimeProvider _time;
 
     public SessionsController(
         IMediator mediator,
-        IHubContext<OverwatchHub, IOverwatchHubClient> hub)
+        IHubContext<OverwatchHub, IOverwatchHubClient> hub,
+        TimeProvider time)
     {
         _mediator = mediator;
         _hub = hub;
+        _time = time;
     }
 
     [HttpPost("start")]
@@ -93,6 +96,13 @@ public sealed class SessionsController : ControllerBase
             command.ConversationTurns.Count,
             command.ToolExecutions.Count,
             command.FileChanges.Count);
+
+        // Usage totals only move when turns arrive; tool and file events alone do not change them.
+        if (command.ConversationTurns.Count > 0)
+        {
+            await _hub.Clients.All.UsageUpdated(new UsageUpdatedNotification(
+                sessionId, result.Value!.DeveloperEmail, _time.GetUtcNow().UtcDateTime));
+        }
 
         return Ok(new { eventsIngested = result.Value!.EventsIngested, results = result.Value.Results });
     }

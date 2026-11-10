@@ -3,7 +3,8 @@ namespace DeveloperOverwatch.Application.Commands.IngestSessionEvents;
 /// <summary>The outcome of one events batch. <see cref="EventsIngested"/> counts what was newly
 /// stored, as it always has. <see cref="Results"/> gives each turn, tool execution, file change and
 /// tool failure its own outcome by id. Activity events have no id and are not listed.</summary>
-public sealed record IngestSessionEventsResult(int EventsIngested, IngestItemResults Results);
+/// <param name="DeveloperEmail">The session's developer, for the live usage broadcast.</param>
+public sealed record IngestSessionEventsResult(int EventsIngested, IngestItemResults Results, string DeveloperEmail);
 
 public sealed record IngestItemResults(
     IReadOnlyList<string> Accepted,

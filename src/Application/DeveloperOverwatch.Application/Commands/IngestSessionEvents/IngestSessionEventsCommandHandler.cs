@@ -54,7 +54,7 @@ public sealed class IngestSessionEventsCommandHandler
 
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(totalEvents, results.Build()));
+        return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(totalEvents, results.Build(), session.DeveloperEmail));
     }
 
     // Each item gets its own outcome: invalid items are rejected without sinking the batch, and
