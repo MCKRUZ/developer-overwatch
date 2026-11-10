@@ -9,9 +9,13 @@ function neutraliseFormula(value: string): string {
   return FORMULA_LEADING.test(value) && !PLAIN_NUMBER.test(value) ? `'${value}` : value;
 }
 
+// `;` and tab are quoted too: Excel in semicolon-list locales (de-DE, fr-FR)
+// splits bare cells on them, which would expose an un-neutralised formula.
+const NEEDS_QUOTING = /[,"\r\n;\t]/;
+
 function escapeCsvValue(raw: string): string {
   const value = neutraliseFormula(raw);
-  if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
+  if (NEEDS_QUOTING.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
   }
   return value;

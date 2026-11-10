@@ -126,7 +126,7 @@ describe("exportCsv", () => {
       return captured.split("\r\n").slice(1).join("\r\n");
     }
 
-    it.each(["=1+1", "+cmd", "-cmd", "@SUM(A1)", "\tx", "＝1+1", "＋cmd", "－cmd", "＠SUM(A1)"])(
+    it.each(["=1+1", "+cmd", "-cmd", "@SUM(A1)", "＝1+1", "＋cmd", "－cmd", "＠SUM(A1)"])(
       "should prefix a quote to formula-leading cell %j",
       (value) => {
         expect(exportCell(value)).toBe(`'${value}`);
@@ -139,6 +139,24 @@ describe("exportCsv", () => {
 
     it("should neutralise then quote a cell starting with a line feed", () => {
       expect(exportCell("\nx")).toBe("\"'\nx\"");
+    });
+
+    it("should neutralise then quote a cell starting with a tab", () => {
+      expect(exportCell("\tx")).toBe("\"'\tx\"");
+    });
+
+    // Excel in semicolon-list locales (de-DE, fr-FR) splits bare cells on `;`,
+    // which would turn `x;=1+1;y` into an un-neutralised `=1+1` cell.
+    it("should quote a cell containing a semicolon so a formula after it stays in one cell", () => {
+      expect(exportCell("x;=1+1;y")).toBe('"x;=1+1;y"');
+    });
+
+    it("should quote a semicolon cell without altering its content", () => {
+      expect(exportCell("a;-b")).toBe('"a;-b"');
+    });
+
+    it("should quote a cell containing a tab", () => {
+      expect(exportCell("a\tb")).toBe('"a\tb"');
     });
 
     it("should both neutralise and quote a formula containing quotes and commas", () => {
