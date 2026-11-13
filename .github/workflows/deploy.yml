@@ -12,6 +12,20 @@
 # Required variables (optional, defaults shown):
 #   CONTAINER_APP_API       — Container App name for API  (default: overwatch-api)
 #   CONTAINER_APP_DASHBOARD — Container App name for Dashboard (default: overwatch-dashboard)
+#
+# Deploy prerequisites (agent API key from Key Vault):
+#   1. The Key Vault secret `agent-api-key` must exist in `overwatch-<env>-kv` before deploying,
+#      otherwise the API revision fails to provision. The vault is created by this template, so on a
+#      brand-new environment: deploy once (the API revision fails), create the secret, then redeploy.
+#      The vault uses RBAC, so whoever creates the secret needs a data-plane role such as
+#      Key Vault Secrets Officer; Owner/Contributor alone cannot write secrets.
+#   2. The deploy service principal (AZURE_CREDENTIALS) must be able to create role assignments
+#      (Microsoft.Authorization/roleAssignments/write), e.g. User Access Administrator or Owner on the
+#      resource group, because the template grants the API identity Key Vault Secrets User.
+#   3. Create the secret with a random 32-byte key (pwsh 7+), without ever typing the key:
+#        $key = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); az keyvault secret set --vault-name overwatch-<env>-kv --name agent-api-key --value $key
+#      Pilot installers read the key from the vault themselves (install-hooks.ps1 -KeyVault), so grant each
+#      pilot developer Key Vault Secrets User on the vault instead of handing the key out.
 
 name: Deploy
 

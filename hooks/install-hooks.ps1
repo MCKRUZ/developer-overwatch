@@ -4,7 +4,11 @@
 #
 # Usage:
 #   .\install-hooks.ps1                                        # local: usage stays on this machine
-#   .\install-hooks.ps1 -Pilot -ApiUrl <url> [-ApiKey <key>]   # pilot: also ships to the Overwatch API
+#   .\install-hooks.ps1 -Pilot -ApiUrl <url> -KeyVault <vault>  # pilot: also ships to the Overwatch API
+#
+# Pilot mode needs the shared agent key. -KeyVault reads it from that Azure Key Vault (secret agent-api-key)
+# with your own 'az login', so it is never typed or shown. A re-run without -KeyVault keeps the saved key;
+# pass -KeyVault again to pick up a rotated key.
 #   add -NoStart to skip registering the scheduled task and starting the agent
 #   add -NoProcessControl to never stop or start an agent process (tests use it)
 #
@@ -29,7 +33,7 @@ param(
     [switch]$Pilot,
     [switch]$Local,
     [string]$ApiUrl,
-    [string]$ApiKey,
+    [string]$KeyVault,
     [switch]$NoStart,
     [switch]$NoProcessControl
 )
@@ -58,11 +62,29 @@ $overwatchHookPattern = '[\\/](?:' + (@($hookScripts.Values | ForEach-Object { [
 $configDefaults = [ordered]@{ pollIntervalSeconds = 5; batchSize = 50 }
 
 $agentName = "overwatch-agent"
+$agentKeySecretName = "agent-api-key"
 
 function Stop-Install([string]$Message) {
     [Console]::Error.WriteLine("[x] $Message")
     [Console]::Error.WriteLine("    Nothing was changed.")
     exit 1
+}
+
+# Reads the shared agent key from Key Vault with the developer's own Azure sign-in, so the key is never typed,
+# never lands in shell history and is never printed. Needs the Key Vault Secrets User role on the vault.
+function Get-AgentKey([string]$Vault) {
+    if (-not (Get-Command az -CommandType Application -ErrorAction SilentlyContinue)) {
+        Stop-Install "-KeyVault needs the Azure CLI (az). Install it, run 'az login', then run this again."
+    }
+    $output = & az keyvault secret show --vault-name $Vault --name $agentKeySecretName --query value --output tsv 2>&1
+    $failed = $LASTEXITCODE -ne 0
+    $errors = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join " "
+    $key = (@($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "").Trim()
+    if ($failed -or -not $key) {
+        Stop-Install ("Could not read the secret '$agentKeySecretName' from Key Vault '$Vault'. Sign in with 'az login' " +
+            "and ask your Overwatch admin for the Key Vault Secrets User role on that vault. az said: $errors")
+    }
+    return $key
 }
 
 # Null when the file does not exist. Date strings stay strings, so they are written back unchanged.
@@ -206,10 +228,13 @@ if ($mode -eq "pilot") {
     if (-not $config["apiUrl"]) {
         Stop-Install "Pilot mode needs -ApiUrl, the Overwatch API this machine ships usage to. Example: .\install-hooks.ps1 -Pilot -ApiUrl https://overwatch.example.com"
     }
-    if ($PSBoundParameters.ContainsKey("ApiKey")) { $config["apiKey"] = $ApiKey }
+    if ($KeyVault) { $config["apiKey"] = Get-AgentKey $KeyVault }
+    if (-not $config["apiKey"]) {
+        Stop-Install "Pilot mode needs the agent key. Add -KeyVault with the Overwatch Key Vault's name. Example: .\install-hooks.ps1 -Pilot -ApiUrl https://overwatch.example.com -KeyVault overwatch-prod-kv"
+    }
 } else {
-    if ($ApiUrl -or $PSBoundParameters.ContainsKey("ApiKey")) {
-        Stop-Install "-ApiUrl and -ApiKey apply only to pilot mode. Add -Pilot to ship usage to that API."
+    if ($ApiUrl -or $KeyVault) {
+        Stop-Install "-ApiUrl and -KeyVault apply only to pilot mode. Add -Pilot to ship usage to that API."
     }
     # Local mode never ships, so the config keeps no server address or key.
     $droppedServer = $config.Contains("apiUrl") -or $config.Contains("apiKey")

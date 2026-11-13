@@ -23,6 +23,10 @@ param sqlAdminPassword string = ''
 @description('Use Azure SQL instead of SQLite. When false, SQLite with Azure File share is used.')
 param useSqlServer bool = false
 
+@description('Key Vault secret names holding accepted agent API keys. List two (old and new) temporarily during a key rotation. Each secret must exist in the vault before deploying.')
+@minLength(1)
+param agentApiKeySecretNames array = ['agent-api-key']
+
 var tags = {
   environment: environmentName
   project: 'developer-overwatch'
@@ -55,6 +59,16 @@ module keyVault 'modules/key-vault.bicep' = {
   }
 }
 
+module apiIdentity 'modules/api-identity.bicep' = {
+  name: 'api-identity'
+  params: {
+    environmentName: environmentName
+    location: location
+    tags: tags
+    keyVaultName: keyVault.outputs.name
+  }
+}
+
 module sqlDatabase 'modules/sql-database.bicep' = if (useSqlServer) {
   name: 'sql-database'
   params: {
@@ -79,6 +93,8 @@ module containerApps 'modules/container-apps.bicep' = {
     logAnalyticsId: monitoring.outputs.logAnalyticsId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultUri: keyVault.outputs.uri
+    apiIdentityId: apiIdentity.outputs.id
+    agentApiKeySecretNames: agentApiKeySecretNames
     databaseProvider: useSqlServer ? 'sqlserver' : 'sqlite'
     sqlConnectionString: useSqlServer ? sqlDatabase.outputs.connectionString : ''
   }

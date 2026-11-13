@@ -11,7 +11,12 @@ internal static class Pwsh
     public static readonly string HooksDir = FindHooksDir();
 
     /// <summary>Starts the script. A hook then waits for its stdin to close. Null when pwsh is not installed.</summary>
-    public static Process? Start(string script, string home, params string[] args)
+    public static Process? Start(string script, string home, params string[] args) =>
+        Start(script, home, pathPrefix: null, args);
+
+    /// <summary>As above, with <paramref name="pathPrefix"/> searched before the real PATH, so a test can stand
+    /// in for a command the script runs (the Azure CLI).</summary>
+    public static Process? Start(string script, string home, string? pathPrefix, params string[] args)
     {
         var psi = new ProcessStartInfo("pwsh")
         {
@@ -23,6 +28,8 @@ internal static class Pwsh
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(HooksDir, script) }.Concat(args))
             psi.ArgumentList.Add(arg);
         psi.Environment["USERPROFILE"] = home;
+        if (pathPrefix is not null)
+            psi.Environment["PATH"] = pathPrefix + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
 
         try
         {

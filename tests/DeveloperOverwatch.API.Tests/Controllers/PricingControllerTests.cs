@@ -20,15 +20,4 @@ public class PricingControllerTests : IClassFixture<OverwatchWebApplicationFacto
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         body.RootElement.GetProperty("asOf").GetString().Should().Be("2026-11-09");
     }
-
-    [Fact]
-    public async Task GetPricing_WrongApiKey_Returns401()
-    {
-        var client = _factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Api-Key", "wrong-key");
-
-        var response = await client.GetAsync("/api/pricing");
-
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-    }
 }

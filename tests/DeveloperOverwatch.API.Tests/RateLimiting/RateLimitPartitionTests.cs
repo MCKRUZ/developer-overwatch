@@ -1,14 +1,13 @@
 namespace DeveloperOverwatch.API.Tests.RateLimiting;
 
 using System.Net;
-using DeveloperOverwatch.API.Authentication;
 using DeveloperOverwatch.API.Tests.Authentication;
 using DeveloperOverwatch.API.Tests.Controllers;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 /// <summary>Sends requests straight into the test server so each one can carry its own client IP.</summary>
@@ -57,19 +56,20 @@ public sealed class AnonymousRateLimitFactory : OverwatchWebApplicationFactory
     }
 }
 
-/// <summary>No keys configured: the API key handler then accepts any non-empty key (local and dev runs).</summary>
+/// <summary>Development with no keys configured: the API key handler then accepts any non-empty key.</summary>
 public sealed class OpenApiKeyRateLimitFactory : OverwatchWebApplicationFactory
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         base.ConfigureWebHost(builder);
+        builder.UseEnvironment("Development");
         builder.UseSetting("RateLimiting:Default:PermitLimit", RateLimitProbe.Limit.ToString());
-        builder.ConfigureTestServices(services => services.PostConfigure<ApiKeyAuthenticationOptions>(
-            ApiKeyDefaults.AuthenticationScheme, options => options.ValidKeys.Clear()));
+        builder.ConfigureAppConfiguration(config =>
+            config.AddInMemoryCollection(new Dictionary<string, string?> { ["ApiKeys:Keys:0"] = "" }));
     }
 }
 
-/// <summary>With no keys configured any key authenticates, so a bucket per key would let a caller dodge the
+/// <summary>In Development with no keys configured any key authenticates, so a bucket per key would let a caller dodge the
 /// limit by sending a new key on every request. Agents stay on their machine's IP bucket.</summary>
 public class OpenApiKeyRateLimitTests : IClassFixture<OpenApiKeyRateLimitFactory>
 {

@@ -20,8 +20,8 @@ public static class RateLimitPartitionKey
         {
             // Every caller gets the same "anonymous" identity, so it says nothing about who is calling.
             AnonymousDashboardDefaults.AuthenticationScheme => $"ip:{ip}",
-            // Every agent gets the same "agent" identity, and with no keys configured any key authenticates,
-            // so a bucket per key would let a caller dodge the limit by rotating keys. Agents stay per IP, in
+            // Every agent gets the same "agent" identity, and in Development with no keys configured any key
+            // authenticates, so a bucket per key would let a caller dodge the limit by rotating keys. Agents stay per IP, in
             // their own bucket, so a dashboard over its limit on the same machine cannot stall ingest. Sending
             // or omitting the header can at most double one IP's budget, never open a bucket per request.
             ApiKeyDefaults.AuthenticationScheme => $"agent-ip:{ip}",

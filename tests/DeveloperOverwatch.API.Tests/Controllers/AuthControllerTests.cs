@@ -11,22 +11,21 @@ public class AuthControllerTests : IClassFixture<OverwatchWebApplicationFactory>
 
     public AuthControllerTests(OverwatchWebApplicationFactory factory) => _factory = factory;
 
-    [Fact]
-    public async Task GetCurrentUser_Authenticated_ReturnsAgentClaims()
+    // The agent key is not a dashboard sign-in: with OIDC off the caller is anonymous whatever key it sends.
+    // The OIDC-on case, where the key gets 401, is covered route by route in EndpointAccessOidcTests.
+    [Theory]
+    [InlineData(OverwatchWebApplicationFactory.TestApiKey)]
+    [InlineData("wrong-key")]
+    public async Task GetCurrentUser_AgentKeyNoOidcConfigured_ReturnsAnonymousNotAgent(string key)
     {
-        var client = _factory.CreateAuthenticatedClient();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", key);
 
         var response = await client.GetAsync("/api/auth/me");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var root = doc.RootElement;
-        root.GetProperty("id").GetString().Should().Be("agent");
-        root.GetProperty("name").GetString().Should().Be("overwatch-agent");
-        root.GetProperty("authMethod").GetString().Should().Be("api_key");
-        root.GetProperty("roles").EnumerateArray()
-            .Select(e => e.GetString()).Should().Contain("Agent");
+        doc.RootElement.GetProperty("authMethod").GetString().Should().Be("anonymous");
     }
 
     [Fact]
@@ -43,16 +42,5 @@ public class AuthControllerTests : IClassFixture<OverwatchWebApplicationFactory>
 
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         doc.RootElement.GetProperty("authMethod").GetString().Should().Be("anonymous");
-    }
-
-    [Fact]
-    public async Task GetCurrentUser_InvalidApiKey_Returns401()
-    {
-        var client = _factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Api-Key", "wrong-key");
-
-        var response = await client.GetAsync("/api/auth/me");
-
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 }

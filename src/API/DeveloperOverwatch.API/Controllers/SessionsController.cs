@@ -18,7 +18,6 @@ using Microsoft.AspNetCore.SignalR;
 
 [ApiController]
 [Route("api/sessions")]
-[Authorize]
 [Produces("application/json")]
 [Tags("Sessions")]
 public sealed class SessionsController : ControllerBase
@@ -154,6 +153,7 @@ public sealed class SessionsController : ControllerBase
         NotFound(new { error, code = "session_not_found" });
 
     [HttpGet("{sessionId}")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -166,6 +166,7 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetSessions(
@@ -181,6 +182,7 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId}/timeline")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetSessionTimeline(
@@ -194,6 +196,7 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId}/timeline/around")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -215,6 +218,7 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId}/daily-usage")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetSessionDailyUsage(string sessionId, CancellationToken ct)
@@ -224,6 +228,7 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId}/model-breakdown")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetSessionModelBreakdown(string sessionId, CancellationToken ct)
