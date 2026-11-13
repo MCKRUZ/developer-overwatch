@@ -30,7 +30,7 @@ public sealed class DeveloperPlan
         var plan = new DeveloperPlan
         {
             Id = Guid.NewGuid(),
-            DeveloperEmail = developerEmail.Trim(),
+            DeveloperEmail = Common.DeveloperEmail.Normalize(developerEmail),
             CreatedAt = nowUtc,
         };
         plan.Update(planName, monthlyPriceUsd, windowLimitUsd, nowUtc);

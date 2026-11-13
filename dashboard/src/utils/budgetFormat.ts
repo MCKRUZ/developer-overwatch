@@ -29,7 +29,8 @@ function pad(n: number): string {
 }
 
 export function formatUsedPercent(fraction: number): string {
-  return `${Math.round(fraction * 100)}%`;
+  // Floored, so a value just under a threshold never reads as the threshold while its level is lower.
+  return `${Math.floor(fraction * 100)}%`;
 }
 
 /** "$5.80 left", or "over by $1.20" once spend passes the amount. */

@@ -56,7 +56,7 @@ public sealed class GetBudgetStatusesQueryHandler
     {
         var spent = slots
             .Where(s => s.SlotStartUtc >= period.Start)
-            .Where(s => budget.Scope == BudgetScope.Team || s.DeveloperEmail == budget.DeveloperEmail)
+            .Where(s => budget.Scope == BudgetScope.Team || DeveloperEmail.Comparer.Equals(s.DeveloperEmail, budget.DeveloperEmail))
             .Sum(s => s.EstimatedCostUsd);
         var pace = Pace.Compute(spent, budget.AmountUsd, period.Start, period.End, now);
         var forecast = Forecast.Project(spent, budget.AmountUsd, period.Start, period.End, now);

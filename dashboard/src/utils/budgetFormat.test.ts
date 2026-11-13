@@ -98,7 +98,10 @@ describe("budgetFormat", () => {
   });
 
   it("should show a used fraction as a whole percent", () => {
-    expect(formatUsedPercent(0.755)).toBe("76%");
+    expect(formatUsedPercent(0.755)).toBe("75%");
+    // Just under a threshold never reads as the threshold, so the number cannot contradict the level badge.
+    expect(formatUsedPercent(0.746)).toBe("74%");
+    expect(formatUsedPercent(0.996)).toBe("99%");
   });
 
   it("should name who a budget covers", () => {

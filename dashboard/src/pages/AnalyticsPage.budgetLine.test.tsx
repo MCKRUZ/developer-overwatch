@@ -27,7 +27,9 @@ vi.mock("recharts", () => {
     Tooltip: Nothing,
     CartesianGrid: Nothing,
     Legend: Nothing,
-    ReferenceLine: ({ y, label }: { y: number; label: { value: string } }) => <span>{`${label.value} at ${y}`}</span>,
+    ReferenceLine: ({ y, label, ifOverflow }: { y: number; label: { value: string }; ifOverflow?: string }) => (
+      <span>{`${label.value} at ${y} (${ifOverflow ?? "discard"})`}</span>
+    ),
   };
 });
 
@@ -47,11 +49,13 @@ function mockTeam(dailyCostThresholdUsd: number | null) {
 describe("AnalyticsPage team daily budget line", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("should draw the team daily budget as a labelled line on the cost chart", async () => {
+  // Spend of $10 against a $50 budget: recharts discards a line outside the axis unless the axis is
+  // extended to reach it, which is the normal case for a team under budget.
+  it("should draw the team daily budget as a labelled line that stays visible when spend is below it", async () => {
     mockTeam(50);
     render(<AnalyticsPage />);
 
-    expect(await screen.findByText("Team daily budget at 50")).toBeInTheDocument();
+    expect(await screen.findByText("Team daily budget at 50 (extendDomain)")).toBeInTheDocument();
     expect(screen.getByText("Daily Cost Trend")).toBeInTheDocument();
   });
 

@@ -19,7 +19,7 @@ public sealed class Budget
     public Guid Id { get; private set; }
     public BudgetScope Scope { get; private set; }
 
-    /// <summary>The trimmed developer email for a developer budget; null for the team.</summary>
+    /// <summary>The developer email, trimmed and lower-cased, for a developer budget; null for the team.</summary>
     public string? DeveloperEmail { get; private set; }
 
     /// <summary><see cref="TeamSubjectKey"/> for the team, else the trimmed developer email.</summary>
@@ -70,7 +70,7 @@ public sealed class Budget
 
         if (string.IsNullOrWhiteSpace(developerEmail))
             throw new ArgumentException("A developer budget needs the developer's email.", nameof(developerEmail));
-        return developerEmail.Trim();
+        return Common.DeveloperEmail.Normalize(developerEmail);
     }
 
     private static void ThrowIfNotPositive(decimal amountUsd) =>

@@ -267,6 +267,7 @@ export default function AnalyticsPage() {
                 {teamDailyBudget !== null && (
                   <ReferenceLine
                     y={teamDailyBudget}
+                    ifOverflow="extendDomain"
                     stroke={COLORS.danger}
                     strokeDasharray="4 4"
                     label={{ value: "Team daily budget", fill: COLORS.danger, fontSize: 11 }}

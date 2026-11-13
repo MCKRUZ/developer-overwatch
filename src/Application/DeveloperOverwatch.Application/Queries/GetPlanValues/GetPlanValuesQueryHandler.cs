@@ -32,8 +32,8 @@ public sealed class GetPlanValuesQueryHandler : IRequestHandler<GetPlanValuesQue
         var monthStart = UsageCalendar.LocalMidnightUtc(new DateOnly(today.Year, today.Month, 1), zone);
         var slots = await _usage.GetSlotsAsync(monthStart, now.AddTicks(1), UsageFilter.None, cancellationToken);
         var valueByEmail = slots
-            .GroupBy(s => s.DeveloperEmail, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Sum(s => s.EstimatedCostUsd), StringComparer.Ordinal);
+            .GroupBy(s => s.DeveloperEmail, DeveloperEmail.Comparer)
+            .ToDictionary(g => g.Key, g => g.Sum(s => s.EstimatedCostUsd), DeveloperEmail.Comparer);
 
         return Result<IReadOnlyList<PlanValueDto>>.Success(plans
             .Select(p =>

@@ -42,6 +42,19 @@ public sealed class GetUsageWindowsTests : IDisposable
         row.Window!.StartUtc.Kind.Should().Be(DateTimeKind.Utc);
     }
 
+    // A plan typed with other capitals than the developer's sessions still applies its limit, on one row.
+    [Fact]
+    public async Task Handle_PlanEmailInOtherCase_AppliesTheLimitToThatDevelopersWindow()
+    {
+        await AddPlans(DeveloperPlan.Create("A@Team.dev", "Max", 200m, 10m, Now));
+        await _data.Seed(Session("a", email: "a@TEAM.dev", turns: [Turn(Utc(2026, 11, 10, 16), input: 10, cost: 5m)]));
+
+        var row = (await Run()).Single();
+
+        row.WindowLimitUsd.Should().Be(10m);
+        row.Window!.UsedFraction.Should().Be(0.5m);
+    }
+
     // Without a limit there is nothing to measure against: the window and its spend are shown, the rest is null.
     [Theory]
     [InlineData(false)]

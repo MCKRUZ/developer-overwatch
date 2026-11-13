@@ -57,6 +57,19 @@ public sealed class GetBudgetStatusesTests : IDisposable
         status.Pace.Status.Should().Be(PaceStatus.Ahead);
     }
 
+    // Sessions carry whatever case a developer's git config uses; a budget typed with other capitals is still theirs.
+    [Fact]
+    public async Task Handle_DeveloperBudgetEmailInOtherCase_CountsThatDevelopersSpend()
+    {
+        await AddBudgets(Budget.Create(BudgetScope.Developer, " Alice@Team.dev ", BudgetPeriod.Daily, 100m, Noon));
+        await _data.Seed(Session("s", email: "alice@TEAM.dev", turns: [Turn(Noon.AddHours(-1), cost: 30m)]));
+
+        var status = (await Run(Noon)).Single(s => s.Budget.Scope == BudgetScope.Developer);
+
+        status.Budget.DeveloperEmail.Should().Be("alice@team.dev");
+        status.SpentUsd.Should().Be(30m);
+    }
+
     // Half the day gone: $60 of $100 is ahead of pace and runs out 8 hours later at the same rate; $50 is on pace;
     // $20 is behind and lasts past midnight; nothing spent has no rate to project.
     [Theory]
@@ -144,7 +157,7 @@ public sealed class GetBudgetStatusesTests : IDisposable
         status.Pace.ElapsedFraction.Should().Be(13m / 25m);
     }
 
-    // A developer budget counts only that developer's turns, matched exactly; the team budget counts everyone.
+    // A developer budget counts only that developer's turns, whatever their capitals; the team budget counts everyone.
     [Fact]
     public async Task Handle_DeveloperAndTeamBudgets_CountTheirOwnSubjects()
     {
@@ -159,7 +172,7 @@ public sealed class GetBudgetStatusesTests : IDisposable
         var statuses = await Run(Noon);
 
         statuses.Select(s => (s.Budget.DeveloperEmail, s.SpentUsd))
-            .Should().Equal(((string?)null, 7m), ("a@team.dev", 1m));
+            .Should().Equal(((string?)null, 7m), ("a@team.dev", 3m));
     }
 
     [Fact]

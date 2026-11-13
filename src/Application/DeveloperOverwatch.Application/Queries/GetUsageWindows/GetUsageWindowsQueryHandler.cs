@@ -28,19 +28,19 @@ public sealed class GetUsageWindowsQueryHandler
     {
         var now = _time.GetUtcNow().UtcDateTime;
         var plans = (await _plans.GetAllAsync(cancellationToken))
-            .ToDictionary(p => p.DeveloperEmail, StringComparer.Ordinal);
+            .ToDictionary(p => p.DeveloperEmail, DeveloperEmail.Comparer);
         var points = await _usage.GetDeveloperTurnPointsAsync(now - Lookback, now, cancellationToken);
 
         var open = points
-            .GroupBy(p => p.DeveloperEmail, StringComparer.Ordinal)
+            .GroupBy(p => p.DeveloperEmail, DeveloperEmail.Comparer)
             .Select(g => (Email: g.Key, Points: g.ToList(), Window: UsageWindow.Current(g.Select(p => p.AtUtc), now)))
             .Where(d => d.Window is not null)
             .ToDictionary(
                 d => d.Email,
                 d => WindowOf(d.Points, d.Window!, plans.GetValueOrDefault(d.Email)?.WindowLimitUsd, now),
-                StringComparer.Ordinal);
+                DeveloperEmail.Comparer);
 
-        var rows = plans.Keys.Union(open.Keys, StringComparer.Ordinal)
+        var rows = plans.Keys.Union(open.Keys, DeveloperEmail.Comparer)
             .Select(email => new DeveloperWindowDto(
                 email,
                 plans.GetValueOrDefault(email)?.PlanName,
@@ -48,7 +48,7 @@ public sealed class GetUsageWindowsQueryHandler
                 open.GetValueOrDefault(email)))
             .OrderBy(r => r.Window?.UsedFraction is null)
             .ThenByDescending(r => r.Window?.UsedFraction)
-            .ThenBy(r => r.DeveloperEmail, StringComparer.Ordinal)
+            .ThenBy(r => r.DeveloperEmail, DeveloperEmail.Comparer)
             .ToList();
         return Result<IReadOnlyList<DeveloperWindowDto>>.Success(rows);
     }

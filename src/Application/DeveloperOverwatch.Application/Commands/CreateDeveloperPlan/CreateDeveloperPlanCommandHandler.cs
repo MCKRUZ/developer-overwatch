@@ -24,7 +24,7 @@ public sealed class CreateDeveloperPlanCommandHandler
     public async Task<Result<DeveloperPlanDto>> Handle(
         CreateDeveloperPlanCommand request, CancellationToken cancellationToken)
     {
-        if (await _plans.FindByEmailAsync(request.DeveloperEmail.Trim(), cancellationToken) is not null)
+        if (await _plans.FindByEmailAsync(DeveloperEmail.Normalize(request.DeveloperEmail), cancellationToken) is not null)
             return Result<DeveloperPlanDto>.Fail(ErrorCodes.AlreadyExists);
 
         var plan = DeveloperPlan.Create(

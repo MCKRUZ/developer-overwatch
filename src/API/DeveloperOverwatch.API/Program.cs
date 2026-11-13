@@ -217,7 +217,9 @@ builder.Services.AddAuthentication(options =>
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
             NameClaimType = "name",
-            RoleClaimType = "roles"
+            // The inbound claim map renames the token's "roles" claim to ClaimTypes.Role before this applies,
+            // so IsInRole and RequireRole only work when the identity looks roles up under that name.
+            RoleClaimType = ClaimTypes.Role
         };
         // Browsers cannot set headers on a WebSocket or EventSource, so the SignalR client sends the token
         // as ?access_token=. Accept it on the hub only: anywhere else a token in the URL is refused.
@@ -276,9 +278,7 @@ builder.Services.AddAuthorization(options =>
         if (hasOidc)
             policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
                   .RequireAuthenticatedUser()
-                  // JwtBearer's inbound claim map renames the token's "roles" to ClaimTypes.Role, while the identity's
-                  // RoleClaimType stays "roles", so RequireRole (IsInRole) would never match. Check the claim as it arrives.
-                  .RequireClaim(ClaimTypes.Role, AppRoles.Lead);
+                  .RequireRole(AppRoles.Lead);
         else if (builder.Environment.IsDevelopment())
             policy.AddAuthenticationSchemes(AnonymousDashboardDefaults.AuthenticationScheme)
                   .RequireAuthenticatedUser();
