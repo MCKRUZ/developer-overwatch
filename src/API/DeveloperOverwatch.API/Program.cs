@@ -16,8 +16,10 @@ using DeveloperOverwatch.Infrastructure.Persistence;
 using DeveloperOverwatch.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using OpenTelemetry.Instrumentation.AspNetCore;
@@ -194,8 +196,8 @@ builder.Services.AddAuthentication(options =>
 .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
     ApiKeyDefaults.AuthenticationScheme, options =>
     {
-        var keys = builder.Configuration.GetSection("ApiKeys:Keys").Get<string[]>() ?? [];
-        options.ValidKeys = new HashSet<string>(keys, StringComparer.Ordinal);
+        options.SetKeys(builder.Configuration.GetSection("ApiKeys:Keys").Get<string?[]>() ?? []);
+        options.AcceptAnyKey = options.KeyCount == 0 && builder.Environment.IsDevelopment();
     })
 .AddScheme<AuthenticationSchemeOptions, AnonymousDashboardAuthenticationHandler>(
     AnonymousDashboardDefaults.AuthenticationScheme, _ => { })
@@ -246,24 +248,42 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization(options =>
 {
+    // The role, not just the scheme: ASP.NET unions the schemes of a class-level and an action-level [Authorize],
+    // so on SessionsController a dashboard sign-in would otherwise satisfy the agent routes too.
     options.AddPolicy(AuthPolicies.Agent, policy =>
         policy.AddAuthenticationSchemes(ApiKeyDefaults.AuthenticationScheme)
-              .RequireAuthenticatedUser());
+              .RequireRole(ApiKeyAuthenticationHandler.AgentRole));
 
     options.AddPolicy(AuthPolicies.Dashboard, policy =>
         policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
               .RequireAuthenticatedUser());
 
-    // Team-wide reads (the hub, the usage meter): a signed-in user with OIDC on, anonymous without it.
-    // Never the agent API key, which every developer machine holds.
-    options.AddPolicy(AuthPolicies.DashboardRead, policy =>
-        policy.AddAuthenticationSchemes(hasOidc
-                  ? JwtBearerDefaults.AuthenticationScheme
-                  : AnonymousDashboardDefaults.AuthenticationScheme)
-              .RequireAuthenticatedUser());
+    // Dashboard routes: a signed-in user with OIDC on, anonymous without it. Never the agent API key, which every
+    // developer machine holds. A bare [Authorize] gets this too, so no dashboard controller can take the key.
+    var dashboardAccess = new AuthorizationPolicyBuilder(hasOidc
+            ? JwtBearerDefaults.AuthenticationScheme
+            : AnonymousDashboardDefaults.AuthenticationScheme)
+        .RequireAuthenticatedUser()
+        .Build();
+    options.AddPolicy(AuthPolicies.DashboardRead, dashboardAccess);
+    options.DefaultPolicy = dashboardAccess;
 });
 
 var app = builder.Build();
+
+var agentKeys = app.Services.GetRequiredService<IOptionsMonitor<ApiKeyAuthenticationOptions>>()
+    .Get(ApiKeyDefaults.AuthenticationScheme);
+if (agentKeys.KeyCount == 0 && !app.Environment.IsDevelopment())
+{
+    // Without a key every agent is refused while the server looks healthy; fail the deploy instead.
+    throw new InvalidOperationException(
+        "No agent API key is configured. Set ApiKeys:Keys (in Azure, the agent-api-key secret in Key Vault). " +
+        "Only Development accepts agents without one.");
+}
+if (agentKeys.AcceptAnyKey)
+{
+    app.Logger.LogWarning("ApiKeys:Keys is empty: Development accepts any agent API key");
+}
 
 if (app.Environment.IsDevelopment())
 {

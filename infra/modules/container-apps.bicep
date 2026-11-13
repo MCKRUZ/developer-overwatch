@@ -28,6 +28,13 @@ param appInsightsConnectionString string
 @description('Key Vault URI for secret references.')
 param keyVaultUri string
 
+@description('Resource ID of the user-assigned managed identity the API uses to read Key Vault secrets.')
+param apiIdentityId string
+
+@description('Key Vault secret names holding accepted agent API keys; each becomes ApiKeys__Keys__<index> on the API.')
+@minLength(1)
+param agentApiKeySecretNames array
+
 @description('Database provider: sqlite or sqlserver.')
 param databaseProvider string = 'sqlite'
 
@@ -40,6 +47,18 @@ var apiAppName = 'overwatch-${environmentName}-api'
 var dashboardAppName = 'overwatch-${environmentName}-dashboard'
 var storageName = 'overwatch${environmentName}sa'
 var fileShareName = 'overwatch-data'
+
+// Container App secret name matches the Key Vault secret name; the value is resolved by the platform at revision start, never passed through the deployment.
+var agentApiKeySecrets = [for secretName in agentApiKeySecretNames: {
+  name: secretName
+  keyVaultUrl: '${keyVaultUri}secrets/${secretName}'
+  identity: apiIdentityId
+}]
+
+var agentApiKeyEnv = [for (secretName, i) in agentApiKeySecretNames: {
+  name: 'ApiKeys__Keys__${i}'
+  secretRef: secretName
+}]
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' existing = {
   name: acrName
@@ -104,6 +123,13 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: apiAppName
   location: location
   tags: tags
+  // AZURE_CLIENT_ID is deliberately not set to this identity: Program.cs would switch App Insights to managed-identity auth, which this identity has no role for.
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${apiIdentityId}': {}
+    }
+  }
   properties: {
     managedEnvironmentId: containerAppsEnv.id
     configuration: {
@@ -121,12 +147,12 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
           passwordSecretRef: 'acr-password'
         }
       ]
-      secrets: [
+      secrets: concat([
         {
           name: 'acr-password'
           value: acr.listCredentials().passwords[0].value
         }
-      ]
+      ], agentApiKeySecrets)
     }
     template: {
       containers: [
@@ -137,7 +163,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          env: [
+          env: concat([
             {
               name: 'Database__Provider'
               value: databaseProvider
@@ -162,7 +188,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'KeyVault__Uri'
               value: keyVaultUri
             }
-          ]
+          ], agentApiKeyEnv)
           probes: [
             {
               type: 'Liveness'

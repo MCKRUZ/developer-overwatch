@@ -115,12 +115,16 @@ dotnet pack src/Agent/DeveloperOverwatch.Agent -c Release -o ./nupkg
 # Install globally
 dotnet tool install --global --add-source ./nupkg DeveloperOverwatch.Agent
 
-# Install hooks into Claude Code settings and create agent config
-.\hooks\install-hooks.ps1 -ApiUrl http://localhost:5000 -ApiKey your-api-key
+# Install hooks into Claude Code settings and create agent config.
+# Pilot mode reads the shared agent key from Key Vault with your own `az login`
+# (needs the Key Vault Secrets User role on the vault); the key is never typed or shown.
+.\hooks\install-hooks.ps1 -Pilot -ApiUrl https://<overwatch-api> -KeyVault overwatch-<env>-kv
 
 # Start the agent (runs as a background service)
 overwatch-agent
 ```
+
+**Local development (no Key Vault):** an API run with `dotnet run` (Development, no keys configured) accepts any key, and docker-compose accepts `dev-local-test-key`. Put that value in `~/.overwatch/config.json` as `apiKey` by hand, then run `.\hooks\install-hooks.ps1 -Pilot -ApiUrl http://localhost:5000` (`http://localhost:3001` for docker-compose); a re-run keeps a saved key.
 
 The install script:
 1. Creates `~/.overwatch/config.json` with API URL, API key, poll interval, and batch size
@@ -139,7 +143,7 @@ The agent polls the queue and ships events in batches to the API. If the API is 
 | `Database` | `ConnectionString` | `Data Source=/data/overwatch.db` | Database connection string. When `UseManagedIdentityAuth` is `true`, omit `User Id`/`Password` -- just `Server=...;Database=...;Encrypt=True;` |
 | `Database` | `UseManagedIdentityAuth` | `false` | Authenticate to Azure SQL via the Container App's Managed Identity (token attached per-connection) instead of a credential embedded in the connection string |
 | `Database` | `ManagedIdentityClientId` | `""` | Client ID of a user-assigned managed identity; leave empty to use the system-assigned identity (or local dev credentials via `DefaultAzureCredential`) |
-| `ApiKeys` | `Keys` | `[]` | Array of valid API keys for agent authentication |
+| `ApiKeys` | `Keys` | `[]` | Agent keys the server accepts. Outside Development the server refuses any other key and will not start with none; in Development an empty list accepts any key. List two during a rotation. In Azure each comes from a Key Vault secret (default `agent-api-key`) |
 | `Authentication` | `Authority` | `""` | OIDC authority URL (leave empty to disable JWT auth) |
 | `Authentication` | `Audience` | `""` | OIDC audience / resource identifier |
 | `Authentication` | `RequireHttpsMetadata` | `true` | Require HTTPS for OIDC metadata endpoint |
@@ -291,7 +295,11 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 | `ACR_LOGIN_SERVER` | ACR hostname |
 | `NUGET_API_KEY` | NuGet.org API key (agent release only) |
 
+**Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in `overwatch-<env>-kv` through its own managed identity, and refuses to start without it. Create the secret once before deploying (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
+
 ## API Endpoints
+
+**API Key** routes take only the agent key (`X-Api-Key`). **Dashboard** routes take a signed-in user when OIDC is configured, and anyone when it is not; they never accept the agent key, which every developer machine holds.
 
 ### Sessions
 
@@ -300,8 +308,8 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 | `POST` | `/api/sessions/start` | API Key | Start a new session |
 | `POST` | `/api/sessions/{sessionId}/events` | API Key | Ingest conversation turns, tool executions, and file changes |
 | `POST` | `/api/sessions/{sessionId}/end` | API Key | End a session (triggers governance evaluation) |
-| `GET` | `/api/sessions` | Any | List sessions (filter by `?developer=`, `?repo=`, `?from=`, `?to=`, and `?status=Active\|Stale\|Completed\|Failed`) |
-| `GET` | `/api/sessions/{sessionId}` | Any | Get session detail with all events |
+| `GET` | `/api/sessions` | Dashboard | List sessions (filter by `?developer=`, `?repo=`, `?from=`, `?to=`, and `?status=Active\|Stale\|Completed\|Failed`) |
+| `GET` | `/api/sessions/{sessionId}` | Dashboard | Get session detail with all events |
 
 `Stale` is a computed status, not a stored one -- an `Active` session with no activity for `SessionActivity:StaleAfterMinutes` (default 30) reports as `Stale` in list/detail responses, but reverts to `Active` automatically the moment new events arrive (e.g. resuming the session in Claude Code).
 
@@ -309,9 +317,9 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| `GET` | `/api/prs` | Any | List pull request reviews (filter by `?repo=`) |
-| `GET` | `/api/prs/{owner}/{repo}/{prNumber}` | Any | Get PR review detail |
-| `POST` | `/api/prs/{owner}/{repo}/{prNumber}/review` | Any | Create/update a PR review |
+| `GET` | `/api/prs` | Dashboard | List pull request reviews (filter by `?repo=`) |
+| `GET` | `/api/prs/{owner}/{repo}/{prNumber}` | Dashboard | Get PR review detail |
+| `POST` | `/api/prs/{owner}/{repo}/{prNumber}/review` | Dashboard | Create/update a PR review |
 
 ### Webhooks
 
@@ -323,27 +331,27 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| `GET` | `/api/governance/violations/{sessionId}` | Any | Get violations for a session (filter by `?severity=`) |
-| `POST` | `/api/governance/violations/{violationId}/resolve` | Any | Resolve a violation with reason |
+| `GET` | `/api/governance/violations/{sessionId}` | Dashboard | Get violations for a session (filter by `?severity=`) |
+| `POST` | `/api/governance/violations/{violationId}/resolve` | Dashboard | Resolve a violation with reason |
 
 ### Analytics
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| `GET` | `/api/analytics/team` | Any | Team-level analytics and metrics |
-| `GET` | `/api/analytics/developer/{email}` | Any | Per-developer analytics |
+| `GET` | `/api/analytics/team` | Dashboard | Team-level analytics and metrics |
+| `GET` | `/api/analytics/developer/{email}` | Dashboard | Per-developer analytics |
 
 ### Annotations
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| `POST` | `/api/annotations` | Any | Add an annotation to a session, turn, or tool execution |
+| `POST` | `/api/annotations` | Dashboard | Add an annotation to a session, turn, or tool execution |
 
 ### Auth
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| `GET` | `/api/auth/me` | Any | Get current authenticated user info |
+| `GET` | `/api/auth/me` | Dashboard | Get current authenticated user info |
 
 ### System
 

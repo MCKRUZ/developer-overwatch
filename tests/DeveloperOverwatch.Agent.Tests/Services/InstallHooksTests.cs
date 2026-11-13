@@ -10,6 +10,8 @@ namespace DeveloperOverwatch.Agent.Tests.Services;
 public sealed class InstallHooksTests : IDisposable
 {
     private const string ApiUrl = "https://overwatch.example.com";
+    private const string Vault = "test-kv";
+    private const string VaultKey = "vault-key";
 
     private static readonly IReadOnlyDictionary<string, string> ExpectedHooks = new Dictionary<string, string>
     {
@@ -35,6 +37,8 @@ public sealed class InstallHooksTests : IDisposable
     private string SettingsPath => Path.Combine(_home, ".claude", "settings.json");
     private string BackupPath => SettingsPath + ".overwatch-backup";
     private string OriginalBackupPath => BackupPath + ".original";
+    private string FakeBinDir => Path.Combine(_home, "fake-bin");
+    private string AzArgsPath => Path.Combine(_home, "az-args.txt");
 
     private const string RestartWarning = "[!] Agent not restarted";
 
@@ -128,9 +132,9 @@ public sealed class InstallHooksTests : IDisposable
     [Theory]
     [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "k" }""", "-Local")]
     [InlineData("""{ "apiUrl": "https://overwatch.example.com" }""", "-Local")]
-    [InlineData("""{ "mode": "local" }""", "-Pilot -ApiUrl https://overwatch.example.com")]
-    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "old" }""", "-Pilot -ApiKey new")]
-    [InlineData("""{ "mode": "pilot", "apiUrl": "https://old.example.com" }""", "-Pilot -ApiUrl https://overwatch.example.com")]
+    [InlineData("""{ "mode": "local" }""", "-Pilot -ApiUrl https://overwatch.example.com -KeyVault test-kv")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "old" }""", "-Pilot -KeyVault test-kv")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://old.example.com", "apiKey": "k" }""", "-Pilot -ApiUrl https://overwatch.example.com")]
     public void ChangingModeAddressOrKey_NeedsARestart(string existingConfig, string args)
     {
         WriteFile(ConfigPath, existingConfig);
@@ -146,7 +150,7 @@ public sealed class InstallHooksTests : IDisposable
     [InlineData("""{ "mode": "local" }""", "-Local")]
     [InlineData("""{ "mode": "local" }""", "")]
     [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "k" }""", "-Pilot")]
-    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "k" }""", "-Pilot -ApiUrl https://overwatch.example.com -ApiKey k")]
+    [InlineData("""{ "mode": "pilot", "apiUrl": "https://overwatch.example.com", "apiKey": "vault-key" }""", "-Pilot -ApiUrl https://overwatch.example.com -KeyVault test-kv")]
     public void SameModeRerun_NeedsNoRestart(string existingConfig, string args)
     {
         WriteFile(ConfigPath, existingConfig);
@@ -222,12 +226,71 @@ public sealed class InstallHooksTests : IDisposable
     }
 
     [Fact]
-    public void Pilot_WithApiUrl_WritesPilotModeAndTheAddress()
+    public void Pilot_WithApiUrlAndKeyVault_WritesPilotModeTheAddressAndTheVaultKey()
+    {
+        if (Install("-Pilot", "-ApiUrl", ApiUrl, "-KeyVault", Vault) is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        AgentConfig.Load(ConfigPath).Should().BeEquivalentTo(new { Mode = AgentMode.Pilot, ApiUrl, ApiKey = VaultKey });
+        File.ReadAllText(AzArgsPath).Should().Contain($"keyvault secret show --vault-name {Vault} --name agent-api-key");
+    }
+
+    // The key reaches every developer machine; it must not end up in a terminal, a log or a screenshot.
+    [Fact]
+    public void Pilot_WithKeyVault_NeverPrintsTheKey()
+    {
+        if (Install("-Pilot", "-ApiUrl", ApiUrl, "-KeyVault", Vault) is not { } result) return;
+
+        result.ExitCode.Should().Be(0, result.Stderr);
+        result.Stdout.Should().NotContain(VaultKey);
+        result.Stderr.Should().NotContain(VaultKey);
+    }
+
+    // A pilot agent with no key is refused by the server on every send, so the install must not look successful.
+    [Fact]
+    public void Pilot_FreshWithoutKeyVault_FailsWithAClearMessage_AndWritesNothing()
     {
         if (Install("-Pilot", "-ApiUrl", ApiUrl) is not { } result) return;
 
-        result.ExitCode.Should().Be(0, result.Stderr);
-        AgentConfig.Load(ConfigPath).Should().BeEquivalentTo(new { Mode = AgentMode.Pilot, ApiUrl });
+        result.ExitCode.Should().NotBe(0);
+        result.Stderr.Should().Contain("-KeyVault");
+        File.Exists(ConfigPath).Should().BeFalse();
+        File.Exists(SettingsPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Pilot_KeyVaultReadFails_FailsNamingTheVaultAndSecret_AndWritesNothing()
+    {
+        WriteFakeAz(stdout: "", stderr: "ERROR: Caller is not authorized to perform action", exitCode: 1);
+
+        if (Install("-Pilot", "-ApiUrl", ApiUrl, "-KeyVault", Vault) is not { } result) return;
+
+        result.ExitCode.Should().NotBe(0);
+        result.Stderr.Should().Contain(Vault).And.Contain("agent-api-key").And.Contain("not authorized");
+        File.Exists(ConfigPath).Should().BeFalse();
+        File.Exists(SettingsPath).Should().BeFalse();
+    }
+
+    // An empty reply must never be saved as the key, whatever az's exit code says.
+    [Fact]
+    public void Pilot_KeyVaultReturnsNothing_Fails_AndWritesNothing()
+    {
+        WriteFakeAz(stdout: "", stderr: "", exitCode: 0);
+
+        if (Install("-Pilot", "-ApiUrl", ApiUrl, "-KeyVault", Vault) is not { } result) return;
+
+        result.ExitCode.Should().NotBe(0);
+        File.Exists(ConfigPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Local_WithKeyVault_FailsBecauseLocalModeNeverShips()
+    {
+        if (Install("-Local", "-KeyVault", Vault) is not { } result) return;
+
+        result.ExitCode.Should().NotBe(0);
+        result.Stderr.Should().Contain("-KeyVault");
+        File.Exists(AzArgsPath).Should().BeFalse("local mode must not read the key at all");
     }
 
     [Fact]
@@ -307,7 +370,7 @@ public sealed class InstallHooksTests : IDisposable
     [Fact]
     public void PilotSince_FreshPilotAndLocalToPilotWriteIt_PilotRerunKeepsIt_LocalRemovesIt()
     {
-        if (Install("-Pilot", "-ApiUrl", ApiUrl) is not { } fresh) return;
+        if (Install("-Pilot", "-ApiUrl", ApiUrl, "-KeyVault", Vault) is not { } fresh) return;
         fresh.ExitCode.Should().Be(0, fresh.Stderr);
         var written = ReadJson(ConfigPath)["pilotSince"]!.GetValue<string>();
         AgentConfig.Load(ConfigPath).PilotSince.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(2));
@@ -318,7 +381,7 @@ public sealed class InstallHooksTests : IDisposable
         Install("-Local")!.ExitCode.Should().Be(0);
         ReadJson(ConfigPath).ContainsKey("pilotSince").Should().BeFalse();
 
-        Install("-Pilot", "-ApiUrl", ApiUrl)!.ExitCode.Should().Be(0);
+        Install("-Pilot", "-ApiUrl", ApiUrl, "-KeyVault", Vault)!.ExitCode.Should().Be(0);
         ReadJson(ConfigPath).ContainsKey("pilotSince").Should().BeTrue("Local to Pilot is a new enrolment");
     }
 
@@ -326,7 +389,7 @@ public sealed class InstallHooksTests : IDisposable
     [Fact]
     public void PilotSince_LegacyPilotConfigRerun_StaysAbsent_AndTheRetiredFallbackKeyIsRemoved()
     {
-        WriteFile(ConfigPath, $$"""{"apiUrl":"{{ApiUrl}}","gitFallbackThreshold":100}""");
+        WriteFile(ConfigPath, $$"""{"apiUrl":"{{ApiUrl}}","apiKey":"k","gitFallbackThreshold":100}""");
 
         if (Install("-Pilot") is not { } result) return;
 
@@ -338,10 +401,40 @@ public sealed class InstallHooksTests : IDisposable
 
     /// <summary>Always passes -NoStart and -NoProcessControl: without them the script registers a real
     /// scheduled task, and stops and starts the real agent.</summary>
-    private PwshResult? Install(params string[] args) =>
-        Pwsh.Start("install-hooks.ps1", _home, [.. args, "-NoStart", "-NoProcessControl"]) is { } process
+    /// A stand-in Azure CLI is first on PATH, so -KeyVault never reaches the real az or a real vault.
+    private PwshResult? Install(params string[] args)
+    {
+        if (!File.Exists(Path.Combine(FakeBinDir, "az")))
+            WriteFakeAz(stdout: VaultKey, stderr: "", exitCode: 0);
+        return Pwsh.Start("install-hooks.ps1", _home, FakeBinDir, [.. args, "-NoStart", "-NoProcessControl"]) is { } process
             ? Pwsh.Finish(process, stdin: "")
             : null;
+    }
+
+    /// <summary>Writes an az that records its arguments, prints <paramref name="stdout"/> and
+    /// <paramref name="stderr"/>, and exits with <paramref name="exitCode"/>: az.cmd for Windows, a shell
+    /// script for Linux (CI), since a real native command is what the installer runs.</summary>
+    private void WriteFakeAz(string stdout, string stderr, int exitCode)
+    {
+        Directory.CreateDirectory(FakeBinDir);
+
+        File.WriteAllText(Path.Combine(FakeBinDir, "az.cmd"),
+            "@echo off\r\n" +
+            $"echo %*> \"{AzArgsPath}\"\r\n" +
+            (stdout.Length == 0 ? "" : $"echo {stdout}\r\n") +
+            (stderr.Length == 0 ? "" : $"echo {stderr} 1>&2\r\n") +
+            $"exit /b {exitCode}\r\n");
+
+        var shell = Path.Combine(FakeBinDir, "az");
+        File.WriteAllText(shell,
+            "#!/bin/sh\n" +
+            $"echo \"$@\" > '{AzArgsPath}'\n" +
+            (stdout.Length == 0 ? "" : $"echo '{stdout}'\n") +
+            (stderr.Length == 0 ? "" : $"echo '{stderr}' 1>&2\n") +
+            $"exit {exitCode}\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(shell, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
 
     private static List<string> Commands(JsonObject hooks, string eventName) =>
         hooks[eventName]!.AsArray()
