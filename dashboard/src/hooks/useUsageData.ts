@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { UsageSummaryParams } from "../api";
 import { useCoalescedFetch } from "./useCoalescedFetch";
 import { useLiveEvents, useTrailingThrottle } from "./useLiveRefresh";
+import { useMeterData } from "./useMeterData";
 
 /**
  * Request budget per Usage tab (rate limit is per IP, so tabs add up):
@@ -12,7 +13,9 @@ import { useLiveEvents, useTrailingThrottle } from "./useLiveRefresh";
  *   by cents, and the interval also lets the burn tile decay once activity stops.
  * - with no events, the running list also refetches once it is `RUNNING_STALE_AFTER_MS` old, so
  *   idle times, the server's stale cutoff and burn rates keep moving. Under a stream it never fires.
- * Under a constant event stream that is 10 + 2 = 12 requests a minute (15 in the first minute,
+ * - budgets, windows and plan value follow `useMeterData`'s budget: 3 requests per
+ *   `METER_REFRESH_THROTTLE_MS` on events, and on a hub (re)connect.
+ * Under a constant event stream that is 10 + 2 + 6 = 18 requests a minute (27 in the first minute,
  * which also carries the mount load and the first-connect resync). UsagePage.budget.test pins it.
  */
 export const RUNNING_REFRESH_THROTTLE_MS = 6_000;
@@ -20,8 +23,8 @@ export const SUMMARY_REFRESH_INTERVAL_MS = 30_000;
 export const RUNNING_STALE_AFTER_MS = 60_000;
 
 /**
- * Loads the usage summary for `params` and the running sessions, and keeps both current from
- * the hub within the budget above. A failed running list leaves the summary on screen; a
+ * Loads the usage summary for `params`, the running sessions and the meter sections, and keeps
+ * them current from the hub within the budget above. A failed running list leaves the summary on screen; a
  * response for superseded params never overwrites a newer one, and a live tick never discards
  * a response in flight.
  */
@@ -50,12 +53,20 @@ export function useUsageData(params: UsageSummaryParams) {
   );
 
   const { refresh: refreshSummary } = summary;
+  const meter = useMeterData();
+  const { refresh: refreshMeter, requestRefresh: requestMeter } = meter;
   const requestRunning = useTrailingThrottle(refreshRunning, RUNNING_REFRESH_THROTTLE_MS);
+  const onChange = useCallback(() => {
+    requestRunning();
+    requestMeter();
+  }, [requestRunning, requestMeter]);
   const resync = useCallback(() => {
     refreshSummary();
     requestRunning();
-  }, [refreshSummary, requestRunning]);
-  useLiveEvents({ onChange: requestRunning, onResync: resync });
+    refreshMeter();
+  }, [refreshSummary, requestRunning, refreshMeter]);
+  // One subscription for the whole page: a second would open a second hub connection.
+  useLiveEvents({ onChange, onResync: resync });
 
   useEffect(() => {
     const timer = setInterval(refreshSummary, SUMMARY_REFRESH_INTERVAL_MS);
@@ -69,5 +80,6 @@ export function useUsageData(params: UsageSummaryParams) {
     running: running.isStale ? null : running.data,
     error: summary.error,
     runningError: running.error,
+    meter: meter.data,
   };
 }

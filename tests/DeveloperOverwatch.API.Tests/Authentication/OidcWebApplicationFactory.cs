@@ -46,12 +46,19 @@ public class OidcWebApplicationFactory : OverwatchWebApplicationFactory
     public static string MintToken(string subject) => MintToken(subject, TimeSpan.FromHours(1));
 
     /// <summary>A token the API accepts for the given subject until <paramref name="lifetime"/> from now.</summary>
-    public static string MintToken(string subject, TimeSpan lifetime) => new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+    public static string MintToken(string subject, TimeSpan lifetime) => MintToken(subject, lifetime, []);
+
+    /// <summary>A token the API accepts for the given subject, carrying these app roles in a <c>roles</c> array
+    /// the way Entra ID sends them.</summary>
+    public static string MintToken(string subject, params string[] roles) => MintToken(subject, TimeSpan.FromHours(1), roles);
+
+    private static string MintToken(string subject, TimeSpan lifetime, string[] roles) => new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
     {
         Issuer = Issuer,
         Audience = Audience,
         Expires = DateTime.UtcNow.Add(lifetime),
         Subject = new ClaimsIdentity([new Claim("sub", subject), new Claim("name", "Shared Display Name")]),
+        Claims = roles.Length == 0 ? null : new Dictionary<string, object> { ["roles"] = roles },
         SigningCredentials = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256),
     });
 }

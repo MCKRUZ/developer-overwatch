@@ -27,6 +27,11 @@ public interface IUsageRepository
     /// <paramref name="filter"/>, carrying all four token kinds and the estimated cost.</summary>
     Task<IReadOnlyList<UsagePoint>> GetTurnPointsAsync(
         DateTime afterUtc, DateTime untilUtc, UsageFilter filter, CancellationToken ct = default);
+
+    /// <summary>One point per turn of every developer with <c>afterUtc &lt; Timestamp &lt;= untilUtc</c>, each
+    /// carrying its session's developer email, all four token kinds and the estimated cost.</summary>
+    Task<IReadOnlyList<DeveloperTurnPoint>> GetDeveloperTurnPointsAsync(
+        DateTime afterUtc, DateTime untilUtc, CancellationToken ct = default);
 }
 
 /// <summary>A running session's identity, activity and running totals.</summary>

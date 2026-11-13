@@ -15,7 +15,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.15");
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ArchitectAnnotation", b =>
                 {
@@ -52,6 +52,49 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.HasIndex("TurnId");
 
                     b.ToTable("ArchitectAnnotations");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.Budget", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("AmountUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeveloperEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Period")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubjectKey")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SubjectKey", "Period")
+                        .IsUnique();
+
+                    b.ToTable("Budgets", (string)null);
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.CommitSessionLink", b =>
@@ -157,6 +200,44 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.HasIndex("Timestamp");
 
                     b.ToTable("ConversationTurns");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.DeveloperPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeveloperEmail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("MonthlyPriceUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlanName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("WindowLimitUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeveloperEmail")
+                        .IsUnique();
+
+                    b.ToTable("DeveloperPlans", (string)null);
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.FileChange", b =>

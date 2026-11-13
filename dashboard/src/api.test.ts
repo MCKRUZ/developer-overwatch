@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { api, setTokenGetter, clearTokenGetter, getAccessToken } from "./api";
+import { api, ApiError, setTokenGetter, clearTokenGetter, getAccessToken } from "./api";
 
 function mockFetch(body: unknown, ok = true, status = 200, statusText = "OK") {
   return vi.fn().mockResolvedValue({
@@ -243,6 +243,119 @@ describe("api", () => {
     });
   });
 
+  describe("meter reads", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    function useZone(timeZone: string) {
+      vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+        timeZone,
+      } as Intl.ResolvedDateTimeFormatOptions);
+    }
+
+    it("should ask for budget status in the viewer's time zone, because daily and monthly periods are the viewer's local ones", async () => {
+      useZone("America/New_York");
+      globalThis.fetch = mockFetch([]);
+      await api.budgets.status();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/budgets/status?tz=America%2FNew_York", undefined);
+    });
+
+    it("should ask for plan value in the viewer's time zone, because month to date is the viewer's local month", async () => {
+      useZone("Asia/Kolkata");
+      globalThis.fetch = mockFetch([]);
+      await api.usage.planValue();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/plan-value?tz=Asia%2FKolkata", undefined);
+    });
+
+    it("should read 5-hour windows from /api/usage/windows", async () => {
+      globalThis.fetch = mockFetch([{ developerEmail: "a@x.io" }]);
+      await expect(api.usage.windows()).resolves.toEqual([{ developerEmail: "a@x.io" }]);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/usage/windows", undefined);
+    });
+
+    it("should read the signed-in user's edit rights from /api/auth/me", async () => {
+      globalThis.fetch = mockFetch({ canEditBudgets: true });
+      await expect(api.auth.me()).resolves.toEqual({ canEditBudgets: true });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/me", undefined);
+    });
+  });
+
+  describe("budgets", () => {
+    it("should list budgets", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.budgets.list();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/budgets", undefined);
+    });
+
+    it("should create a budget with a JSON body", async () => {
+      globalThis.fetch = mockFetch({ id: "b1" });
+      const body = { scope: "Team" as const, developerEmail: null, period: "Daily" as const, amountUsd: 50 };
+      await expect(api.budgets.create(body)).resolves.toEqual({ id: "b1" });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/budgets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    });
+
+    it("should send only the amount when a budget is edited, since scope and period identify it", async () => {
+      globalThis.fetch = mockFetch({ id: "b 1" });
+      await api.budgets.update("b 1", 75);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/budgets/b%201", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountUsd: 75 }),
+      });
+    });
+
+    it("should delete a budget without reading a body from the 204", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204, json: () => Promise.reject(new Error("empty")) });
+      globalThis.fetch = fetchMock;
+      await expect(api.budgets.remove("b1")).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledWith("/api/budgets/b1", expect.objectContaining({ method: "DELETE" }));
+    });
+  });
+
+  describe("developer plans", () => {
+    it("should list developer plans", async () => {
+      globalThis.fetch = mockFetch([]);
+      await api.developerPlans.list();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/developer-plans", undefined);
+    });
+
+    it("should create a plan with a JSON body", async () => {
+      globalThis.fetch = mockFetch({ id: "p1" });
+      const body = { developerEmail: "a@x.io", planName: "Max", monthlyPriceUsd: 200, windowLimitUsd: null };
+      await api.developerPlans.create(body);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/developer-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    });
+
+    it("should edit a plan without its email, which identifies it", async () => {
+      globalThis.fetch = mockFetch({ id: "p1" });
+      const body = { planName: "Pro", monthlyPriceUsd: 20, windowLimitUsd: 12.5 };
+      await api.developerPlans.update("p1", body);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/developer-plans/p1", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    });
+
+    it("should delete a plan", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+      await api.developerPlans.remove("p1");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/developer-plans/p1", expect.objectContaining({ method: "DELETE" }));
+    });
+
+    it("should reject a failed delete with the status, so the page can say the plan was already gone", async () => {
+      globalThis.fetch = mockFetch("gone", false, 404, "Not Found");
+      await expect(api.developerPlans.remove("p1")).rejects.toMatchObject({ status: 404, body: "gone" });
+    });
+  });
+
   describe("pricing", () => {
     it("should read the price list's as-of date from /api/pricing", async () => {
       globalThis.fetch = mockFetch({ asOf: "2026-11-01" });
@@ -280,6 +393,13 @@ describe("api", () => {
     it("throws on non-ok response with status and body", async () => {
       globalThis.fetch = mockFetch("Not Found", false, 404, "Not Found");
       await expect(api.sessions.list()).rejects.toThrow("404: Not Found");
+    });
+
+    it("should carry the status and raw body, so a caller can tell a conflict from a validation failure", async () => {
+      globalThis.fetch = mockFetch({ title: "dup" }, false, 409, "Conflict");
+      const error = await api.budgets.list().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 409, body: JSON.stringify({ title: "dup" }) });
     });
 
     it("propagates network errors", async () => {

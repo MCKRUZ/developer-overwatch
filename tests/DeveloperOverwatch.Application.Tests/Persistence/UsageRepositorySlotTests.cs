@@ -164,6 +164,30 @@ public sealed class UsageRepositorySlotTests : IDisposable
         points.Select(p => (p.Tokens, p.CostUsd)).Should().BeEquivalentTo([(15L, 0.25m), (16L, 0.5m)]);
     }
 
+    [Fact]
+    public async Task GetDeveloperTurnPointsAsync_EveryDeveloperInWindow_CarriesEmailAndUtcTime()
+    {
+        var until = Utc(2026, 11, 10, 12, 0);
+        var after = until.AddHours(-24);
+        await _data.Seed(
+            Session("a", email: "a@team.dev", turns:
+            [
+                Turn(after, input: 1000, cost: 9m),
+                Turn(after.AddSeconds(1), input: 1, output: 2, cacheWrite: 4, cacheRead: 8, cost: 0.25m),
+                Turn(until.AddSeconds(1), input: 1000, cost: 9m),
+            ]),
+            Session("b", email: "b@team.dev", projectKey: "other", turns: [Turn(until, input: 16, cost: 0.5m)]));
+
+        var points = await _data.Repository.GetDeveloperTurnPointsAsync(after, until);
+
+        points.Should().BeEquivalentTo(
+        [
+            new DeveloperTurnPoint("a@team.dev", after.AddSeconds(1), 15L, 0.25m),
+            new DeveloperTurnPoint("b@team.dev", until, 16L, 0.5m),
+        ]);
+        points.Should().OnlyContain(p => p.AtUtc.Kind == DateTimeKind.Utc);
+    }
+
     private Task SeedTwoSessionsInOneSlot() => _data.Seed(
         Session("session-a", email: "a@team.dev", machine: "m1", projectKey: "proj-a", agent: "claude-code", turns:
         [

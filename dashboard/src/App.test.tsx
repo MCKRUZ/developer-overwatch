@@ -26,9 +26,18 @@ vi.mock("./auth/ProtectedRoute", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("./components/Layout", () => ({
-  default: () => <div>layout</div>,
-}));
+vi.mock("./components/Layout", async () => {
+  const { Outlet } = await import("react-router-dom");
+  return {
+    default: () => (
+      <div>
+        layout
+        <Outlet />
+      </div>
+    ),
+  };
+});
+vi.mock("./pages/SettingsPage", () => ({ default: () => <div>settings page</div> }));
 vi.mock("./pages/PrQueuePage", () => ({ default: () => <div>pr</div> }));
 vi.mock("./pages/SessionsPage", () => ({ default: () => <div>sessions</div> }));
 vi.mock("./pages/SessionDetailPage", () => ({ default: () => <div>detail</div> }));
@@ -82,5 +91,15 @@ describe("App", () => {
     );
 
     expect(api.clearTokenGetter).toHaveBeenCalled();
+  });
+
+  it("should route /settings to the settings page", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("settings page")).toBeInTheDocument();
   });
 });

@@ -14,7 +14,7 @@ public class GetTeamAnalyticsTests
     private readonly IPullRequestReviewRepository _prRepo = Substitute.For<IPullRequestReviewRepository>();
     private readonly IGovernanceViolationRepository _violationRepo = Substitute.For<IGovernanceViolationRepository>();
     private readonly ICommitSessionLinkRepository _commitRepo = Substitute.For<ICommitSessionLinkRepository>();
-    private readonly ICostThresholdProvider _costThreshold = Substitute.For<ICostThresholdProvider>();
+    private readonly IBudgetRepository _budgetRepo = Substitute.For<IBudgetRepository>();
     private readonly GetTeamAnalyticsQueryHandler _handler;
 
     public GetTeamAnalyticsTests()
@@ -22,8 +22,7 @@ public class GetTeamAnalyticsTests
         _sessionRepo.GetTurnUsageRowsForDateRangeAsync(
             Arg.Any<DateTime?>(), Arg.Any<DateTime?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(new List<TurnUsageRow>());
-        _costThreshold.DailyThresholdUsd.Returns(50.00m);
-        _handler = new GetTeamAnalyticsQueryHandler(_sessionRepo, _prRepo, _violationRepo, _commitRepo, _costThreshold);
+        _handler = new GetTeamAnalyticsQueryHandler(_sessionRepo, _prRepo, _violationRepo, _commitRepo, _budgetRepo);
     }
 
     [Fact]
@@ -77,7 +76,7 @@ public class GetTeamAnalyticsTests
     }
 
     [Fact]
-    public async Task Handle_ComputesDailyCostTrendAndExposesThreshold()
+    public async Task Handle_ComputesDailyCostTrendAndExposesTeamDailyBudgetAsThreshold()
     {
         _sessionRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<Session>().AsReadOnly());
         _prRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<PullRequestReview>().AsReadOnly());
@@ -94,7 +93,7 @@ public class GetTeamAnalyticsTests
                 new(day1, "claude-sonnet-5", 100, 50, 0, 0, 1.00m),
                 new(day2, "claude-opus", 100, 50, 0, 0, 5.00m),
             });
-        _costThreshold.DailyThresholdUsd.Returns(3.00m);
+        GivenTeamDailyBudget(3.00m);
 
         var result = await _handler.Handle(new GetTeamAnalyticsQuery(), CancellationToken.None);
 
@@ -105,6 +104,44 @@ public class GetTeamAnalyticsTests
         analytics.DailyCostTrend[0].Date.Should().Be(DateOnly.FromDateTime(day1));
         analytics.DailyCostTrend[0].EstimatedCostUsd.Should().Be(2.00m);
         analytics.DailyCostTrend[1].EstimatedCostUsd.Should().Be(5.00m);
+    }
+
+    // The chart hides the line when there is no team daily budget, rather than drawing a made-up one.
+    [Fact]
+    public async Task Handle_NoTeamDailyBudget_ThresholdIsNull()
+    {
+        GivenNoActivity();
+        _budgetRepo.FindAsync(Budget.TeamSubjectKey, BudgetPeriod.Monthly, Arg.Any<CancellationToken>())
+            .Returns(Budget.Create(BudgetScope.Team, null, BudgetPeriod.Monthly, 900m, DateTime.UtcNow));
+
+        var result = await _handler.Handle(new GetTeamAnalyticsQuery(), CancellationToken.None);
+
+        result.Value!.DailyCostThresholdUsd.Should().BeNull();
+    }
+
+    // The trend is team-wide by default, so a developer's daily budget must not stand in for the team's.
+    [Fact]
+    public async Task Handle_OnlyDeveloperDailyBudget_ThresholdIsNull()
+    {
+        GivenNoActivity();
+        _budgetRepo.FindAsync("dev@test.com", BudgetPeriod.Daily, Arg.Any<CancellationToken>())
+            .Returns(Budget.Create(BudgetScope.Developer, "dev@test.com", BudgetPeriod.Daily, 10m, DateTime.UtcNow));
+
+        var result = await _handler.Handle(new GetTeamAnalyticsQuery(), CancellationToken.None);
+
+        result.Value!.DailyCostThresholdUsd.Should().BeNull();
+    }
+
+    private void GivenTeamDailyBudget(decimal amountUsd) =>
+        _budgetRepo.FindAsync(Budget.TeamSubjectKey, BudgetPeriod.Daily, Arg.Any<CancellationToken>())
+            .Returns(Budget.Create(BudgetScope.Team, null, BudgetPeriod.Daily, amountUsd, DateTime.UtcNow));
+
+    private void GivenNoActivity()
+    {
+        _sessionRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<Session>().AsReadOnly());
+        _prRepo.GetAllAsync(ct: Arg.Any<CancellationToken>()).Returns(new List<PullRequestReview>().AsReadOnly());
+        _violationRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<GovernanceViolation>().AsReadOnly());
+        _commitRepo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(new List<CommitSessionLink>().AsReadOnly());
     }
 
     [Fact]

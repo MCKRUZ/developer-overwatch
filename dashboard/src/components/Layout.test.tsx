@@ -39,4 +39,9 @@ describe("Layout", () => {
       "/usage",
     );
   });
+
+  it("should link to budget and plan settings from the main navigation", () => {
+    render(<Layout />);
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  });
 });

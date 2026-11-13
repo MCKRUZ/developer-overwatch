@@ -213,7 +213,8 @@ export interface TeamAnalytics {
   violationsThisWeek: number;
   developers: DeveloperMetrics[];
   dailyCostTrend: DailyCostUsage[];
-  dailyCostThresholdUsd: number;
+  /** The team daily budget, or null when there is none. */
+  dailyCostThresholdUsd: number | null;
 }
 
 export interface DeveloperMetrics {
@@ -319,4 +320,102 @@ export interface RunningSession {
   currentContextTokens?: number;
   burnTokensPerMinute: number;
   burnCostPerMinute: number;
+}
+
+/** `GET /api/auth/me`. `canEditBudgets` is the server's verdict on the budget-edit policy. */
+export interface CurrentUser {
+  id: string | null;
+  name: string | null;
+  email: string | null;
+  roles: string[];
+  authMethod: string | null;
+  canEditBudgets: boolean;
+}
+
+export type BudgetScope = "Team" | "Developer";
+export type BudgetPeriod = "Daily" | "Monthly";
+export type BudgetLevel = "Ok" | "Amber" | "Red";
+export type PaceStatus = "Ahead" | "OnPace" | "Behind";
+export type ForecastKind =
+  | "AlreadyExceeded"
+  | "NoSpendYet"
+  | "NoRateYet"
+  | "RunsOutWithinPeriod"
+  | "LastsPastPeriodEnd";
+
+export interface Budget {
+  id: string;
+  scope: BudgetScope;
+  /** Null for a Team budget. */
+  developerEmail: string | null;
+  period: BudgetPeriod;
+  amountUsd: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Pace {
+  usedFraction: number;
+  elapsedFraction: number;
+  status: PaceStatus;
+}
+
+export interface Forecast {
+  kind: ForecastKind;
+  runsOutAt: string | null;
+}
+
+/** One budget's spend in its current period, which is the viewer's local day or calendar month. */
+export interface BudgetStatus {
+  budget: Budget;
+  periodStartUtc: string;
+  periodEndUtc: string;
+  spentUsd: number;
+  /** Amount minus spent; negative when over. */
+  remainingUsd: number;
+  usedFraction: number;
+  level: BudgetLevel;
+  pace: Pace;
+  forecast: Forecast;
+}
+
+export interface DeveloperPlan {
+  id: string;
+  developerEmail: string;
+  planName: string;
+  monthlyPriceUsd: number;
+  /** API-equivalent USD per 5-hour window; null when the lead has not set one. */
+  windowLimitUsd: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UsageWindow {
+  startUtc: string;
+  resetsAtUtc: string;
+  spentUsd: number;
+  tokens: number;
+  /** The rest are null when the developer has no window limit. */
+  usedFraction: number | null;
+  level: BudgetLevel | null;
+  pace: Pace | null;
+  forecast: Forecast | null;
+}
+
+export interface DeveloperWindow {
+  developerEmail: string;
+  planName: string | null;
+  windowLimitUsd: number | null;
+  /** Null when the developer has a plan but no open window. */
+  window: UsageWindow | null;
+}
+
+export interface PlanValue {
+  developerEmail: string;
+  planName: string;
+  monthlyPriceUsd: number;
+  monthStartUtc: string;
+  apiValueUsd: number;
+  /** apiValueUsd / monthlyPriceUsd */
+  valueMultiple: number;
 }

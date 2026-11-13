@@ -7,6 +7,7 @@ import SessionDetailPage from "./pages/SessionDetailPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import GovernancePage from "./pages/GovernancePage";
 import UsagePage from "./pages/UsagePage";
+import SettingsPage from "./pages/SettingsPage";
 import AuthProvider, { useAuthContext, isAuthConfigured } from "./auth/AuthProvider";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import { setTokenGetter, clearTokenGetter } from "./api";
@@ -38,6 +39,7 @@ function AppRoutes() {
           <Route path="/governance" element={<GovernancePage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/usage" element={<UsagePage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </ProtectedRoute>

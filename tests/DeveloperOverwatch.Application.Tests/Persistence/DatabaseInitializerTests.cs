@@ -33,7 +33,7 @@ public sealed class DatabaseInitializerTests : IDisposable
     {
         await using var db = NewContext();
 
-        await DatabaseInitializer.InitializeAsync(db);
+        await DatabaseInitializer.InitializeAsync(db, 0m);
 
         await AssertSchemaMatchesModelAsync(db);
         (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
@@ -55,7 +55,7 @@ public sealed class DatabaseInitializerTests : IDisposable
             """);
 
         await using var db = NewContext();
-        await DatabaseInitializer.InitializeAsync(db);
+        await DatabaseInitializer.InitializeAsync(db, 0m);
 
         await AssertSchemaMatchesModelAsync(db);
         var sessions = await db.Sessions.AsNoTracking().OrderBy(s => s.Id).ToListAsync();
@@ -80,7 +80,7 @@ public sealed class DatabaseInitializerTests : IDisposable
             """);
 
         await using var db = NewContext();
-        await DatabaseInitializer.InitializeAsync(db);
+        await DatabaseInitializer.InitializeAsync(db, 0m);
 
         await AssertSchemaMatchesModelAsync(db);
         (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
@@ -95,7 +95,7 @@ public sealed class DatabaseInitializerTests : IDisposable
     {
         await using (var db = NewContext())
         {
-            await DatabaseInitializer.InitializeAsync(db);
+            await DatabaseInitializer.InitializeAsync(db, 0m);
             db.Sessions.Add(new Domain.Entities.Session
             {
                 Id = "s1", DeveloperEmail = "dev@test.com", TotalCacheReadInputTokens = 3_000_000_000L,
@@ -115,7 +115,7 @@ public sealed class DatabaseInitializerTests : IDisposable
         await ExecAsync("ALTER TABLE Sessions ADD COLUMN Title TEXT NULL;");
 
         await using var db = NewContext();
-        var act = () => DatabaseInitializer.InitializeAsync(db);
+        var act = () => DatabaseInitializer.InitializeAsync(db, 0m);
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Sessions*");
     }
@@ -124,10 +124,10 @@ public sealed class DatabaseInitializerTests : IDisposable
     public async Task InitializeAsync_RunTwice_IsIdempotent()
     {
         await using (var first = NewContext())
-            await DatabaseInitializer.InitializeAsync(first);
+            await DatabaseInitializer.InitializeAsync(first, 0m);
 
         await using var db = NewContext();
-        await DatabaseInitializer.InitializeAsync(db);
+        await DatabaseInitializer.InitializeAsync(db, 0m);
 
         (await AppliedMigrationsAsync(db)).Should().Equal(db.Database.GetMigrations());
     }
@@ -137,7 +137,7 @@ public sealed class DatabaseInitializerTests : IDisposable
     public async Task ScopeProcessedAgentEventsDown_SessionsShareAnEventId_RollsBackKeepingOneRowPerId()
     {
         await using var db = NewContext();
-        await DatabaseInitializer.InitializeAsync(db);
+        await DatabaseInitializer.InitializeAsync(db, 0m);
         await ExecAsync("""
             INSERT INTO ProcessedAgentEvents (SessionId, EventId, Kind, ProcessedAt)
             VALUES ('a', 'shared', 'Start', '2026-11-09 10:00:00'),

@@ -1,5 +1,7 @@
 namespace DeveloperOverwatch.Infrastructure.Persistence;
 
+using DeveloperOverwatch.Domain.Entities;
+using DeveloperOverwatch.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -27,12 +29,31 @@ public static class DatabaseInitializer
         ["GovernanceViolations"] = ["ConversationTurnId", "ToolExecutionId"],
     };
 
-    public static async Task InitializeAsync(OverwatchDbContext db, CancellationToken ct = default)
+    /// <summary>The migrations that create the Budgets table, one per provider set.</summary>
+    public const string SqlServerBudgetsMigrationId = "20261113215408_AddBudgetsAndPlans";
+    public const string SqliteBudgetsMigrationId = "20261113215412_AddBudgetsAndPlansSqlite";
+
+    /// <summary>
+    /// Migrates the database. The startup that creates the Budgets table also adds a team daily budget of
+    /// <paramref name="teamDailyBudgetSeedUsd"/> (none when it is not positive), replacing the old fixed
+    /// daily cost line. Only that startup seeds, so a lead who deletes the budget does not get it back.
+    /// </summary>
+    public static async Task InitializeAsync(
+        OverwatchDbContext db, decimal teamDailyBudgetSeedUsd, CancellationToken ct = default)
     {
         if (db is SqliteOverwatchDbContext)
             await AdoptEnsureCreatedSqliteDatabaseAsync(db, ct);
 
+        var pending = await db.Database.GetPendingMigrationsAsync(ct);
+        var createsBudgets = pending.Any(id => id is SqlServerBudgetsMigrationId or SqliteBudgetsMigrationId);
+
         await db.Database.MigrateAsync(ct);
+
+        if (createsBudgets && teamDailyBudgetSeedUsd > 0)
+        {
+            db.Budgets.Add(Budget.Create(BudgetScope.Team, null, BudgetPeriod.Daily, teamDailyBudgetSeedUsd, DateTime.UtcNow));
+            await db.SaveChangesAsync(ct);
+        }
     }
 
     /// <summary>

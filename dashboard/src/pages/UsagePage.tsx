@@ -7,6 +7,7 @@ import UsageTiles from "../components/usage/UsageTiles";
 import UsageBucketsTable from "../components/usage/UsageBucketsTable";
 import UsageSplitTabs from "../components/usage/UsageSplitTabs";
 import RunningSessionsList from "../components/usage/RunningSessionsList";
+import MeterSections from "../components/usage/MeterSections";
 import ExportButtons from "../components/ExportButtons";
 import PriceEstimateNote from "../components/PriceEstimateNote";
 import { exportCsv } from "../utils/exportCsv";
@@ -69,7 +70,7 @@ export default function UsagePage() {
   };
   const [developer, setDeveloper] = useState("");
   const [project, setProject] = useState("");
-  const { summary, running, error, runningError } = useUsageData({
+  const { summary, running, error, runningError, meter } = useUsageData({
     ...period,
     developer: developer || undefined,
     project: project || undefined,
@@ -111,6 +112,7 @@ export default function UsagePage() {
         <>
           <PriceEstimateNote asOf={summary.pricesAsOf} />
           <UsageTiles totals={summary.totals} burn={summary.burn} />
+          <MeterSections meter={meter} pricesAsOf={summary.pricesAsOf} />
           <section className="space-y-2">
             <h3 className="text-lg font-medium">Running now</h3>
             {runningError ? (
