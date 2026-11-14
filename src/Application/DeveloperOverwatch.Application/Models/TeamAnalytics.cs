@@ -1,5 +1,9 @@
 namespace DeveloperOverwatch.Application.Models;
 
+using System.Text.Json.Serialization;
+
+/// <param name="DailyCostThresholdUsd">The team daily budget, or null when there is none. Always written,
+/// as an explicit null, despite the API's global ignore-nulls setting.</param>
 public sealed record TeamAnalytics(
     int TotalSessions,
     int SessionsThisWeek,
@@ -11,7 +15,7 @@ public sealed record TeamAnalytics(
     int ViolationsThisWeek,
     IReadOnlyList<DeveloperMetrics> Developers,
     IReadOnlyList<DailyCostUsage> DailyCostTrend,
-    decimal DailyCostThresholdUsd);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? DailyCostThresholdUsd);
 
 public sealed record DailyCostUsage(
     DateOnly Date,

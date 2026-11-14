@@ -10,8 +10,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 /// <summary>One mapped route, as a request the test can send. Agent routes are the ones only a developer
-/// machine's key may call; every other route belongs to the dashboard, the webhook or the health probe.</summary>
-public sealed record MappedRoute(string Method, string Url, bool IsAgent, bool IsAnonymous, string Name)
+/// machine's key may call; budget-edit routes need the Lead role with sign-in on; every other route belongs to the dashboard, the webhook or the health probe.</summary>
+public sealed record MappedRoute(
+    string Method, string Url, bool IsAgent, bool IsAnonymous, bool IsBudgetEdit, string Name)
 {
     public override string ToString() => $"{Method} {Url}";
 
@@ -29,12 +30,19 @@ public sealed record MappedRoute(string Method, string Url, bool IsAgent, bool I
                 var authorize = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>();
                 var isAgent = authorize.Any(a => a.Policy == AuthPolicies.Agent);
                 var isAnonymous = endpoint.Metadata.GetMetadata<IAllowAnonymous>() is not null;
+                var isBudgetEdit = authorize.Any(a => a.Policy == AuthPolicies.BudgetEdit);
                 var url = "/" + Parameter.Replace(endpoint.RoutePattern.RawText!.TrimStart('/'),
-                    m => m.Groups["constraint"].Value.Contains("int") ? "1" : "x");
+                    m => Filler(m.Groups["constraint"].Value));
                 return methods.Select(method => new MappedRoute(
-                    method, url, isAgent, isAnonymous, endpoint.DisplayName ?? url));
+                    method, url, isAgent, isAnonymous, isBudgetEdit, endpoint.DisplayName ?? url));
             })
             .ToList();
+
+    // A value the route constraint accepts, so the request reaches authorization instead of a 404 from routing.
+    private static string Filler(string constraint) =>
+        constraint.Contains("guid") ? "3f1c2b7e-9a4d-4e2f-8b6a-0c5d1e7f9a20"
+        : constraint.Contains("int") ? "1"
+        : "x";
 }
 
 /// <summary>The agent key is on every developer machine. With OIDC on, it must open the agent routes and nothing
@@ -90,6 +98,7 @@ public class EndpointAccessOidcTests : IClassFixture<OidcWebApplicationFactory>
     }
 
     // Control: a signed-in dashboard user is not refused on those routes, so the 401s above are the key being refused.
+    // Budget-edit routes need the Lead role on top; the next test is their control.
     [Fact]
     public async Task EveryNonAgentRoute_BearerToken_IsNot401()
     {
@@ -98,7 +107,27 @@ public class EndpointAccessOidcTests : IClassFixture<OidcWebApplicationFactory>
             "Bearer", OidcWebApplicationFactory.MintToken("endpoint-access-user"));
 
         var refused = new List<string>();
-        foreach (var route in Routes().Where(r => !r.IsAgent && !r.IsAnonymous && r.Url != "/health"))
+        foreach (var route in Routes().Where(r => !r.IsAgent && !r.IsAnonymous && !r.IsBudgetEdit && r.Url != "/health"))
+        {
+            var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(route.Method), route.Url));
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                refused.Add($"{route} -> {(int)response.StatusCode}");
+        }
+
+        refused.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task EveryBudgetEditRoute_LeadBearerToken_IsNotRefused()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", OidcWebApplicationFactory.MintToken("endpoint-access-lead", AppRoles.Lead));
+        var editRoutes = Routes().Where(r => r.IsBudgetEdit).ToList();
+
+        editRoutes.Should().HaveCount(6, "budgets and developer plans each have create, update and delete");
+        var refused = new List<string>();
+        foreach (var route in editRoutes)
         {
             var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(route.Method), route.Url));
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)

@@ -50,6 +50,8 @@ public static class DependencyInjection
         services.AddScoped<ICommitSessionLinkRepository, CommitSessionLinkRepository>();
         services.AddScoped<IPullRequestReviewRepository, PullRequestReviewRepository>();
         services.AddScoped<IArchitectAnnotationRepository, ArchitectAnnotationRepository>();
+        services.AddScoped<IBudgetRepository, BudgetRepository>();
+        services.AddScoped<IDeveloperPlanRepository, DeveloperPlanRepository>();
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<OverwatchDbContext>());
 
         services.Configure<GitHubConfig>(configuration.GetSection("GitHub"));
@@ -63,9 +65,6 @@ public static class DependencyInjection
         services.Configure<ModelContextWindowsOptions>(configuration.GetSection("ModelContextWindows"));
         services.AddSingleton<IModelContextWindowProvider>(sp =>
             sp.GetRequiredService<IOptions<ModelContextWindowsOptions>>().Value.ToTable());
-
-        services.Configure<CostAlertsConfig>(configuration.GetSection("CostAlerts"));
-        services.AddSingleton<ICostThresholdProvider, CostThresholdProvider>();
 
         services.Configure<SessionActivityConfig>(configuration.GetSection("SessionActivity"));
         services.AddSingleton<ISessionStaleThresholdProvider, SessionStaleThresholdProvider>();

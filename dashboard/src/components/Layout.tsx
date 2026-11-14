@@ -8,6 +8,7 @@ const navItems = [
   { to: "/governance", label: "Governance" },
   { to: "/analytics", label: "Analytics" },
   { to: "/usage", label: "Usage" },
+  { to: "/settings", label: "Settings" },
 ];
 
 function UserInfo() {

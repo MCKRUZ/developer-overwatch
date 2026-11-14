@@ -101,6 +101,26 @@ public sealed class UsageRepository : IUsageRepository
         return points.Select(p => new UsagePoint(AsUtc(p.Timestamp), p.Tokens, p.Cost)).ToList();
     }
 
+    public async Task<IReadOnlyList<DeveloperTurnPoint>> GetDeveloperTurnPointsAsync(
+        DateTime afterUtc, DateTime untilUtc, CancellationToken ct = default)
+    {
+        var points = await _db.ConversationTurns
+            .Where(t => t.Timestamp > afterUtc && t.Timestamp <= untilUtc)
+            .Select(t => new
+            {
+                t.Session!.DeveloperEmail,
+                t.Timestamp,
+                Tokens = (long)(t.InputTokens ?? 0) + (t.OutputTokens ?? 0)
+                    + (t.CacheCreationInputTokens ?? 0) + (t.CacheReadInputTokens ?? 0),
+                Cost = t.EstimatedCostUsd ?? 0m,
+            })
+            .ToListAsync(ct);
+
+        return points
+            .Select(p => new DeveloperTurnPoint(p.DeveloperEmail, AsUtc(p.Timestamp), p.Tokens, p.Cost))
+            .ToList();
+    }
+
     private IQueryable<ConversationTurn> Matching(UsageFilter filter)
     {
         var turns = _db.ConversationTurns.AsQueryable();

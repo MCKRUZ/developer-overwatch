@@ -4,10 +4,15 @@ import { api } from "../api";
 import type { UsageSummaryParams } from "../api";
 import type { RunningSession, UsageSummary } from "../types";
 import { buildRunningSession, buildUsageSummary } from "../test/usageFactories";
+import { buildBudgetStatus, buildDeveloperWindow, buildPlanValue } from "../test/meterFactories";
 import { RUNNING_REFRESH_THROTTLE_MS, RUNNING_STALE_AFTER_MS, SUMMARY_REFRESH_INTERVAL_MS, useUsageData } from "./useUsageData";
+import { METER_REFRESH_THROTTLE_MS, METER_STALE_AFTER_MS } from "./useMeterData";
 
 vi.mock("../api", () => ({
-  api: { usage: { summary: vi.fn(), running: vi.fn() } },
+  api: {
+    usage: { summary: vi.fn(), running: vi.fn(), windows: vi.fn(), planValue: vi.fn() },
+    budgets: { status: vi.fn() },
+  },
 }));
 
 const live = vi.hoisted(() => ({
@@ -37,8 +42,21 @@ function deferred<T>() {
 
 const dayParams: UsageSummaryParams = { from: "2026-11-04", to: "2026-11-10", granularity: "day" };
 
+function meterCalls(): number[] {
+  return [
+    mockApi.budgets.status.mock.calls.length,
+    mockApi.usage.windows.mock.calls.length,
+    mockApi.usage.planValue.mock.calls.length,
+  ];
+}
+
 describe("useUsageData", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.budgets.status.mockResolvedValue([buildBudgetStatus()]);
+    mockApi.usage.windows.mockResolvedValue([buildDeveloperWindow()]);
+    mockApi.usage.planValue.mockResolvedValue([buildPlanValue()]);
+  });
 
   it("should drop late running-list and error results from a superseded request, so old data cannot replace new", async () => {
     const oldSummary = deferred<UsageSummary>();
@@ -164,6 +182,62 @@ describe("useUsageData", () => {
       expect(mockApi.usage.running).toHaveBeenCalledTimes(1);
     });
 
+    it("should refetch budgets, windows and plan value on live events at most once per meter throttle, because a turn moves spend but a refetch per turn would flood the API", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+      expect(meterCalls()).toEqual([1, 1, 1]);
+
+      act(() => {
+        for (let i = 0; i < 20; i++) live.onChange?.();
+      });
+      await advance(METER_REFRESH_THROTTLE_MS - 1);
+      expect(meterCalls()).toEqual([1, 1, 1]);
+      await advance(1);
+
+      expect(meterCalls()).toEqual([2, 2, 2]);
+    });
+
+    it("should refetch the meter once it is stale with no events, so pace and forecast keep up with the clock", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      await advance(METER_STALE_AFTER_MS - 1);
+      expect(meterCalls()).toEqual([1, 1, 1]);
+      await advance(1);
+      expect(meterCalls()).toEqual([2, 2, 2]);
+    });
+
+    it("should postpone the idle meter refresh after an event-driven one", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      act(() => live.onChange?.());
+      await advance(METER_REFRESH_THROTTLE_MS);
+      await advance(METER_STALE_AFTER_MS - 1);
+
+      expect(meterCalls()).toEqual([2, 2, 2]);
+    });
+
+    it("should stop the idle meter refresh on unmount", async () => {
+      const { unmount } = renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      unmount();
+      await advance(METER_STALE_AFTER_MS * 2);
+
+      expect(meterCalls()).toEqual([1, 1, 1]);
+    });
+
+    it("should refetch the meter at once on a hub reconnect, so spend missed while disconnected shows", async () => {
+      renderHook(() => useUsageData(dayParams));
+      await advance(0);
+
+      act(() => live.onResync?.());
+      await advance(0);
+
+      expect(meterCalls()).toEqual([2, 2, 2]);
+    });
+
     it("should refetch the summary at once and the running list within the throttle on a hub reconnect, so missed events are recovered", async () => {
       renderHook(() => useUsageData(dayParams));
       await advance(0);
@@ -175,6 +249,34 @@ describe("useUsageData", () => {
 
       expect(mockApi.usage.running).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("should expose budgets, windows and plan value, each with its own error so one failure leaves the others on screen", async () => {
+    mockApi.usage.summary.mockResolvedValue(buildUsageSummary());
+    mockApi.usage.running.mockResolvedValue([]);
+    mockApi.usage.windows.mockRejectedValue(new Error("503: busy"));
+    const { result } = renderHook(() => useUsageData(dayParams));
+
+    await waitFor(() => expect(result.current.meter.windowsError).toBe("503: busy"));
+    expect(result.current.meter.budgets).toEqual([buildBudgetStatus()]);
+    expect(result.current.meter.planValues).toEqual([buildPlanValue()]);
+    expect(result.current.meter.windows).toBeNull();
+    expect(result.current.meter.budgetsError).toBeNull();
+    expect(result.current.meter.planValuesError).toBeNull();
+  });
+
+  it("should not reload the meter when the page filters change, since budgets, windows and plan value ignore them", async () => {
+    mockApi.usage.summary.mockResolvedValue(buildUsageSummary());
+    mockApi.usage.running.mockResolvedValue([]);
+    const { rerender } = renderHook((params: UsageSummaryParams) => useUsageData(params), {
+      initialProps: dayParams,
+    });
+    await waitFor(() => expect(mockApi.budgets.status).toHaveBeenCalledTimes(1));
+
+    rerender({ ...dayParams, granularity: "week", developer: "alice@x.io" });
+    await waitFor(() => expect(mockApi.usage.summary).toHaveBeenCalledTimes(2));
+
+    expect(meterCalls()).toEqual([1, 1, 1]);
   });
 
   it("should load the running list with only the developer and project filters, and not reload it for a date change it does not depend on", async () => {

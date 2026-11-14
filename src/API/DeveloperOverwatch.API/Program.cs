@@ -1,6 +1,7 @@
 extern alias AzureIdentityAlias;
 
 using System.Reflection;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DeveloperOverwatch.API.Authentication;
@@ -216,7 +217,9 @@ builder.Services.AddAuthentication(options =>
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
             NameClaimType = "name",
-            RoleClaimType = "roles"
+            // The inbound claim map renames the token's "roles" claim to ClaimTypes.Role before this applies,
+            // so IsInRole and RequireRole only work when the identity looks roles up under that name.
+            RoleClaimType = ClaimTypes.Role
         };
         // Browsers cannot set headers on a WebSocket or EventSource, so the SignalR client sends the token
         // as ?access_token=. Accept it on the hub only: anywhere else a token in the URL is refused.
@@ -266,6 +269,23 @@ builder.Services.AddAuthorization(options =>
         .RequireAuthenticatedUser()
         .Build();
     options.AddPolicy(AuthPolicies.DashboardRead, dashboardAccess);
+
+    // Budgets and plans set what the whole team is measured against. With sign-in on, editing needs the Lead app
+    // role. Without sign-in everyone is anonymous, so only a developer's own local server lets them edit; any other
+    // server refuses every edit (403) while reads stay on DashboardRead.
+    options.AddPolicy(AuthPolicies.BudgetEdit, policy =>
+    {
+        if (hasOidc)
+            policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+                  .RequireAuthenticatedUser()
+                  .RequireRole(AppRoles.Lead);
+        else if (builder.Environment.IsDevelopment())
+            policy.AddAuthenticationSchemes(AnonymousDashboardDefaults.AuthenticationScheme)
+                  .RequireAuthenticatedUser();
+        else
+            policy.AddAuthenticationSchemes(AnonymousDashboardDefaults.AuthenticationScheme)
+                  .RequireAssertion(_ => false);
+    });
     options.DefaultPolicy = dashboardAccess;
 });
 
@@ -299,7 +319,8 @@ using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<IModelContextWindowProvider>();
 
     var db =scope.ServiceProvider.GetRequiredService<OverwatchDbContext>();
-    await DatabaseInitializer.InitializeAsync(db);
+    // CostAlerts:DailyThresholdUsd now only seeds the team daily budget, once, when its table is created.
+    await DatabaseInitializer.InitializeAsync(db, app.Configuration.GetValue("CostAlerts:DailyThresholdUsd", 50m));
     await scope.ServiceProvider.GetRequiredService<TurnRepricer>().RepriceAsync();
 }
 
@@ -340,4 +361,11 @@ public static class AuthPolicies
     public const string Agent = "Agent";
     public const string Dashboard = "Dashboard";
     public const string DashboardRead = "DashboardRead";
+    public const string BudgetEdit = "BudgetEdit";
+}
+
+/// <summary>App roles the identity provider sends in the token's <c>roles</c> claim.</summary>
+public static class AppRoles
+{
+    public const string Lead = "Lead";
 }

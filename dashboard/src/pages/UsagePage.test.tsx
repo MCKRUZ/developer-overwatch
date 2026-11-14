@@ -7,11 +7,13 @@ import { exportCsv } from "../utils/exportCsv";
 import { exportJson } from "../utils/exportJson";
 import { exportPdf } from "../utils/exportPdf";
 import { buildRunningSession, buildUsageSplitRow, buildUsageSplits, buildUsageSummary } from "../test/usageFactories";
+import { buildBudgetStatus, buildDeveloperWindow, buildPlanValue, buildUsageWindow } from "../test/meterFactories";
 
 vi.mock("../api", () => ({
   api: {
     pricing: { get: vi.fn() },
-    usage: { summary: vi.fn(), running: vi.fn() },
+    usage: { summary: vi.fn(), running: vi.fn(), windows: vi.fn(), planValue: vi.fn() },
+    budgets: { status: vi.fn() },
   },
 }));
 
@@ -50,9 +52,39 @@ describe("UsagePage", () => {
     vi.setSystemTime(new Date(2026, 10, 10, 9, 0));
     mockApi.usage.summary.mockResolvedValue(summary);
     mockApi.usage.running.mockResolvedValue([buildRunningSession({ project: "overwatch" })]);
+    mockApi.budgets.status.mockResolvedValue([buildBudgetStatus({ remainingUsd: 40 })]);
+    mockApi.usage.windows.mockResolvedValue([buildDeveloperWindow()]);
+    mockApi.usage.planValue.mockResolvedValue([buildPlanValue({ valueMultiple: 5.7 })]);
   });
 
   afterEach(() => vi.useRealTimers());
+
+  it("should show budgets, 5-hour windows and plan value beside the totals", async () => {
+    render(<UsagePage />);
+
+    expect(await screen.findByText("$40.00 left")).toBeInTheDocument();
+    expect(await screen.findByText("42% used")).toBeInTheDocument();
+    expect(await screen.findByText("5.7x")).toBeInTheDocument();
+  });
+
+  it("should refresh budgets, windows and plan value on a live usage event, without a manual refresh", async () => {
+    render(<UsagePage />);
+    await screen.findByText("$40.00 left");
+    mockApi.budgets.status.mockResolvedValue([
+      buildBudgetStatus({ remainingUsd: -1.2, usedFraction: 1.02, level: "Red" }),
+    ]);
+    mockApi.usage.windows.mockResolvedValue([
+      buildDeveloperWindow({ window: buildUsageWindow({ usedFraction: 0.81, level: "Amber" }) }),
+    ]);
+    mockApi.usage.planValue.mockResolvedValue([buildPlanValue({ valueMultiple: 6.1 })]);
+
+    act(() => live.onChange?.());
+
+    expect(await screen.findByText("over by $1.20")).toBeInTheDocument();
+    expect(screen.getByText("Limit reached")).toBeInTheDocument();
+    expect(await screen.findByText("81% used")).toBeInTheDocument();
+    expect(await screen.findByText("6.1x")).toBeInTheDocument();
+  });
 
   it("should load the last 7 local days by day when it opens", async () => {
     render(<UsagePage />);
@@ -70,7 +102,8 @@ describe("UsagePage", () => {
   it("should label dollar figures with the price date the summary was computed with", async () => {
     render(<UsagePage />);
 
-    expect(await screen.findByText("API-equivalent estimate (prices as of 2026-11-01)")).toBeInTheDocument();
+    // The page note plus one per meter section, all from the summary's own price date.
+    expect(await screen.findAllByText("API-equivalent estimate (prices as of 2026-11-01)")).toHaveLength(4);
     expect(mockApi.pricing.get).not.toHaveBeenCalled();
   });
 

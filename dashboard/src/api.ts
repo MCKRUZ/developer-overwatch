@@ -13,6 +13,14 @@ import type {
   UsageGranularity,
   UsageSummary,
   RunningSession,
+  Budget,
+  BudgetPeriod,
+  BudgetScope,
+  BudgetStatus,
+  CurrentUser,
+  DeveloperPlan,
+  DeveloperWindow,
+  PlanValue,
 } from "./types";
 
 const BASE = "/api";
@@ -32,7 +40,20 @@ export function getAccessToken(): string | null {
   return tokenGetter?.() ?? null;
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+/** A non-2xx response. `body` is the raw response text, e.g. problem details JSON. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: string;
+
+  constructor(status: number, body: string) {
+    super(`${status}: ${body}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+async function send(url: string, init?: RequestInit): Promise<Response> {
   const token = getAccessToken();
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> | undefined),
@@ -47,10 +68,45 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
   const res = await fetch(url, finalInit);
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
+    throw new ApiError(res.status, await res.text());
   }
+  return res;
+}
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await send(url, init);
   return res.json() as Promise<T>;
+}
+
+/** For 204 responses, which carry no body to parse. */
+async function fetchNoContent(url: string, init: RequestInit): Promise<void> {
+  await send(url, init);
+}
+
+function jsonBody(method: "POST" | "PUT", body: unknown): RequestInit {
+  return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+}
+
+function viewerTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+export interface CreateBudgetRequest {
+  scope: BudgetScope;
+  /** Required for Developer scope, null for Team. */
+  developerEmail: string | null;
+  period: BudgetPeriod;
+  amountUsd: number;
+}
+
+export interface UpdateDeveloperPlanRequest {
+  planName: string;
+  monthlyPriceUsd: number;
+  windowLimitUsd: number | null;
+}
+
+export interface CreateDeveloperPlanRequest extends UpdateDeveloperPlanRequest {
+  developerEmail: string;
 }
 
 export interface SessionListFilters {
@@ -176,7 +232,7 @@ export const api = {
         from: params.from,
         to: params.to,
         granularity: params.granularity,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timeZone: viewerTimeZone(),
       });
       if (params.developer) qs.set("developer", params.developer);
       if (params.project) qs.set("project", params.project);
@@ -188,6 +244,53 @@ export const api = {
       if (filters.project) qs.set("project", filters.project);
       const query = qs.toString();
       return fetchJson(`${BASE}/usage/running${query ? `?${query}` : ""}`);
+    },
+    windows(): Promise<DeveloperWindow[]> {
+      return fetchJson(`${BASE}/usage/windows`);
+    },
+    planValue(): Promise<PlanValue[]> {
+      const qs = new URLSearchParams({ tz: viewerTimeZone() });
+      return fetchJson(`${BASE}/usage/plan-value?${qs.toString()}`);
+    },
+  },
+
+  budgets: {
+    list(): Promise<Budget[]> {
+      return fetchJson(`${BASE}/budgets`);
+    },
+    status(): Promise<BudgetStatus[]> {
+      const qs = new URLSearchParams({ tz: viewerTimeZone() });
+      return fetchJson(`${BASE}/budgets/status?${qs.toString()}`);
+    },
+    create(body: CreateBudgetRequest): Promise<Budget> {
+      return fetchJson(`${BASE}/budgets`, jsonBody("POST", body));
+    },
+    update(id: string, amountUsd: number): Promise<Budget> {
+      return fetchJson(`${BASE}/budgets/${encodeURIComponent(id)}`, jsonBody("PUT", { amountUsd }));
+    },
+    remove(id: string): Promise<void> {
+      return fetchNoContent(`${BASE}/budgets/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
+  },
+
+  developerPlans: {
+    list(): Promise<DeveloperPlan[]> {
+      return fetchJson(`${BASE}/developer-plans`);
+    },
+    create(body: CreateDeveloperPlanRequest): Promise<DeveloperPlan> {
+      return fetchJson(`${BASE}/developer-plans`, jsonBody("POST", body));
+    },
+    update(id: string, body: UpdateDeveloperPlanRequest): Promise<DeveloperPlan> {
+      return fetchJson(`${BASE}/developer-plans/${encodeURIComponent(id)}`, jsonBody("PUT", body));
+    },
+    remove(id: string): Promise<void> {
+      return fetchNoContent(`${BASE}/developer-plans/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
+  },
+
+  auth: {
+    me(): Promise<CurrentUser> {
+      return fetchJson(`${BASE}/auth/me`);
     },
   },
 

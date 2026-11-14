@@ -133,9 +133,9 @@ export default function AnalyticsPage() {
       ? Math.round((analytics.approvedPullRequests / analytics.totalPullRequests) * 100)
       : 0;
 
-  const overThreshold = analytics.dailyCostTrend.some(
-    (d) => d.estimatedCostUsd > analytics.dailyCostThresholdUsd,
-  );
+  const teamDailyBudget = analytics.dailyCostThresholdUsd;
+  const overThreshold =
+    teamDailyBudget !== null && analytics.dailyCostTrend.some((d) => d.estimatedCostUsd > teamDailyBudget);
 
   function drillIntoSessions(day: string, developer?: string) {
     const from = new Date(`${day}T00:00:00.000Z`).toISOString();
@@ -264,12 +264,15 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="date" tick={CHART_TICK} />
                 <YAxis tick={CHART_TICK} tickFormatter={(v: number) => `$${v}`} />
                 <Tooltip formatter={(value) => formatCost(Number(value))} />
-                <ReferenceLine
-                  y={analytics.dailyCostThresholdUsd}
-                  stroke={COLORS.danger}
-                  strokeDasharray="4 4"
-                  label={{ value: "Threshold", fill: COLORS.danger, fontSize: 11 }}
-                />
+                {teamDailyBudget !== null && (
+                  <ReferenceLine
+                    y={teamDailyBudget}
+                    ifOverflow="extendDomain"
+                    stroke={COLORS.danger}
+                    strokeDasharray="4 4"
+                    label={{ value: "Team daily budget", fill: COLORS.danger, fontSize: 11 }}
+                  />
+                )}
                 <Bar dataKey="estimatedCostUsd" name="Cost (USD)" fill={COLORS.secondary} />
               </BarChart>
             </ResponsiveContainer>

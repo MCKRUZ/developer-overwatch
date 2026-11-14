@@ -1,17 +1,21 @@
 namespace DeveloperOverwatch.API.Controllers;
 
+using DeveloperOverwatch.Application.Models;
+using DeveloperOverwatch.Application.Queries.GetPlanValues;
 using DeveloperOverwatch.Application.Queries.GetRunningSessions;
 using DeveloperOverwatch.Application.Queries.GetUsageSummary;
+using DeveloperOverwatch.Application.Queries.GetUsageWindows;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 /// <summary>Usage meter reads. The DashboardRead policy lets the dashboard in anonymously when OIDC is not
-/// configured and with a JWT when it is, and never accepts the agent API key.</summary>
+/// configured and with a JWT when it is, and never accepts the agent API key. [Produces("application/json")] sits on
+/// the older actions only: on the class it would also stamp validation problems application/json instead of
+/// application/problem+json.</summary>
 [ApiController]
 [Route("api/usage")]
 [Authorize(Policy = AuthPolicies.DashboardRead)]
-[Produces("application/json")]
 [Tags("Usage")]
 public sealed class UsageController : ControllerBase
 {
@@ -21,6 +25,7 @@ public sealed class UsageController : ControllerBase
 
     /// <summary>Sessions running right now, with usage so far and burn over the last 15 minutes.</summary>
     [HttpGet("running")]
+    [Produces("application/json")]
     [ProducesResponseType(typeof(IReadOnlyList<RunningSessionItem>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -36,6 +41,7 @@ public sealed class UsageController : ControllerBase
     /// <remarks>Every parameter binds as nullable so a missing one reaches the validator and gets its own
     /// message, instead of defaulting to 0001-01-01 or being refused by model binding.</remarks>
     [HttpGet("summary")]
+    [Produces("application/json")]
     [ProducesResponseType(typeof(UsageSummary), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -55,5 +61,28 @@ public sealed class UsageController : ControllerBase
         return result.ValidationErrors.Count > 0
             ? BadRequest(new { errors = result.ValidationErrors })
             : BadRequest(result.Error);
+    }
+
+    /// <summary>Each developer's estimated open 5-hour window, and every plan holder without one.</summary>
+    [HttpGet("windows")]
+    [ProducesResponseType<IReadOnlyList<DeveloperWindowDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetWindows(CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetUsageWindowsQuery(), ct);
+        return result.IsSuccess ? Ok(result.Value) : this.Failure(result);
+    }
+
+    /// <summary>Each plan's price against the API-equivalent value of its developer's usage, month to date in the
+    /// viewer's local month.</summary>
+    /// <remarks><paramref name="tz"/> binds as nullable so a missing one reaches the validator.</remarks>
+    [HttpGet("plan-value")]
+    [ProducesResponseType<IReadOnlyList<PlanValueDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetPlanValues([FromQuery] string? tz, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetPlanValuesQuery(tz), ct);
+        return result.IsSuccess ? Ok(result.Value) : this.Failure(result);
     }
 }

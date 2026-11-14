@@ -2,6 +2,7 @@ namespace DeveloperOverwatch.Application.Queries.GetTeamAnalytics;
 
 using DeveloperOverwatch.Application.Models;
 using DeveloperOverwatch.Domain.Common;
+using DeveloperOverwatch.Domain.Entities;
 using DeveloperOverwatch.Domain.Enums;
 using DeveloperOverwatch.Domain.Interfaces;
 using MediatR;
@@ -13,20 +14,20 @@ public sealed class GetTeamAnalyticsQueryHandler
     private readonly IPullRequestReviewRepository _prRepository;
     private readonly IGovernanceViolationRepository _violationRepository;
     private readonly ICommitSessionLinkRepository _commitLinkRepository;
-    private readonly ICostThresholdProvider _costThreshold;
+    private readonly IBudgetRepository _budgetRepository;
 
     public GetTeamAnalyticsQueryHandler(
         ISessionRepository sessionRepository,
         IPullRequestReviewRepository prRepository,
         IGovernanceViolationRepository violationRepository,
         ICommitSessionLinkRepository commitLinkRepository,
-        ICostThresholdProvider costThreshold)
+        IBudgetRepository budgetRepository)
     {
         _sessionRepository = sessionRepository;
         _prRepository = prRepository;
         _violationRepository = violationRepository;
         _commitLinkRepository = commitLinkRepository;
-        _costThreshold = costThreshold;
+        _budgetRepository = budgetRepository;
     }
 
     public async Task<Result<TeamAnalytics>> Handle(GetTeamAnalyticsQuery request, CancellationToken cancellationToken)
@@ -38,6 +39,8 @@ public sealed class GetTeamAnalyticsQueryHandler
         var commitLinks = await _commitLinkRepository.GetAllAsync(cancellationToken);
         var usageRows = await _sessionRepository.GetTurnUsageRowsForDateRangeAsync(
             request.From, request.To, request.Developer, cancellationToken);
+        var teamDailyBudget = await _budgetRepository.FindAsync(
+            Budget.TeamSubjectKey, BudgetPeriod.Daily, cancellationToken);
 
         var oneWeekAgo = DateTime.UtcNow.AddDays(-7);
 
@@ -79,7 +82,7 @@ public sealed class GetTeamAnalyticsQueryHandler
             ViolationsThisWeek: violations.Count(v => v.CreatedAt >= oneWeekAgo),
             Developers: developers,
             DailyCostTrend: dailyCostTrend,
-            DailyCostThresholdUsd: _costThreshold.DailyThresholdUsd);
+            DailyCostThresholdUsd: teamDailyBudget?.AmountUsd);
 
         return Result<TeamAnalytics>.Success(analytics);
     }

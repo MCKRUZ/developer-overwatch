@@ -34,6 +34,22 @@ public static class UsageCalendar
         from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc) - OffsetPadding,
         to.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc) + OffsetPadding);
 
+    /// <summary>The UTC instant local <paramref name="date"/> begins in <paramref name="zone"/>. Where DST skips
+    /// midnight, the day begins at the first local time that exists; where DST repeats midnight, at its earlier
+    /// occurrence. <see cref="TimeZoneInfo.ConvertTimeToUtc(DateTime, TimeZoneInfo)"/> alone would throw on the
+    /// first and pick the later, standard-time instant on the second.</summary>
+    public static DateTime LocalMidnightUtc(DateOnly date, TimeZoneInfo zone)
+    {
+        var local = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        if (zone.IsAmbiguousTime(local))
+            return DateTime.SpecifyKind(local - zone.GetAmbiguousTimeOffsets(local).Max(), DateTimeKind.Utc);
+
+        // Transitions fall on whole minutes, so the first valid minute is where the skipped hour ends.
+        while (zone.IsInvalidTime(local))
+            local = local.AddMinutes(1);
+        return TimeZoneInfo.ConvertTimeToUtc(local, zone);
+    }
+
     public static DateOnly LocalDate(DateTime utc, TimeZoneInfo zone) =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), zone));
 
