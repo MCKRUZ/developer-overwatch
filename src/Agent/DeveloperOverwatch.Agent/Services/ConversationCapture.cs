@@ -12,8 +12,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// only thought — those still carry token usage and must be counted.</param>
 /// <param name="IsCompactSummary">A compaction summary: dated when the session was compacted, but its
 /// text restates the earlier prompts it replaces.</param>
-/// <param name="TurnKind">For a user turn: <see cref="TurnKinds.Prompt"/>, <see cref="TurnKinds.Injected"/> or
-/// <see cref="TurnKinds.CompactSummary"/>. Null for a response.</param>
+/// <param name="TurnKind">For a user turn: <see cref="Domain.Common.TurnKinds.Prompt"/>, <see cref="Domain.Common.TurnKinds.Injected"/> or
+/// <see cref="Domain.Common.TurnKinds.CompactSummary"/>. Null for a response.</param>
 public sealed record CapturedTurn(
     string SourceId,
     string Role,

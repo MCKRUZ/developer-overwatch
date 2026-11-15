@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DeveloperOverwatch.Domain.Common;
 
 namespace DeveloperOverwatch.Agent.Services;
 
@@ -201,12 +202,4 @@ internal sealed class TurnBuilder
         public int? CacheCreationInputTokens { get; set; }
         public int? CacheReadInputTokens { get; set; }
     }
-}
-
-/// <summary>What started a user turn: only <see cref="Prompt"/> is the developer typing.</summary>
-public static class TurnKinds
-{
-    public const string Prompt = "prompt";
-    public const string Injected = "injected";
-    public const string CompactSummary = "compactSummary";
 }
