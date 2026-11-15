@@ -12,6 +12,8 @@ namespace DeveloperOverwatch.Agent.Services;
 /// only thought — those still carry token usage and must be counted.</param>
 /// <param name="IsCompactSummary">A compaction summary: dated when the session was compacted, but its
 /// text restates the earlier prompts it replaces.</param>
+/// <param name="TurnKind">For a user turn: <see cref="TurnKinds.Prompt"/>, <see cref="TurnKinds.Injected"/> or
+/// <see cref="TurnKinds.CompactSummary"/>. Null for a response.</param>
 public sealed record CapturedTurn(
     string SourceId,
     string Role,
@@ -25,7 +27,8 @@ public sealed record CapturedTurn(
     string? GitBranch = null,
     string? SubagentName = null,
     int StartLine = 0,
-    bool IsCompactSummary = false);
+    bool IsCompactSummary = false,
+    string? TurnKind = null);
 
 /// <param name="ParseErrors">Lines read that were not valid JSON.</param>
 public sealed record ConversationCaptureResult(IReadOnlyList<CapturedTurn> Turns, int TotalLines, int ParseErrors = 0);

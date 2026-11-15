@@ -22,6 +22,7 @@ import type {
   DeveloperWindow,
   PlanValue,
 } from "./types";
+import type { PromptCost, SessionContext, SubagentUsage } from "./sessionInsightTypes";
 
 const BASE = "/api";
 
@@ -166,6 +167,15 @@ export const api = {
     },
     modelBreakdown(id: string): Promise<ModelUsage[]> {
       return fetchJson(`${BASE}/sessions/${id}/model-breakdown`);
+    },
+    context(id: string): Promise<SessionContext> {
+      return fetchJson(`${BASE}/sessions/${encodeURIComponent(id)}/context`);
+    },
+    prompts(id: string): Promise<PromptCost[]> {
+      return fetchJson(`${BASE}/sessions/${encodeURIComponent(id)}/prompts`);
+    },
+    subagentBreakdown(id: string): Promise<SubagentUsage[]> {
+      return fetchJson(`${BASE}/sessions/${encodeURIComponent(id)}/subagent-breakdown`);
     },
   },
 

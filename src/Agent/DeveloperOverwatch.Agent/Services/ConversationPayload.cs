@@ -42,9 +42,12 @@ internal sealed record ConversationMarker(string TranscriptPath, bool UsageOnly,
 /// <summary>Builds the <c>/events</c> payload that carries captured conversation turns.</summary>
 internal static class ConversationPayload
 {
-    /// <param name="usageOnly">Ship no conversation text: content is null and no secret is flagged.</param>
+    /// <param name="usageOnly">Ship no conversation text: content is null and no secret is flagged. The turn kind
+    /// is not text, and still ships.</param>
+    /// <param name="contextSnapshot">Sent as <c>contextSnapshot</c>, null when there is none for this POST.</param>
     public static string Build(
-        string sessionId, string? sessionTitle, IReadOnlyList<CapturedTurn> turns, IPrivacyRedactor redactor, bool usageOnly) =>
+        string sessionId, string? sessionTitle, IReadOnlyList<CapturedTurn> turns, IPrivacyRedactor redactor, bool usageOnly,
+        ContextSnapshot? contextSnapshot) =>
         JsonSerializer.Serialize(new
         {
             sessionId,
@@ -69,11 +72,33 @@ internal static class ConversationPayload
                 // ever gets that one was present.
                 containsRedactedSecret = !usageOnly && t.Content is not null && redactor.ContainsSensitive(t.Content),
                 timestamp = (t.Timestamp ?? DateTime.UtcNow).ToString("o"),
-                isDecision = false
+                isDecision = false,
+                turnKind = t.TurnKind
             }),
             toolExecutions = Array.Empty<object>(),
-            fileChanges = Array.Empty<object>()
+            fileChanges = Array.Empty<object>(),
+            contextSnapshot = SnapshotJson(contextSnapshot)
         });
+
+    private static object? SnapshotJson(ContextSnapshot? snapshot) =>
+        snapshot is null
+            ? null
+            : new
+            {
+                takenAt = snapshot.TakenAt.ToString("o"),
+                claudeCodeVersion = snapshot.ClaudeCodeVersion,
+                model = snapshot.Model,
+                measuredContextTokens = snapshot.MeasuredContextTokens,
+                categories = snapshot.Categories.Select(c => new { category = c.Category, server = c.Server, tokens = c.Tokens }),
+                tools = snapshot.Tools.Select(t => new
+                {
+                    group = t.Group, isMcp = t.IsMcp, toolCount = t.ToolCount, tokensPerRequest = t.TokensPerRequest, used = t.Used
+                }),
+                compactions = snapshot.Compactions.Select(c => new
+                {
+                    at = c.At.ToString("o"), trigger = c.Trigger, preTokens = c.PreTokens, postTokens = c.PostTokens
+                })
+            };
 
     // Claude Code stores a `/rename`d session title in a sidecar file next to the transcript
     // (<projects-dir>/<encoded-repo>/<session-id>/custom-title.json), not in the transcript

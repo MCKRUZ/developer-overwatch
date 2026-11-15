@@ -18,6 +18,7 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
         builder.Property(s => s.ProjectKey).HasMaxLength(512);
         builder.Property(s => s.ActivityState).HasConversion<string>().HasMaxLength(16);
         builder.Property(s => s.LastToolErrorName).HasMaxLength(255);
+        builder.Property(s => s.PeakContextModel).HasMaxLength(255);
         builder.HasIndex(s => s.DeveloperEmail);
         builder.HasIndex(s => s.Status);
     }

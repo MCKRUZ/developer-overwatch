@@ -193,6 +193,10 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.Property<int>("TurnIndex")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TurnKind")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("SessionId");
@@ -440,6 +444,10 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                         .HasMaxLength(255)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PeakContextModel")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
                     b.Property<long?>("PeakContextTokens")
                         .HasColumnType("INTEGER");
 
@@ -485,6 +493,32 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                     b.HasIndex("Status");
 
                     b.ToTable("Sessions");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionContextSnapshot", b =>
+                {
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClaudeCodeVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("MeasuredContextTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("TakenAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SessionId");
+
+                    b.ToTable("SessionContextSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>
@@ -620,6 +654,124 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                         .IsRequired();
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionContextSnapshot", b =>
+                {
+                    b.HasOne("DeveloperOverwatch.Domain.Entities.Session", null)
+                        .WithOne()
+                        .HasForeignKey("DeveloperOverwatch.Domain.Entities.SessionContextSnapshot", "SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCategory", "Categories", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<string>("Category")
+                                .IsRequired()
+                                .HasMaxLength(32)
+                                .HasColumnType("TEXT");
+
+                            b1.Property<string>("Server")
+                                .HasMaxLength(255)
+                                .HasColumnType("TEXT");
+
+                            b1.Property<string>("SessionId")
+                                .IsRequired()
+                                .HasColumnType("TEXT");
+
+                            b1.Property<long>("Tokens")
+                                .HasColumnType("INTEGER");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("SessionId");
+
+                            b1.ToTable("SessionContextCategories", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("SessionId");
+                        });
+
+                    b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCompaction", "Compactions", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<DateTime>("At")
+                                .HasColumnType("TEXT");
+
+                            b1.Property<long>("PostTokens")
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<long>("PreTokens")
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<string>("SessionId")
+                                .IsRequired()
+                                .HasColumnType("TEXT");
+
+                            b1.Property<string>("Trigger")
+                                .IsRequired()
+                                .HasMaxLength(20)
+                                .HasColumnType("TEXT");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("SessionId");
+
+                            b1.ToTable("SessionContextCompactions", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("SessionId");
+                        });
+
+                    b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextToolGroup", "Tools", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<string>("Group")
+                                .IsRequired()
+                                .HasMaxLength(255)
+                                .HasColumnType("TEXT");
+
+                            b1.Property<bool>("IsMcp")
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<string>("SessionId")
+                                .IsRequired()
+                                .HasColumnType("TEXT");
+
+                            b1.Property<long>("TokensPerRequest")
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<int>("ToolCount")
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<bool>("Used")
+                                .HasColumnType("INTEGER");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("SessionId");
+
+                            b1.ToTable("SessionContextTools", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("SessionId");
+                        });
+
+                    b.Navigation("Categories");
+
+                    b.Navigation("Compactions");
+
+                    b.Navigation("Tools");
                 });
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionToolFailure", b =>

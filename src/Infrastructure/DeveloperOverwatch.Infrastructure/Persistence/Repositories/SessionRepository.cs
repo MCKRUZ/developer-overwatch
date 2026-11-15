@@ -329,6 +329,13 @@ public sealed class SessionRepository : ISessionRepository
     public async Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default) =>
         await _db.SessionToolFailures.AddRangeAsync(failures, ct);
 
+    // Split, because one query would join the three owned collections into categories x tools x compactions rows.
+    public Task<SessionContextSnapshot?> GetContextSnapshotAsync(string sessionId, CancellationToken ct = default) =>
+        _db.SessionContextSnapshots.AsSplitQuery().FirstOrDefaultAsync(s => s.SessionId == sessionId, ct);
+
+    public async Task AddContextSnapshotAsync(SessionContextSnapshot snapshot, CancellationToken ct = default) =>
+        await _db.SessionContextSnapshots.AddAsync(snapshot, ct);
+
     public Task<bool> IsAgentEventProcessedAsync(string sessionId, string eventId, CancellationToken ct = default) =>
         _db.ProcessedAgentEvents.AnyAsync(e => e.SessionId == sessionId && e.EventId == eventId, ct);
 

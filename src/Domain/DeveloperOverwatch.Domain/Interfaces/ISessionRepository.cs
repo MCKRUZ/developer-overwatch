@@ -89,6 +89,12 @@ public interface ISessionRepository
 
     Task AddToolFailuresAsync(IEnumerable<SessionToolFailure> failures, CancellationToken ct = default);
 
+    /// <summary>The session's latest context snapshot with all its rows, tracked so the caller can replace
+    /// it in place; null when the Agent has not sent one.</summary>
+    Task<SessionContextSnapshot?> GetContextSnapshotAsync(string sessionId, CancellationToken ct = default);
+
+    Task AddContextSnapshotAsync(SessionContextSnapshot snapshot, CancellationToken ct = default);
+
     /// <summary>Whether this session already processed a start or end with this Agent event id. Scoped
     /// to the session, so an id recorded for one session never makes another's event a duplicate.</summary>
     Task<bool> IsAgentEventProcessedAsync(string sessionId, string eventId, CancellationToken ct = default);

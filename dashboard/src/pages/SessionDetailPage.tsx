@@ -19,6 +19,7 @@ import SeverityBadge from "../components/SeverityBadge";
 import ChartCard from "../components/ChartCard";
 import PriceEstimateNote from "../components/PriceEstimateNote";
 import SessionTimeline from "../components/SessionTimeline";
+import SessionInsights from "../components/session/SessionInsights";
 import { formatTotalTokens, formatCost, tokenBreakdownTooltip } from "../utils/tokenFormat";
 import { violationSessionLink } from "../utils/violationLink";
 
@@ -291,6 +292,8 @@ export default function SessionDetailPage() {
           )}
         </div>
       )}
+
+      <SessionInsights sessionId={session.id} />
 
       <div className="mb-6">
         <SessionTimeline sessionId={session.id} />

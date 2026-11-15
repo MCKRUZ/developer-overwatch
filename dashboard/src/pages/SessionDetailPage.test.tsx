@@ -9,6 +9,7 @@ import {
   buildArchitectAnnotation,
   buildModelUsage,
 } from "../test/factories";
+import { buildEmptySessionContext, buildPromptCost } from "../test/sessionInsightFactories";
 
 vi.mock("../api", () => ({
   api: {
@@ -18,6 +19,9 @@ vi.mock("../api", () => ({
       dailyUsage: vi.fn(),
       modelBreakdown: vi.fn(),
       timeline: vi.fn(),
+      context: vi.fn(),
+      prompts: vi.fn(),
+      subagentBreakdown: vi.fn(),
     },
     annotations: {
       create: vi.fn(),
@@ -51,6 +55,9 @@ describe("SessionDetailPage", () => {
       fileChanges: [],
       hasMore: false,
     });
+    mockApi.sessions.context.mockResolvedValue(buildEmptySessionContext());
+    mockApi.sessions.prompts.mockResolvedValue([]);
+    mockApi.sessions.subagentBreakdown.mockResolvedValue([]);
   });
 
   it("shows loading state initially", () => {
@@ -260,5 +267,21 @@ describe("SessionDetailPage", () => {
       expect(screen.getByText("Cost by Model")).toBeInTheDocument();
     });
     expect(screen.queryByText("100% of this session's cost")).not.toBeInTheDocument();
+  });
+
+  it("should show the session-level sections above the timeline, each loading on its own", async () => {
+    mockApi.sessions.get.mockResolvedValue(buildSessionDetail());
+    mockApi.sessions.prompts.mockResolvedValue([buildPromptCost({ label: "Refactor the parser" })]);
+    mockApi.sessions.subagentBreakdown.mockRejectedValue(new Error("500: boom"));
+    renderWithRoute("sess-001");
+
+    expect(await screen.findByText("Refactor the parser")).toBeInTheDocument();
+    expect(mockApi.sessions.context).toHaveBeenCalledWith("sess-001");
+    expect(await screen.findByText("Subagent split unavailable: 500: boom")).toBeInTheDocument();
+    expect(screen.getAllByText("Not available for this Claude Code version")).toHaveLength(2);
+
+    const breakout = screen.getByRole("region", { name: "Context Window Breakout" });
+    const timeline = await screen.findByText("No events recorded for this session.");
+    expect(breakout.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
