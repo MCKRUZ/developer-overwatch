@@ -672,11 +672,11 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCategory", "Categories", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
-                                .HasColumnType("int");
+                                .HasColumnType("bigint");
 
-                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<long>("Id"));
 
                             b1.Property<string>("Category")
                                 .IsRequired()
@@ -706,11 +706,11 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCompaction", "Compactions", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
-                                .HasColumnType("int");
+                                .HasColumnType("bigint");
 
-                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<long>("Id"));
 
                             b1.Property<DateTime>("At")
                                 .HasColumnType("datetime2");
@@ -742,11 +742,11 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextToolGroup", "Tools", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
-                                .HasColumnType("int");
+                                .HasColumnType("bigint");
 
-                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<long>("Id"));
 
                             b1.Property<string>("Group")
                                 .IsRequired()

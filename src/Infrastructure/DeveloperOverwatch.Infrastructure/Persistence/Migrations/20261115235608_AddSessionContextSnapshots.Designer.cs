@@ -3,48 +3,53 @@ using System;
 using DeveloperOverwatch.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
+namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
 {
-    [DbContext(typeof(SqliteOverwatchDbContext))]
-    [Migration("20261114015030_AddSessionContextSnapshotsSqlite")]
-    partial class AddSessionContextSnapshotsSqlite
+    [DbContext(typeof(OverwatchDbContext))]
+    [Migration("20261115235608_AddSessionContextSnapshots")]
+    partial class AddSessionContextSnapshots
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.15");
+            modelBuilder
+                .HasAnnotation("ProductVersion", "10.0.15")
+                .HasAnnotation("Relational:MaxIdentifierLength", 128);
+
+            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ArchitectAnnotation", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("Content")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("CreatedBy")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ToolExecutionId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("TurnId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
 
@@ -61,36 +66,36 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<decimal>("AmountUsd")
                         .HasPrecision(18, 6)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("decimal(18,6)");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("DeveloperEmail")
                         .HasMaxLength(320)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(320)");
 
                     b.Property<string>("Period")
                         .IsRequired()
                         .HasMaxLength(16)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<string>("Scope")
                         .IsRequired()
                         .HasMaxLength(16)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<string>("SubjectKey")
                         .IsRequired()
                         .HasMaxLength(320)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(320)");
 
                     b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 
@@ -103,25 +108,25 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.CommitSessionLink", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("CommitSha")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<double?>("Confidence")
-                        .HasColumnType("REAL");
+                        .HasColumnType("float");
 
                     b.Property<string>("LinkMethod")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Repo")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
 
@@ -135,70 +140,70 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ConversationTurn", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<int?>("CacheCreationInputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<int?>("CacheReadInputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<bool>("ContainsRedactedSecret")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bit");
 
                     b.Property<string>("Content")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<long?>("ContextTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<decimal?>("EstimatedCostUsd")
                         .HasPrecision(18, 6)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("decimal(18,6)");
 
                     b.Property<string>("GitBranch")
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<int?>("InputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<bool>("IsDecision")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bit");
 
                     b.Property<string>("Model")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int?>("OutputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<DateOnly?>("PricesAsOf")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("date");
 
                     b.Property<string>("Role")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("SubagentName")
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<DateTime>("Timestamp")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<int?>("TokenCount")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<int>("TurnIndex")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("TurnKind")
                         .HasMaxLength(20)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(20)");
 
                     b.HasKey("Id");
 
@@ -213,31 +218,31 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("DeveloperEmail")
                         .IsRequired()
                         .HasMaxLength(320)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(320)");
 
                     b.Property<decimal>("MonthlyPriceUsd")
                         .HasPrecision(18, 6)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("decimal(18,6)");
 
                     b.Property<string>("PlanName")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<decimal?>("WindowLimitUsd")
                         .HasPrecision(18, 6)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("decimal(18,6)");
 
                     b.HasKey("Id");
 
@@ -250,30 +255,30 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.FileChange", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("AfterHash")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("BeforeHash")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ChangeType")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("DiffText")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("FilePath")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ToolExecutionId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
 
@@ -287,48 +292,48 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.GovernanceViolation", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ContextJson")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ConversationTurnId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("Message")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ResolutionReason")
                         .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(1000)");
 
                     b.Property<bool>("Resolved")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bit");
 
                     b.Property<DateTime?>("ResolvedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("ResolvedBy")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("RuleId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("Severity")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ToolExecutionId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -345,22 +350,23 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 {
                     b.Property<string>("SessionId")
                         .HasMaxLength(450)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("EventId")
                         .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(64)");
 
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(16)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<DateTime>("ProcessedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
-                    b.HasKey("SessionId", "EventId")
-                        .HasAnnotation("SqlServer:Clustered", false);
+                    b.HasKey("SessionId", "EventId");
+
+                    SqlServerKeyBuilderExtensions.IsClustered(b.HasKey("SessionId", "EventId"), false);
 
                     b.ToTable("ProcessedAgentEvents", (string)null);
                 });
@@ -368,27 +374,27 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.PullRequestReview", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("Notes")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("PrNumber")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("Repo")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTime?>("ReviewedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("ReviewedBy")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -400,94 +406,94 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.Session", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ActivityState")
                         .HasMaxLength(16)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<DateTime?>("ActivityStateAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("Agent")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasMaxLength(64)
-                        .HasColumnType("TEXT")
+                        .HasColumnType("nvarchar(64)")
                         .HasDefaultValue("claude-code");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("DeveloperEmail")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("DeveloperName")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime?>("EndedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<decimal>("EstimatedCostUsd")
                         .HasPrecision(18, 6)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("decimal(18,6)");
 
                     b.Property<DateTime>("LastActivityAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<DateTime?>("LastToolErrorAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("LastToolErrorName")
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<string>("MachineName")
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<string>("PeakContextModel")
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<long?>("PeakContextTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<string>("ProjectKey")
                         .HasMaxLength(512)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(512)");
 
                     b.Property<string>("RepoPath")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("StartedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("SummaryJson")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Title")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("ToolErrorCount")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<long>("TotalCacheCreationInputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<long>("TotalCacheReadInputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<long>("TotalInputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<long>("TotalOutputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.HasKey("Id");
 
@@ -501,23 +507,23 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.SessionContextSnapshot", b =>
                 {
                     b.Property<string>("SessionId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ClaudeCodeVersion")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<long>("MeasuredContextTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<string>("Model")
                         .IsRequired()
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<DateTime>("TakenAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.HasKey("SessionId");
 
@@ -528,19 +534,19 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 {
                     b.Property<string>("Id")
                         .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(64)");
 
                     b.Property<DateTime>("At")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("ToolName")
                         .IsRequired()
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(255)");
 
                     b.HasKey("Id");
 
@@ -552,30 +558,30 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
             modelBuilder.Entity("DeveloperOverwatch.Domain.Entities.ToolExecution", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<int?>("DurationMs")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("InputParams")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("OutputSummary")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTime>("Timestamp")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("ToolName")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("TurnId")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
 
@@ -669,25 +675,27 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCategory", "Categories", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<long>("Id"));
 
                             b1.Property<string>("Category")
                                 .IsRequired()
                                 .HasMaxLength(32)
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(32)");
 
                             b1.Property<string>("Server")
                                 .HasMaxLength(255)
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(255)");
 
                             b1.Property<string>("SessionId")
                                 .IsRequired()
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(450)");
 
                             b1.Property<long>("Tokens")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
 
                             b1.HasKey("Id");
 
@@ -701,27 +709,29 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCompaction", "Compactions", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<long>("Id"));
 
                             b1.Property<DateTime>("At")
-                                .HasColumnType("TEXT");
+                                .HasColumnType("datetime2");
 
                             b1.Property<long>("PostTokens")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
 
                             b1.Property<long>("PreTokens")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
 
                             b1.Property<string>("SessionId")
                                 .IsRequired()
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(450)");
 
                             b1.Property<string>("Trigger")
                                 .IsRequired()
                                 .HasMaxLength(20)
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(20)");
 
                             b1.HasKey("Id");
 
@@ -735,30 +745,32 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextToolGroup", "Tools", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<long>("Id"));
 
                             b1.Property<string>("Group")
                                 .IsRequired()
                                 .HasMaxLength(255)
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(255)");
 
                             b1.Property<bool>("IsMcp")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bit");
 
                             b1.Property<string>("SessionId")
                                 .IsRequired()
-                                .HasColumnType("TEXT");
+                                .HasColumnType("nvarchar(450)");
 
                             b1.Property<long>("TokensPerRequest")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bigint");
 
                             b1.Property<int>("ToolCount")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("int");
 
                             b1.Property<bool>("Used")
-                                .HasColumnType("INTEGER");
+                                .HasColumnType("bit");
 
                             b1.HasKey("Id");
 

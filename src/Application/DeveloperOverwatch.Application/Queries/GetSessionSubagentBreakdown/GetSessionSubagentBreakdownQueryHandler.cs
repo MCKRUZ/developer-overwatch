@@ -7,6 +7,9 @@ using MediatR;
 public sealed class GetSessionSubagentBreakdownQueryHandler
     : IRequestHandler<GetSessionSubagentBreakdownQuery, Result<IReadOnlyList<SubagentUsage>>>
 {
+    /// <summary>The row for subagent turns the Agent could not name (their meta file was missing).</summary>
+    public const string UnnamedSubagent = "(unnamed subagent)";
+
     private readonly ISessionInsightRepository _repository;
 
     public GetSessionSubagentBreakdownQueryHandler(ISessionInsightRepository repository) => _repository = repository;
@@ -19,13 +22,17 @@ public sealed class GetSessionSubagentBreakdownQueryHandler
 
         var turns = await _repository.GetTurnCostRowsAsync(request.SessionId, cancellationToken);
         var rows = turns
-            .GroupBy(t => t.SubagentName)
+            .GroupBy(RowName)
             .Select(ToUsage)
             .OrderByDescending(r => r.EstimatedCostUsd)
             .ThenBy(r => r.SubagentName, StringComparer.Ordinal)
             .ToList();
         return Result<IReadOnlyList<SubagentUsage>>.Success(rows);
     }
+
+    // The role decides main thread or subagent, as it does for the context reading; the name only labels the row.
+    private static string? RowName(SessionTurnCostRow turn) =>
+        turn.Role == SessionTurnCostRow.SubagentRole ? turn.SubagentName ?? UnnamedSubagent : null;
 
     private static SubagentUsage ToUsage(IGrouping<string?, SessionTurnCostRow> turns)
     {

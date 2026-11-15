@@ -59,6 +59,6 @@ public sealed class GetSessionPromptsQueryHandler
             read,
             input + output + write + read,
             turns.Sum(t => t.EstimatedCostUsd ?? 0m),
-            turns.Where(t => t.SubagentName is not null).Sum(t => t.EstimatedCostUsd ?? 0m));
+            turns.Where(t => t.Role == SessionTurnCostRow.SubagentRole).Sum(t => t.EstimatedCostUsd ?? 0m));
     }
 }

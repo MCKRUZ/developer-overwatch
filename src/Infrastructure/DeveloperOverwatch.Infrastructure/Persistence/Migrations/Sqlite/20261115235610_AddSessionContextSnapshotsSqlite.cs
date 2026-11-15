@@ -50,7 +50,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 name: "SessionContextCategories",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table.Column<long>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     Category = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
                     Server = table.Column<string>(type: "TEXT", maxLength: 255, nullable: true),
@@ -72,7 +72,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 name: "SessionContextCompactions",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table.Column<long>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     At = table.Column<DateTime>(type: "TEXT", nullable: false),
                     Trigger = table.Column<string>(type: "TEXT", maxLength: 20, nullable: false),
@@ -95,7 +95,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
                 name: "SessionContextTools",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table.Column<long>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     Group = table.Column<string>(type: "TEXT", maxLength: 255, nullable: false),
                     IsMcp = table.Column<bool>(type: "INTEGER", nullable: false),

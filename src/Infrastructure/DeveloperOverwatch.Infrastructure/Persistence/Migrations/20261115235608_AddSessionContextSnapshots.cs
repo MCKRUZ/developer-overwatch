@@ -50,7 +50,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                 name: "SessionContextCategories",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "int", nullable: false)
+                    Id = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     Category = table.Column<string>(type: "nvarchar(32)", maxLength: 32, nullable: false),
                     Server = table.Column<string>(type: "nvarchar(255)", maxLength: 255, nullable: true),
@@ -72,7 +72,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                 name: "SessionContextCompactions",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "int", nullable: false)
+                    Id = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     At = table.Column<DateTime>(type: "datetime2", nullable: false),
                     Trigger = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
@@ -95,7 +95,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations
                 name: "SessionContextTools",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "int", nullable: false)
+                    Id = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     Group = table.Column<string>(type: "nvarchar(255)", maxLength: 255, nullable: false),
                     IsMcp = table.Column<bool>(type: "bit", nullable: false),

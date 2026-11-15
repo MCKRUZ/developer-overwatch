@@ -666,7 +666,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCategory", "Categories", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
                                 .HasColumnType("INTEGER");
 
@@ -698,7 +698,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextCompaction", "Compactions", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
                                 .HasColumnType("INTEGER");
 
@@ -732,7 +732,7 @@ namespace DeveloperOverwatch.Infrastructure.Persistence.Migrations.Sqlite
 
                     b.OwnsMany("DeveloperOverwatch.Domain.Entities.SessionContextToolGroup", "Tools", b1 =>
                         {
-                            b1.Property<int>("Id")
+                            b1.Property<long>("Id")
                                 .ValueGeneratedOnAdd()
                                 .HasColumnType("INTEGER");
 

@@ -81,6 +81,14 @@ public class GetSessionPromptsTests
     }
 
     [Fact]
+    public async Task Handle_SubagentTurnWithoutName_StillCountsAsSubagentCost()
+    {
+        Rows(User("prompt", "research"), Assistant(1m), Subagent(3m) with { SubagentName = null });
+
+        (await Handle()).Value!.Single().SubagentCostUsd.Should().Be(3m);
+    }
+
+    [Fact]
     public async Task Handle_SumsTokensAsLong()
     {
         Rows(User("prompt", "big"), Assistant(1m, input: int.MaxValue, output: int.MaxValue, write: 1, read: 2));

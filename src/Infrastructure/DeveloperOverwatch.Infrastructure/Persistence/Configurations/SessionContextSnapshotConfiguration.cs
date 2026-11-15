@@ -47,7 +47,7 @@ public class SessionContextSnapshotConfiguration : IEntityTypeConfiguration<Sess
         where T : class
     {
         row.WithOwner().HasForeignKey("SessionId");
-        row.Property<int>("Id");
+        row.Property<long>("Id");
         row.HasKey("Id");
     }
 }

@@ -47,6 +47,20 @@ public class GetSessionSubagentBreakdownTests
         rows.Sum(r => r.TotalTokens).Should().Be(turns.Sum(t => (long)t.InputTokens!.Value + t.OutputTokens!.Value));
     }
 
+    // The Agent leaves the name empty when a subagent's meta file is missing; its turns are still a subagent's,
+    // and must not be added to the main thread, whose context they never shared.
+    [Fact]
+    public async Task Handle_SubagentTurnWithoutName_IsAnUnnamedSubagentNotTheMainThread()
+    {
+        Rows(Turn(null, 1m, 10), Turn("Explore", 3m, 20) with { SubagentName = null });
+
+        var rows = (await Handle()).Value!;
+
+        rows.Select(r => (r.SubagentName, r.EstimatedCostUsd)).Should().Equal(
+            (GetSessionSubagentBreakdownQueryHandler.UnnamedSubagent, 3m),
+            (null, 1m));
+    }
+
     [Fact]
     public async Task Handle_NoTurns_ReturnsEmpty()
     {
