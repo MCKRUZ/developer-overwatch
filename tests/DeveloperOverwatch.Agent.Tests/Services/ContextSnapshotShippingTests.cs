@@ -73,6 +73,25 @@ public sealed class ContextSnapshotShippingTests : IDisposable
         body["contextSnapshot"].Should().BeNull();
     }
 
+    // A session already running before the floor keeps its earlier compactions in the transcript; their times and
+    // sizes are from before the developer joined, so they stay on the machine even when the snapshot itself ships.
+    [Fact]
+    public async Task CompactionsBeforeTheFloor_AreDropped_FromAnAdmittedSnapshot()
+    {
+        File.WriteAllLines(_transcript,
+        [
+            Compact(At(-30), "auto", 180_000, 20_000),
+            Compact(At(5), "manual", 90_000, 15_000),
+            Shape("h1", [new('s', 400)], Tool("mcp__github__a", "d")), ApiRequest("h1", At(10)),
+            Prompt(1, At(10)), Assistant("msg_1", 10, 990, ts: At(11)),
+        ]);
+
+        await ShipAsync(new OpenSession("s1", Floor));
+
+        var compactions = SentBodies().Single()["contextSnapshot"]!["compactions"]!.AsArray();
+        compactions.Select(c => c!["trigger"]!.GetValue<string>()).Should().Equal("manual");
+    }
+
     [Fact]
     public async Task Backfill_NeverSendsASnapshot()
     {

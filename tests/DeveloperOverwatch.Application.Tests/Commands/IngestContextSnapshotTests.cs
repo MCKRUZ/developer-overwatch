@@ -124,6 +124,21 @@ public sealed class IngestContextSnapshotTests : IDisposable
         (await _db.StoredSnapshot()).Model.Should().Be("next");
     }
 
+    // Compactions are shown newest first, so one stamped in the future by a fast clock would sit on top for good.
+    [Fact]
+    public async Task Ingest_CompactionFromTheFuture_IsStoredAtNow()
+    {
+        var sessionId = await _db.StartSession();
+        var snapshot = Snapshot(Now.AddMinutes(-5)) with
+        {
+            Compactions = [new() { At = Now.AddDays(2), Trigger = "auto", PreTokens = 100, PostTokens = 10 }],
+        };
+
+        await _db.Ingest(Command(sessionId, snapshot));
+
+        (await _db.StoredSnapshot()).Compactions.Should().ContainSingle().Which.At.Should().Be(Now);
+    }
+
     [Fact]
     public async Task Ingest_BatchWithoutSnapshot_LeavesTheStoredOneAlone()
     {

@@ -283,7 +283,7 @@ public sealed class IngestSessionEventsCommandHandler
         if (dto is null)
             return;
 
-        var incoming = ContextSnapshotMapper.ToEntity(sessionId, dto, ToUtc(AtMost(dto.TakenAt, now)));
+        var incoming = ContextSnapshotMapper.ToEntity(sessionId, dto, now);
         var stored = await _repository.GetContextSnapshotAsync(sessionId, cancellationToken);
         if (stored is null)
             await _repository.AddContextSnapshotAsync(incoming, cancellationToken);

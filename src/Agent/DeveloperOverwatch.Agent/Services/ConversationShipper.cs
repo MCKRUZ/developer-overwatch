@@ -102,7 +102,7 @@ internal sealed class ConversationShipper
     }
 
     /// <summary>The context snapshot gates like the turns it rides with: never in Local mode or with backfill, and
-    /// only when dated at or after the session's floor. It is read only when new main-transcript turns are being sent,
+    /// only when dated at or after the session's floor, and without any compaction dated before it. It is read only when new main-transcript turns are being sent,
     /// since only those move the session's context. A transcript that cannot be read sends none.</summary>
     private async Task<ContextSnapshot?> ContextSnapshotAsync(
         OpenSession session, ConversationMarker marker, IReadOnlyList<TurnRef> turns, CancellationToken ct)
@@ -114,7 +114,12 @@ internal sealed class ConversationShipper
         {
             var path = marker.TranscriptPath;
             var snapshot = await ContextSnapshotReader.ReadAsync(path, _capture.FindSubagentTranscripts(path), ct);
-            return snapshot is not null && session.Admits(snapshot.TakenAt) ? snapshot : null;
+            if (snapshot is null || !session.Admits(snapshot.TakenAt))
+                return null;
+
+            // A compaction carries its own time and sizes, so one from before the floor stays on the machine. Which
+            // tools were used cannot be dated (tools-used lines carry no time), so those flags cover the whole session.
+            return snapshot with { Compactions = snapshot.Compactions.Where(c => session.Admits(c.At)).ToList() };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
