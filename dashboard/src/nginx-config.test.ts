@@ -48,7 +48,17 @@ describe.each(configs)("%s", (_name, conf) => {
     expect(hubs).not.toContain("add_header");
   });
 
-  it("should state connect-src 'self' in the CSP so fetch and same-origin ws/wss stay restricted to this origin", () => {
-    expect(conf).toMatch(/Content-Security-Policy "[^"]*connect-src 'self';[^"]*"/);
+  // The only other origin allowed is the sign-in server's, which the deployed image fills in from OIDC_ORIGIN.
+  it("should restrict connect-src to this origin and the sign-in server, so fetch and ws/wss reach nothing else", () => {
+    expect(conf).toMatch(/Content-Security-Policy "[^"]*connect-src 'self'(?: \$\{OIDC_ORIGIN\})?;[^"]*"/);
+  });
+
+  // Azure Container Apps routes on the Host header and the TLS server name. Forwarding the dashboard's own host
+  // lands every API and hub call back on the dashboard.
+  it.each(["/api/", "/hubs/"])("should send the API's own host name upstream from %s", (path) => {
+    const block = locationBlock(conf, path);
+    expect(block).toContain("proxy_set_header Host $proxy_host;");
+    expect(block).toContain("proxy_ssl_server_name on;");
+    expect(block).not.toContain("proxy_set_header Host $host;");
   });
 });
