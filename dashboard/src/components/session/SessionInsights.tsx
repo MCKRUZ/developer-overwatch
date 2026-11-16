@@ -1,5 +1,7 @@
+import { useCallback } from "react";
 import { api } from "../../api";
 import { useCoalescedFetch, type CoalescedFetch } from "../../hooks/useCoalescedFetch";
+import { useSessionLiveRefresh } from "../../hooks/useLiveRefresh";
 import ContextPanel from "./ContextPanel";
 import ContextBreakoutView from "./ContextBreakoutView";
 import WatchList from "./WatchList";
@@ -14,13 +16,23 @@ function current<T>(fetch: CoalescedFetch<T>): T | null {
 
 /**
  * The session-level sections above the timeline. The context, prompt and subagent reads run
- * independently; the three context sections share one read and show its state each.
+ * independently; the three context sections share one read and show its state each. All three
+ * reload when this session's usage changes, so an open session's fill and costs keep moving.
  */
 export default function SessionInsights({ sessionId }: { sessionId: string }) {
   const context = useCoalescedFetch(sessionId, () => api.sessions.context(sessionId));
   const prompts = useCoalescedFetch(sessionId, () => api.sessions.prompts(sessionId));
   const subagents = useCoalescedFetch(sessionId, () => api.sessions.subagentBreakdown(sessionId));
   const contextData = current(context);
+  const { refresh: refreshContext } = context;
+  const { refresh: refreshPrompts } = prompts;
+  const { refresh: refreshSubagents } = subagents;
+  const refreshAll = useCallback(() => {
+    refreshContext();
+    refreshPrompts();
+    refreshSubagents();
+  }, [refreshContext, refreshPrompts, refreshSubagents]);
+  useSessionLiveRefresh(sessionId, refreshAll);
 
   return (
     <div className="space-y-4 mb-6">

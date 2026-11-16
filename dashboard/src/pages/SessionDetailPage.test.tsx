@@ -11,6 +11,11 @@ import {
 } from "../test/factories";
 import { buildEmptySessionContext, buildPromptCost } from "../test/sessionInsightFactories";
 
+// The session panels listen for live usage; no test here opens a real hub connection.
+vi.mock("../hooks/useSignalR", () => ({
+  useSignalR: () => ({ connection: null, state: "Disconnected", connectedEpoch: 0 }),
+}));
+
 vi.mock("../api", () => ({
   api: {
     pricing: { get: vi.fn().mockResolvedValue({ asOf: "2026-11-09" }) },

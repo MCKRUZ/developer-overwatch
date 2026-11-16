@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useSignalR } from "./useSignalR";
-import { useGlobalUpdates } from "./useGlobalUpdates";
+import { useGlobalUpdates, type UsageUpdate } from "./useGlobalUpdates";
 
 /** Live events can arrive many times a second; refetch at most this often. */
 export const LIVE_REFRESH_INTERVAL_MS = 2_000;
@@ -76,4 +76,45 @@ export function useLiveEvents({ onChange, onResync }: LiveEventHandlers): void {
 export function useLiveRefresh(refetch: () => void): void {
   const requestRefresh = useTrailingThrottle(refetch, LIVE_REFRESH_INTERVAL_MS);
   useLiveEvents({ onChange: requestRefresh, onResync: refetch });
+}
+
+/**
+ * How often one session's page refetches under a stream of its events. The session page makes three
+ * reads per refresh, so this keeps it to 30 requests a minute, well inside the per-IP limit of 100.
+ */
+export const SESSION_REFRESH_THROTTLE_MS = 6_000;
+
+/**
+ * Like `useLiveRefresh`, for one session's own figures: calls `refetch` (throttled to
+ * `SESSION_REFRESH_THROTTLE_MS`) only when the hub reports new usage for, or the end of, `sessionId`,
+ * and at once on every new hub connect.
+ */
+export function useSessionLiveRefresh(sessionId: string, refetch: () => void): void {
+  const sessionRef = useRef(sessionId);
+  const refetchRef = useRef(refetch);
+  const requestRefresh = useTrailingThrottle(refetch, SESSION_REFRESH_THROTTLE_MS);
+  const { connection, state, connectedEpoch } = useSignalR();
+
+  useEffect(() => {
+    sessionRef.current = sessionId;
+    refetchRef.current = refetch;
+  }, [sessionId, refetch]);
+
+  useEffect(() => {
+    if (connectedEpoch > 0) refetchRef.current();
+  }, [connectedEpoch]);
+
+  const onUsageUpdated = useCallback(
+    (update: UsageUpdate) => {
+      if (update.sessionId === sessionRef.current) requestRefresh();
+    },
+    [requestRefresh],
+  );
+  const onSessionEnded = useCallback(
+    (id: string) => {
+      if (id === sessionRef.current) requestRefresh();
+    },
+    [requestRefresh],
+  );
+  useGlobalUpdates({ connection, connectionState: state, onUsageUpdated, onSessionEnded });
 }

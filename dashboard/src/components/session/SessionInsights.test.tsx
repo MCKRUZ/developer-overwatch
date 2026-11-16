@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "../../test/render";
+import { HubConnectionState, type HubConnection } from "@microsoft/signalr";
+import { act, render, screen, within } from "../../test/render";
+import { SESSION_REFRESH_THROTTLE_MS } from "../../hooks/useLiveRefresh";
 import SessionInsights from "./SessionInsights";
 import { api } from "../../api";
 import {
@@ -19,6 +21,24 @@ vi.mock("../../api", () => ({
   },
 }));
 
+const { hub } = vi.hoisted(() => {
+  const handlers = new Map<string, (...args: unknown[]) => void>();
+  const connection = {
+    on: (event: string, handler: (...args: unknown[]) => void) => handlers.set(event, handler),
+    off: (event: string) => handlers.delete(event),
+  };
+  const emit = (event: string, ...args: unknown[]) => handlers.get(event)?.(...args);
+  return { hub: { connection, emit } };
+});
+
+vi.mock("../../hooks/useSignalR", () => ({
+  useSignalR: () => ({
+    connection: hub.connection as unknown as HubConnection,
+    state: HubConnectionState.Connected,
+    connectedEpoch: 0,
+  }),
+}));
+
 const mockApi = vi.mocked(api);
 
 const NOT_AVAILABLE = "Not available for this Claude Code version";
@@ -33,6 +53,27 @@ describe("SessionInsights", () => {
     mockApi.sessions.context.mockResolvedValue(buildSessionContext());
     mockApi.sessions.prompts.mockResolvedValue([buildPromptCost({ label: "Fix the login bug" })]);
     mockApi.sessions.subagentBreakdown.mockResolvedValue([buildSubagentUsage({ subagentName: "code-reviewer" })]);
+  });
+
+  it("should reload all three reads when this session's usage changes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<SessionInsights sessionId="sess-9" />);
+      expect(await screen.findByText("Fix the login bug")).toBeInTheDocument();
+      mockApi.sessions.prompts.mockResolvedValue([buildPromptCost({ label: "Now the tests" })]);
+
+      await act(async () => {
+        hub.emit("UsageUpdated", { sessionId: "other", at: "t" });
+        hub.emit("UsageUpdated", { sessionId: "sess-9", at: "t" });
+        await vi.advanceTimersByTimeAsync(SESSION_REFRESH_THROTTLE_MS);
+      });
+
+      expect(await screen.findByText("Now the tests")).toBeInTheDocument();
+      expect(mockApi.sessions.context).toHaveBeenCalledTimes(2);
+      expect(mockApi.sessions.subagentBreakdown).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("should load all three reads for this session", async () => {
