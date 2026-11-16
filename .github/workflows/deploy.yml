@@ -1,29 +1,36 @@
 # Deploy to Azure — Developer Overwatch
-# Builds Docker images, pushes to ACR, deploys infrastructure via Bicep,
-# and updates Azure Container Apps.
+# Runs on every merge to master, or by hand. Three stages, in this order:
+#   1. foundation    — checks the sign-in settings, deploys everything except the two apps (registry, monitoring,
+#                      Key Vault, API identity), then checks every agent key secret exists in the vault.
+#   2. build-images  — builds the API and dashboard images and pushes them to that registry, tagged with the commit.
+#   3. deploy        — deploys the full template, so both apps start on the images just pushed.
+# A first deploy into an empty resource group therefore stops at stage 1 until the agent key exists, and never
+# starts an app on an image that is not there yet.
 #
 # Required secrets:
 #   AZURE_CREDENTIALS       — Service principal JSON for azure/login
 #                              ({"clientId":"...","clientSecret":"...","subscriptionId":"...","tenantId":"..."})
 #   AZURE_SUBSCRIPTION_ID   — Target Azure subscription
-#   AZURE_RESOURCE_GROUP    — Target resource group name
-#   ACR_LOGIN_SERVER         — ACR hostname (e.g. myregistry.azurecr.io)
+#   AZURE_RESOURCE_GROUP    — Target resource group name (must exist; the workflow does not create it)
 #
-# Required variables (optional, defaults shown):
-#   CONTAINER_APP_API       — Container App name for API  (default: overwatch-api)
-#   CONTAINER_APP_DASHBOARD — Container App name for Dashboard (default: overwatch-dashboard)
+# Required variables (dashboard sign-in; the deploy refuses to run without them, because without sign-in every
+# dashboard read, prompt text included, is open to anyone who finds the URL):
+#   OIDC_AUTHORITY  — e.g. https://login.microsoftonline.com/<tenant-id>/v2.0
+#   OIDC_CLIENT_ID  — the Entra app registration's client ID (the dashboard signs in as this app)
+#   OIDC_AUDIENCE   — the audience the API requires; with one app registration issuing v2 tokens, its client ID
+#   OIDC_API_SCOPE  — the API scope the dashboard asks for, e.g. api://<client-id>/access_as_user
+# See "Dashboard sign-in" in the README for the app registration settings these depend on.
 #
 # Deploy prerequisites (agent API key from Key Vault):
-#   1. The Key Vault secret `agent-api-key` must exist in `overwatch-<env>-kv` before deploying,
-#      otherwise the API revision fails to provision. The vault is created by this template, so on a
-#      brand-new environment: deploy once (the API revision fails), create the secret, then redeploy.
-#      The vault uses RBAC, so whoever creates the secret needs a data-plane role such as
-#      Key Vault Secrets Officer; Owner/Contributor alone cannot write secrets.
+#   1. Every Key Vault secret named in `agentApiKeySecretNames` (default: `agent-api-key`) must exist in
+#      `overwatch-prod-kv`. On a brand-new environment, stage 1 creates the vault and then stops with the command
+#      to run; create the secret and re-run the workflow. The vault uses RBAC, so whoever creates the secret needs
+#      a data-plane role such as Key Vault Secrets Officer; Owner/Contributor alone cannot write secrets.
 #   2. The deploy service principal (AZURE_CREDENTIALS) must be able to create role assignments
 #      (Microsoft.Authorization/roleAssignments/write), e.g. User Access Administrator or Owner on the
 #      resource group, because the template grants the API identity Key Vault Secrets User.
 #   3. Create the secret with a random 32-byte key (pwsh 7+), without ever typing the key:
-#        $key = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); az keyvault secret set --vault-name overwatch-<env>-kv --name agent-api-key --value $key
+#        $key = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); az keyvault secret set --vault-name overwatch-prod-kv --name agent-api-key --value $key
 #      Pilot installers read the key from the vault themselves (install-hooks.ps1 -KeyVault), so grant each
 #      pilot developer Key Vault Secrets User on the vault instead of handing the key out.
 
@@ -31,33 +38,103 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - staging
 
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  group: deploy-production
   cancel-in-progress: false
 
 permissions:
-  id-token: write
   contents: read
 
 env:
-  TARGET_ENV: ${{ github.event.inputs.environment || 'production' }}
+  PARAMETERS_FILE: infra/parameters/production.bicepparam
+  # Read by the parameters file. Both Azure deployments use the same sign-in settings.
+  OIDC_AUTHORITY: ${{ vars.OIDC_AUTHORITY }}
+  OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
 
 jobs:
+  foundation:
+    name: Check Settings & Deploy Foundation
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      acr_login_server: ${{ steps.foundation.outputs.acr_login_server }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require dashboard sign-in settings
+        env:
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+          OIDC_API_SCOPE: ${{ vars.OIDC_API_SCOPE }}
+        run: |
+          missing=0
+          for name in OIDC_AUTHORITY OIDC_CLIENT_ID OIDC_AUDIENCE OIDC_API_SCOPE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository variable $name is not set. Production deploys require dashboard sign-in."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          case "$OIDC_AUTHORITY" in
+            https://*) ;;
+            *) echo "::error::OIDC_AUTHORITY must be an https URL."; exit 1 ;;
+          esac
+          # openid/profile/email alone yields a token for Microsoft Graph, which the API rejects.
+          case "$OIDC_API_SCOPE" in
+            */*) ;;
+            *) echo "::error::OIDC_API_SCOPE must be the API's own scope, e.g. api://<client-id>/access_as_user."; exit 1 ;;
+          esac
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set subscription
+        run: az account set --subscription "$AZURE_SUB"
+        env:
+          AZURE_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy foundation (everything except the apps)
+        id: foundation
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          OVERWATCH_DEPLOY_APPS: 'false'
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          az deployment group create \
+            --name "overwatch-foundation-$RUN_ID" \
+            --resource-group "$RESOURCE_GROUP" \
+            --parameters "$PARAMETERS_FILE" \
+            --query properties.outputs --output json > foundation.json
+          echo "acr_login_server=$(jq -r .acrLoginServer.value foundation.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Require the agent key secrets
+        env:
+          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          vault=$(jq -r .keyVaultName.value foundation.json)
+          missing=0
+          # The control-plane read returns the secret's metadata, never its value, and needs no Key Vault data role.
+          for secret in $(jq -r '.agentApiKeySecretNames.value[]' foundation.json); do
+            if ! az resource show --resource-group "$RESOURCE_GROUP" --namespace Microsoft.KeyVault \
+                 --parent "vaults/$vault" --resource-type secrets --name "$secret" --output none 2>/dev/null; then
+              echo "::error::Key Vault secret '$secret' is missing from '$vault'. The API cannot start without it."
+              echo "Create it (pwsh 7+), then re-run this workflow:"
+              echo "  \$key = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); az keyvault secret set --vault-name $vault --name $secret --value \$key"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
   build-images:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
+    needs: foundation
 
     steps:
       - name: Checkout
@@ -69,13 +146,13 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Login to ACR
-        run: az acr login --name "$ACR_SERVER"
+        run: az acr login --name "${ACR_SERVER%%.*}"
         env:
-          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_SERVER: ${{ needs.foundation.outputs.acr_login_server }}
 
       - name: Build & push API image
         env:
-          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_SERVER: ${{ needs.foundation.outputs.acr_login_server }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build \
@@ -88,11 +165,17 @@ jobs:
 
       - name: Build & push Dashboard image
         env:
-          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_SERVER: ${{ needs.foundation.outputs.acr_login_server }}
           IMAGE_TAG: ${{ github.sha }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+          OIDC_API_SCOPE: ${{ vars.OIDC_API_SCOPE }}
         run: |
+          # offline_access gets a refresh token, so sign-in renews without a hidden iframe (which the CSP blocks).
           docker build \
             -f dashboard/Dockerfile \
+            --build-arg "VITE_OIDC_AUTHORITY=$OIDC_AUTHORITY" \
+            --build-arg "VITE_OIDC_CLIENT_ID=$OIDC_CLIENT_ID" \
+            --build-arg "VITE_OIDC_SCOPE=openid profile email offline_access $OIDC_API_SCOPE" \
             -t "$ACR_SERVER/overwatch-dashboard:$IMAGE_TAG" \
             -t "$ACR_SERVER/overwatch-dashboard:latest" \
             dashboard/
@@ -103,7 +186,7 @@ jobs:
     name: Deploy Infrastructure & Apps
     runs-on: ubuntu-latest
     needs: build-images
-    environment: ${{ github.event.inputs.environment || 'production' }}
+    environment: production
 
     steps:
       - name: Checkout
@@ -119,35 +202,19 @@ jobs:
         env:
           AZURE_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy infrastructure (Bicep)
+      - name: Deploy infrastructure & apps (Bicep)
         env:
           RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          OVERWATCH_IMAGE_TAG: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           az deployment group create \
+            --name "overwatch-$RUN_ID" \
             --resource-group "$RESOURCE_GROUP" \
-            --template-file infra/main.bicep \
-            --parameters "infra/parameters/$TARGET_ENV.bicepparam"
-
-      - name: Update API container app
-        env:
-          APP_NAME: ${{ vars.CONTAINER_APP_API || 'overwatch-api' }}
-          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          az containerapp update \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --image "$ACR_SERVER/overwatch-api:$IMAGE_TAG"
-
-      - name: Update Dashboard container app
-        env:
-          APP_NAME: ${{ vars.CONTAINER_APP_DASHBOARD || 'overwatch-dashboard' }}
-          RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          ACR_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          az containerapp update \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --image "$ACR_SERVER/overwatch-dashboard:$IMAGE_TAG"
+            --parameters "$PARAMETERS_FILE" \
+            --query properties.outputs --output json > outputs.json
+          {
+            echo "### Deployed $OVERWATCH_IMAGE_TAG"
+            echo "- Dashboard: $(jq -r .dashboardUrl.value outputs.json)"
+            echo "- API: $(jq -r .apiUrl.value outputs.json)"
+          } >> "$GITHUB_STEP_SUMMARY"

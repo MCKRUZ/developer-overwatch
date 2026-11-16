@@ -266,21 +266,23 @@ The `infra/` directory contains modular Bicep templates for deploying to Azure:
 - `modules/container-apps.bicep` -- Container Apps for API and Dashboard
 
 ```bash
-# Deploy infrastructure
+# Deploy by hand (the Deploy workflow normally does this). Both parameter files refuse to build
+# without the dashboard sign-in settings, so set them first.
+export OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>/v2.0
+export OIDC_AUDIENCE=<app-registration-client-id>
 az deployment group create \
   --resource-group overwatch-rg \
-  --template-file infra/main.bicep \
   --parameters infra/parameters/production.bicepparam
 ```
 
-Environment-specific parameter files: `infra/parameters/dev.bicepparam` and `infra/parameters/production.bicepparam`.
+Environment-specific parameter files: `infra/parameters/dev.bicepparam` and `infra/parameters/production.bicepparam`. Each also reads `OVERWATCH_DEPLOY_APPS` (`false` deploys everything except the two apps) and `OVERWATCH_IMAGE_TAG` (default `latest`).
 
 ### CI/CD (GitHub Actions)
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | PRs + pushes to main/master | Backend build + test with coverage gate, dashboard typecheck + test, supply-chain vulnerability scan, pack agent tool |
-| `deploy.yml` | Push to main, manual dispatch | Build Docker images, push to ACR, deploy Bicep, update Container Apps |
+| `deploy.yml` | Push to master, manual dispatch | Check sign-in settings, deploy everything but the apps, check the agent key exists, build and push images, deploy the apps on those images |
 | `agent-release.yml` | `agent-v*` tags | Pack and publish agent to NuGet.org |
 
 Database migrations run in-process on API startup (`db.Database.MigrateAsync()`), not as a separate Container Apps Job -- the simpler inline approach is intentional. Note that the API's own identity therefore needs `db_ddladmin` in addition to `db_datareader`/`db_datawriter` when `Database:UseManagedIdentityAuth` is enabled (see the Configuration section above).
@@ -291,9 +293,27 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 |--------|-------------|
 | `AZURE_CREDENTIALS` | Service principal JSON |
 | `AZURE_SUBSCRIPTION_ID` | Target Azure subscription |
-| `AZURE_RESOURCE_GROUP` | Target resource group |
-| `ACR_LOGIN_SERVER` | ACR hostname |
+| `AZURE_RESOURCE_GROUP` | Target resource group (must already exist) |
 | `NUGET_API_KEY` | NuGet.org API key (agent release only) |
+
+**Required repository variables (dashboard sign-in):** the deploy refuses to run without them, because without sign-in every dashboard read, prompt text included, is open to anyone who finds the URL.
+
+| Variable | Value |
+|----------|-------|
+| `OIDC_AUTHORITY` | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| `OIDC_CLIENT_ID` | The app registration's client ID |
+| `OIDC_AUDIENCE` | The same client ID (v2 tokens carry the client ID as their audience) |
+| `OIDC_API_SCOPE` | `api://<client-id>/access_as_user` |
+
+**Dashboard sign-in (one Entra app registration):**
+
+1. Register an app in Entra ID (single tenant).
+2. **Expose an API:** set the Application ID URI to `api://<client-id>` and add a scope named `access_as_user`.
+3. **Manifest:** set the access token version to `2` (`requestedAccessTokenVersion`, or `accessTokenAcceptedVersion` in the older manifest). With v1 tokens the issuer does not match the v2 authority, and the API rejects every sign-in.
+4. **App roles:** add a role with the value `Lead` and assign it to whoever may edit budgets and plans.
+5. **Authentication:** add a Single-page application platform. Its redirect URI is the dashboard URL, which the first successful deploy prints in the run summary. Until it is added, sign-in fails with a redirect mismatch.
+
+**First deploy into an empty resource group:** run the workflow once. It creates the registry and Key Vault, then stops because the agent key does not exist yet, and prints the command to create it. Create the key and re-run the workflow, then add the printed dashboard URL as the redirect URI.
 
 **Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in `overwatch-<env>-kv` through its own managed identity, and refuses to start without it. Create the secret once before deploying (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
 
