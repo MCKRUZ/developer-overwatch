@@ -311,11 +311,12 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 2. **Expose an API:** set the Application ID URI to `api://<client-id>` and add a scope named `access_as_user`.
 3. **Manifest:** set the access token version to `2` (`requestedAccessTokenVersion`, or `accessTokenAcceptedVersion` in the older manifest). With v1 tokens the issuer does not match the v2 authority, and the API rejects every sign-in.
 4. **App roles:** add a role with the value `Lead` and assign it to whoever may edit budgets and plans.
-5. **Authentication:** add a Single-page application platform. Its redirect URI is the dashboard URL, which the first successful deploy prints in the run summary. Until it is added, sign-in fails with a redirect mismatch.
+5. **Enterprise application → Properties:** set **Assignment required** to Yes, then assign the people who may use the dashboard. Otherwise anyone in the tenant can sign in and read every session, prompt text included.
+6. **Authentication:** add a Single-page application platform. Its redirect URI is the dashboard URL, which the first successful deploy prints in the run summary. Until it is added, sign-in fails with a redirect mismatch.
 
 **First deploy into an empty resource group:** run the workflow once. It creates the registry and Key Vault, then stops because the agent key does not exist yet, and prints the command to create it. Create the key and re-run the workflow, then add the printed dashboard URL as the redirect URI.
 
-**Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in `overwatch-<env>-kv` through its own managed identity, and refuses to start without it. Create the secret once before deploying (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
+**Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in `overwatch-<env>-kv` through its own managed identity, and refuses to start without it. Create the secret when the first deploy stops and asks for it, once the vault exists (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
 
 ## API Endpoints
 

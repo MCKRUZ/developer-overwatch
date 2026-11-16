@@ -1,5 +1,5 @@
 # Deploy to Azure — Developer Overwatch
-# Runs on every merge to master, or by hand. Three stages, in this order:
+# Runs on every merge to master, or by hand (master only). Three stages, in this order:
 #   1. foundation    — checks the sign-in settings, deploys everything except the two apps (registry, monitoring,
 #                      Key Vault, API identity), then checks every agent key secret exists in the vault.
 #   2. build-images  — builds the API and dashboard images and pushes them to that registry, tagged with the commit.
@@ -58,6 +58,8 @@ jobs:
   foundation:
     name: Check Settings & Deploy Foundation
     runs-on: ubuntu-latest
+    # A manual run may pick any branch; only master is deployed.
+    if: github.ref == 'refs/heads/master'
     environment: production
     outputs:
       acr_login_server: ${{ steps.foundation.outputs.acr_login_server }}
@@ -135,6 +137,8 @@ jobs:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
     needs: foundation
+    # Same environment as the other stages, so settings stored on it reach the image build too.
+    environment: production
 
     steps:
       - name: Checkout
