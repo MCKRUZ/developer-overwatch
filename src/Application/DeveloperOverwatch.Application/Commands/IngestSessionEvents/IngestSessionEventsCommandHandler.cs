@@ -60,6 +60,7 @@ public sealed class IngestSessionEventsCommandHandler
             revived = ReturnsToRunningList(session, before, now) ? 1 : 0;
         }
 
+        await ApplyContextSnapshotAsync(session.Id, request.ContextSnapshot, now, cancellationToken);
         await _repository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return Result<IngestSessionEventsResult>.Success(new IngestSessionEventsResult(
@@ -188,7 +189,10 @@ public sealed class IngestSessionEventsCommandHandler
         // session's peak. ContextTokens is still stored on every turn.
         if (t.Role != SubagentRole && contextTokens is long context
             && (session.PeakContextTokens is null || context > session.PeakContextTokens))
+        {
             session.PeakContextTokens = context;
+            session.PeakContextModel = t.Model;
+        }
     }
 
     // The Agent is the only place that ever sees the raw secret — by the time this
@@ -227,6 +231,7 @@ public sealed class IngestSessionEventsCommandHandler
         IsDecision = t.IsDecision,
         GitBranch = t.GitBranch,
         SubagentName = t.SubagentName,
+        TurnKind = t.TurnKind,
         ContextTokens = contextTokens
     };
 
@@ -268,6 +273,22 @@ public sealed class IngestSessionEventsCommandHandler
             ChangeType = f.ChangeType
         }), cancellationToken);
         return newFiles.Count;
+    }
+
+    // A session keeps only its latest snapshot. Its time is clamped first, like every stored time, so a fast
+    // client clock cannot pin a future snapshot that every honest one after it would lose to.
+    private async Task ApplyContextSnapshotAsync(
+        string sessionId, ContextSnapshotDto? dto, DateTime now, CancellationToken cancellationToken)
+    {
+        if (dto is null)
+            return;
+
+        var incoming = ContextSnapshotMapper.ToEntity(sessionId, dto, now);
+        var stored = await _repository.GetContextSnapshotAsync(sessionId, cancellationToken);
+        if (stored is null)
+            await _repository.AddContextSnapshotAsync(incoming, cancellationToken);
+        else
+            stored.ReplaceUnlessOlder(incoming);
     }
 
     private static IEnumerable<string> ParentIds<T>(IEnumerable<T> children, Func<T, string?> parentOf) =>

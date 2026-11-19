@@ -89,7 +89,8 @@ internal sealed class ConversationShipper
             ? null
             : await ConversationPayload.ResolveSessionTitleAsync(
                 captured.Marker.TranscriptPath, session.Bounded ? session.Floor : null, ct);
-        var callbacks = Callbacks(sessionId, title, captured, answered, ct);
+        var snapshot = await ContextSnapshotAsync(session, captured.Marker, turns, ct);
+        var callbacks = Callbacks(sessionId, title, snapshot, captured, answered, ct);
         foreach (var chunk in turns.Chunk(MaxTurnsPerPost))
         {
             var stop = await HalvingPoster.PostAsync(chunk, callbacks);
@@ -100,13 +101,56 @@ internal sealed class ConversationShipper
         return turns.All(t => answered.Contains(t.Id)) ? EventOutcome.Done : EventOutcome.Transient;
     }
 
+    /// <summary>The context snapshot gates like the turns it rides with: never in Local mode or with backfill, and
+    /// only when dated at or after the session's floor, and without any compaction dated before it. It is read only when new main-transcript turns are being sent,
+    /// since only those move the session's context. A transcript that cannot be read sends none.</summary>
+    private async Task<ContextSnapshot?> ContextSnapshotAsync(
+        OpenSession session, ConversationMarker marker, IReadOnlyList<TurnRef> turns, CancellationToken ct)
+    {
+        if (_localMode || marker.Backfill || !turns.Any(t => t.CursorKey == session.SessionId))
+            return null;
+
+        try
+        {
+            var path = marker.TranscriptPath;
+            var snapshot = await ContextSnapshotReader.ReadAsync(path, _capture.FindSubagentTranscripts(path), ct);
+            if (snapshot is null || !session.Admits(snapshot.TakenAt))
+                return null;
+
+            // A compaction carries its own time and sizes, so one from before the floor stays on the machine. Which
+            // tools were used cannot be dated (tools-used lines carry no time), so those flags cover the whole session.
+            return snapshot with { Compactions = snapshot.Compactions.Where(c => session.Admits(c.At)).ToList() };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Context snapshot unreadable for session {SessionId}; sending none", session.SessionId);
+            return null;
+        }
+    }
+
     /// <summary>A refused chunk is split until each turn has its own answer. The cursors move after every
-    /// answer, so a turn held as too large keeps them, and the turns after it, where they are.</summary>
+    /// answer, so a turn held as too large keeps them, and the turns after it, where they are. The snapshot goes on
+    /// the first POST only. If that POST is refused (400 or 413), the same turns are sent again at once without it,
+    /// and that answer is the one that counts, so a snapshot the server will not take never costs a turn.</summary>
     private HalvingPoster.Callbacks<TurnRef> Callbacks(
-        string sessionId, string? title, CapturedConversation captured, HashSet<string> answered, CancellationToken ct) =>
-        new(
-            subset => _api.SendSessionEventsAsync(sessionId, _redactor.Redact(ConversationPayload.Build(
-                sessionId, title, subset.Select(t => t.Turn).ToList(), _redactor, captured.Marker.UsageOnly)), ct),
+        string sessionId, string? title, ContextSnapshot? snapshot, CapturedConversation captured, HashSet<string> answered,
+        CancellationToken ct)
+    {
+        var unsent = snapshot;
+        Task<ApiResult> Post(IReadOnlyList<TurnRef> subset, ContextSnapshot? attached) =>
+            _api.SendSessionEventsAsync(sessionId, _redactor.Redact(ConversationPayload.Build(
+                sessionId, title, subset.Select(t => t.Turn).ToList(), _redactor, captured.Marker.UsageOnly, attached)), ct);
+
+        return new(
+            async subset =>
+            {
+                var attached = unsent;
+                unsent = null;
+                var result = await Post(subset, attached);
+                return attached is not null && result.Status is PostStatus.Rejected or PostStatus.TooLarge
+                    ? await Post(subset, null)
+                    : result;
+            },
             async (subset, result) =>
             {
                 RecordAnswers(sessionId, subset, result, answered);
@@ -122,6 +166,7 @@ internal sealed class ConversationShipper
             turn => _logger.LogWarning(
                 "Server refused turn {TurnId} of session {SessionId} as too large even alone; holding it and the turns after it for the next poll",
                 turn.Id, sessionId));
+    }
 
     /// <summary>Adds each turn a 200 answered for. Rejected turns count too: they would never succeed, so
     /// they are logged here, once, and the cursor moves past them.</summary>

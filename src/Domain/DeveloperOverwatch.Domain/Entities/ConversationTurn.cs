@@ -23,6 +23,10 @@ public class ConversationTurn
     public string? GitBranch { get; set; }
     public string? SubagentName { get; set; }
 
+    /// <summary>What started a user turn: one of <see cref="Common.TurnKinds"/>, or null for assistant and
+    /// subagent turns and for turns from Agents that predate it.</summary>
+    public string? TurnKind { get; set; }
+
     /// <summary>Context size of this request: input + cache read + cache creation tokens.
     /// Null when the turn reported none of them (e.g. a user turn).</summary>
     public long? ContextTokens { get; set; }

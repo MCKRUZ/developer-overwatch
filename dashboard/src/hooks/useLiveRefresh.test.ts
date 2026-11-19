@@ -21,7 +21,13 @@ vi.mock("./useSignalR", () => ({
   }),
 }));
 
-import { useLiveRefresh, useTrailingThrottle, LIVE_REFRESH_INTERVAL_MS } from "./useLiveRefresh";
+import {
+  useLiveRefresh,
+  useSessionLiveRefresh,
+  useTrailingThrottle,
+  LIVE_REFRESH_INTERVAL_MS,
+  SESSION_REFRESH_THROTTLE_MS,
+} from "./useLiveRefresh";
 
 describe("useTrailingThrottle", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -153,5 +159,82 @@ describe("useLiveRefresh", () => {
     renderHook(() => useLiveRefresh(refetch));
 
     expect(refetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSessionLiveRefresh", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    hub.connectedEpoch = 0;
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("should refetch when this session's usage changes, so an open session's fill keeps moving", () => {
+    const refetch = vi.fn();
+    renderHook(() => useSessionLiveRefresh("s1", refetch));
+
+    act(() => hub.emit("UsageUpdated", { sessionId: "s1", at: "t" }));
+    act(() => vi.advanceTimersByTime(SESSION_REFRESH_THROTTLE_MS));
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should ignore other sessions' usage, which a busy team sends many times a minute", () => {
+    const refetch = vi.fn();
+    renderHook(() => useSessionLiveRefresh("s1", refetch));
+
+    act(() => {
+      hub.emit("UsageUpdated", { sessionId: "s2", at: "t" });
+      hub.emit("SessionEnded", "s2");
+    });
+    act(() => vi.advanceTimersByTime(SESSION_REFRESH_THROTTLE_MS));
+
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("should refetch at most once per throttle window under a stream of this session's events", () => {
+    const refetch = vi.fn();
+    renderHook(() => useSessionLiveRefresh("s1", refetch));
+
+    for (let ms = 0; ms < 60_000; ms += 500) {
+      act(() => {
+        hub.emit("UsageUpdated", { sessionId: "s1", at: "t" });
+        vi.advanceTimersByTime(500);
+      });
+    }
+
+    expect(refetch).toHaveBeenCalledTimes(60_000 / SESSION_REFRESH_THROTTLE_MS);
+  });
+
+  it("should refetch when this session ends", () => {
+    const refetch = vi.fn();
+    renderHook(() => useSessionLiveRefresh("s1", refetch));
+
+    act(() => hub.emit("SessionEnded", "s1"));
+    act(() => vi.advanceTimersByTime(SESSION_REFRESH_THROTTLE_MS));
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should follow a change of session without resubscribing", () => {
+    const refetch = vi.fn();
+    const { rerender } = renderHook(({ id }) => useSessionLiveRefresh(id, refetch), { initialProps: { id: "s1" } });
+
+    rerender({ id: "s2" });
+    act(() => hub.emit("UsageUpdated", { sessionId: "s1", at: "t" }));
+    act(() => vi.advanceTimersByTime(SESSION_REFRESH_THROTTLE_MS));
+    expect(refetch).not.toHaveBeenCalled();
+
+    act(() => hub.emit("UsageUpdated", { sessionId: "s2", at: "t" }));
+    act(() => vi.advanceTimersByTime(SESSION_REFRESH_THROTTLE_MS));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should refetch at once on a hub reconnect, because events sent while disconnected were lost", () => {
+    hub.connectedEpoch = 1;
+    const refetch = vi.fn();
+    renderHook(() => useSessionLiveRefresh("s1", refetch));
+
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

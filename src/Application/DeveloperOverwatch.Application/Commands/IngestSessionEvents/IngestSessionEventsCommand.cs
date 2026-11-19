@@ -13,6 +13,7 @@ public sealed record IngestSessionEventsCommand : IRequest<Result<IngestSessionE
     public IReadOnlyList<FileChangeDto> FileChanges { get; init; } = [];
     public IReadOnlyList<ActivityEventDto> ActivityEvents { get; init; } = [];
     public IReadOnlyList<ToolFailureDto> ToolFailures { get; init; } = [];
+    public ContextSnapshotDto? ContextSnapshot { get; init; }
 }
 
 public sealed record ActivityEventDto
@@ -54,6 +55,7 @@ public sealed record ConversationTurnDto
     public bool IsDecision { get; init; }
     public string? GitBranch { get; init; }
     public string? SubagentName { get; init; }
+    public string? TurnKind { get; init; }
 }
 
 public sealed record ToolExecutionDto

@@ -84,6 +84,10 @@ export interface ConversationTurn {
   containsRedactedSecret?: boolean;
   timestamp: string;
   isDecision: boolean;
+  /** Null for the main thread. */
+  subagentName?: string | null;
+  /** Input plus cache read plus cache write for this assistant turn; null when not measured. */
+  contextTokens?: number | null;
 }
 
 export interface ToolExecution {

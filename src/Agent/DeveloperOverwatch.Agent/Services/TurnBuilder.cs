@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DeveloperOverwatch.Domain.Common;
 
 namespace DeveloperOverwatch.Agent.Services;
 
@@ -75,7 +76,8 @@ internal sealed class TurnBuilder
             t.Model,
             t.GitBranch,
             StartLine: t.StartLine,
-            IsCompactSummary: t.IsCompactSummary)).ToList();
+            IsCompactSummary: t.IsCompactSummary,
+            TurnKind: t.TurnKind)).ToList();
 
     private void AddResponseLine(JsonElement message, DateTime? timestamp, string? gitBranch, string fallbackSourceId)
     {
@@ -117,11 +119,26 @@ internal sealed class TurnBuilder
         {
             GitBranch = gitBranch,
             StartLine = _lineIndex,
-            IsCompactSummary = root.TryGetProperty("isCompactSummary", out var flag) && flag.ValueKind == JsonValueKind.True
+            IsCompactSummary = IsTrue(root, "isCompactSummary"),
+            TurnKind = KindOf(root)
         };
         turn.Texts.AddRange(texts);
         _turns.Add(turn);
     }
+
+    /// <summary>A compaction summary first, whatever else it is flagged; then a prompt the developer typed, which
+    /// is not meta and comes from a human, or from a version that writes no origin; anything else was injected.</summary>
+    private static string KindOf(JsonElement root)
+    {
+        if (IsTrue(root, "isCompactSummary"))
+            return TurnKinds.CompactSummary;
+
+        var origin = root.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.Object ? GetString(o, "kind") : null;
+        return !IsTrue(root, "isMeta") && origin is null or "human" ? TurnKinds.Prompt : TurnKinds.Injected;
+    }
+
+    private static bool IsTrue(JsonElement obj, string propertyName) =>
+        obj.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.True;
 
     // Other line types also embed a "message" — notably "api-request-blob", a copy of each
     // outgoing request that repeats earlier messages. Only real user/assistant lines are turns.
@@ -174,6 +191,7 @@ internal sealed class TurnBuilder
         public string SourceId { get; } = sourceId;
         public int StartLine { get; init; }
         public bool IsCompactSummary { get; init; }
+        public string? TurnKind { get; init; }
         public string Role { get; } = role;
         public DateTime? Timestamp { get; } = timestamp;
         public List<string> Texts { get; } = [];

@@ -6,8 +6,11 @@ using DeveloperOverwatch.Application.Commands.IngestSessionEnd;
 using DeveloperOverwatch.Application.Commands.IngestSessionEvents;
 using DeveloperOverwatch.Application.Commands.IngestSessionStart;
 using DeveloperOverwatch.Application.Queries.GetSession;
+using DeveloperOverwatch.Application.Queries.GetSessionContext;
 using DeveloperOverwatch.Application.Queries.GetSessionDailyUsage;
 using DeveloperOverwatch.Application.Queries.GetSessionModelBreakdown;
+using DeveloperOverwatch.Application.Queries.GetSessionPrompts;
+using DeveloperOverwatch.Application.Queries.GetSessionSubagentBreakdown;
 using DeveloperOverwatch.Application.Queries.GetSessionTimelinePage;
 using DeveloperOverwatch.Application.Queries.GetSessionTimelinePageAround;
 using DeveloperOverwatch.Application.Queries.GetSessions;
@@ -235,5 +238,38 @@ public sealed class SessionsController : ControllerBase
     {
         var result = await _mediator.Send(new GetSessionModelBreakdownQuery(sessionId), ct);
         return Ok(result.Value);
+    }
+
+    [HttpGet("{sessionId}/context")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSessionContext(string sessionId, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetSessionContextQuery(sessionId), ct);
+        return result.IsSuccess ? Ok(result.Value) : NotFound(new { error = result.Error });
+    }
+
+    [HttpGet("{sessionId}/prompts")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSessionPrompts(string sessionId, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetSessionPromptsQuery(sessionId), ct);
+        return result.IsSuccess ? Ok(result.Value) : NotFound(new { error = result.Error });
+    }
+
+    [HttpGet("{sessionId}/subagent-breakdown")]
+    [Authorize(Policy = AuthPolicies.DashboardRead)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSessionSubagentBreakdown(string sessionId, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetSessionSubagentBreakdownQuery(sessionId), ct);
+        return result.IsSuccess ? Ok(result.Value) : NotFound(new { error = result.Error });
     }
 }

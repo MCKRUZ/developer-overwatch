@@ -19,6 +19,7 @@ public class OverwatchDbContext : DbContext, IUnitOfWork
     public DbSet<ProcessedAgentEvent> ProcessedAgentEvents => Set<ProcessedAgentEvent>();
     public DbSet<Budget> Budgets => Set<Budget>();
     public DbSet<DeveloperPlan> DeveloperPlans => Set<DeveloperPlan>();
+    public DbSet<SessionContextSnapshot> SessionContextSnapshots => Set<SessionContextSnapshot>();
 
     public OverwatchDbContext(DbContextOptions<OverwatchDbContext> options) : base(options) { }
 

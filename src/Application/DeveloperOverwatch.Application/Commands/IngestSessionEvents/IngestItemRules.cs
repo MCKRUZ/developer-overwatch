@@ -1,5 +1,7 @@
 namespace DeveloperOverwatch.Application.Commands.IngestSessionEvents;
 
+using DeveloperOverwatch.Domain.Common;
+
 /// <summary>Per-item validity for an events batch. Each rule returns why the item is invalid, or
 /// null. An invalid item is skipped and reported as rejected, so it never sinks the rest of the
 /// batch. Request-level rules stay in <see cref="IngestSessionEventsCommandValidator"/>.</summary>
@@ -11,7 +13,10 @@ internal static class IngestItemRules
     public static string? Turn(ConversationTurnDto t) =>
         Required(t.Id, "id") ?? Required(t.Role, "role")
         ?? AtMost(t.GitBranch, MaxNameLength, "gitBranch")
-        ?? AtMost(t.SubagentName, MaxNameLength, "subagentName");
+        ?? AtMost(t.SubagentName, MaxNameLength, "subagentName")
+        // The model is copied into the session's bounded peak-model column when the turn sets the peak.
+        ?? AtMost(t.Model, MaxNameLength, "model")
+        ?? (t.TurnKind is null || TurnKinds.All.Contains(t.TurnKind) ? null : "turnKind is not a known kind");
 
     // A tool execution references its turn, and a file change its tool execution, by foreign key.
     // A child of an item rejected in this batch, or of a parent neither in the batch nor stored,

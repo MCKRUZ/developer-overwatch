@@ -27,5 +27,7 @@ public sealed class IngestSessionEventsCommandValidator : AbstractValidator<Inge
             .WithMessage($"At most {MaxItemsPerList} activity events per batch.");
         RuleFor(x => x.ToolFailures).Must(l => l.Count <= MaxItemsPerList)
             .WithMessage($"At most {MaxItemsPerList} tool failures per batch.");
+        RuleFor(x => x.ContextSnapshot!).SetValidator(new ContextSnapshotDtoValidator())
+            .When(x => x.ContextSnapshot is not null);
     }
 }

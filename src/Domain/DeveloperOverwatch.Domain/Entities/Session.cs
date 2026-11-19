@@ -45,6 +45,9 @@ public class Session
     // Subagent turns have their own context window and never set it. Only ever raised as turns arrive.
     public long? PeakContextTokens { get; set; }
 
+    /// <summary>The model of the turn that set <see cref="PeakContextTokens"/>.</summary>
+    public string? PeakContextModel { get; set; }
+
     public ActivityState? ActivityState { get; set; }
     public DateTime? ActivityStateAt { get; set; }
 
