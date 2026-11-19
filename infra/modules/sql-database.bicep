@@ -1,6 +1,9 @@
 @description('Environment name used for resource naming.')
 param environmentName string
 
+@description('Short suffix that makes names unique across all of Azure (vault, storage, registry and SQL server names are global).')
+param nameSuffix string
+
 @description('Azure region for SQL resources.')
 param location string
 
@@ -15,7 +18,7 @@ param adminLogin string
 @secure()
 param adminPassword string
 
-var serverName = 'overwatch-${environmentName}-sql'
+var serverName = 'overwatch-${environmentName}-sql-${nameSuffix}'
 var databaseName = 'overwatch-${environmentName}-db'
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {

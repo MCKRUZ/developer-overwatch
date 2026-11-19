@@ -230,7 +230,7 @@ if ($mode -eq "pilot") {
     }
     if ($KeyVault) { $config["apiKey"] = Get-AgentKey $KeyVault }
     if (-not $config["apiKey"]) {
-        Stop-Install "Pilot mode needs the agent key. Add -KeyVault with the Overwatch Key Vault's name. Example: .\install-hooks.ps1 -Pilot -ApiUrl https://overwatch.example.com -KeyVault overwatch-prod-kv"
+        Stop-Install "Pilot mode needs the agent key. Add -KeyVault with the Overwatch Key Vault's name. Example: .\install-hooks.ps1 -Pilot -ApiUrl https://overwatch.example.com -KeyVault <vault-name> (shown in the Deploy run summary)"
     }
 } else {
     if ($ApiUrl -or $KeyVault) {
