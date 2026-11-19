@@ -291,7 +291,8 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 
 | Secret | Description |
 |--------|-------------|
-| `AZURE_CREDENTIALS` | Service principal JSON |
+| `AZURE_CLIENT_ID` | Deploy app registration's client ID (secretless login: a federated credential trusts `repo:MCKRUZ/developer-overwatch:environment:production`) |
+| `AZURE_TENANT_ID` | Its tenant |
 | `AZURE_SUBSCRIPTION_ID` | Target Azure subscription |
 | `AZURE_RESOURCE_GROUP` | Target resource group (must already exist) |
 | `NUGET_API_KEY` | NuGet.org API key (agent release only) |

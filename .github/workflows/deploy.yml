@@ -7,11 +7,16 @@
 # A first deploy into an empty resource group therefore stops at stage 1 until the agent key exists, and never
 # starts an app on an image that is not there yet.
 #
-# Required secrets:
-#   AZURE_CREDENTIALS       — Service principal JSON for azure/login
-#                              ({"clientId":"...","clientSecret":"...","subscriptionId":"...","tenantId":"..."})
-#   AZURE_SUBSCRIPTION_ID   — Target Azure subscription
-#   AZURE_RESOURCE_GROUP    — Target resource group name (must exist; the workflow does not create it)
+# Azure login is secretless (OpenID Connect): an app registration with a federated credential trusting
+#   issuer  https://token.actions.githubusercontent.com
+#   subject repo:MCKRUZ/developer-overwatch:environment:production
+# Every job runs in the `production` environment, so that one subject covers all three.
+#
+# Required secrets (identifiers only, none is a password):
+#   AZURE_CLIENT_ID         — the deploy app registration's client ID
+#   AZURE_TENANT_ID         — its tenant
+#   AZURE_SUBSCRIPTION_ID   — target Azure subscription
+#   AZURE_RESOURCE_GROUP    — target resource group name (must exist; the workflow does not create it)
 #
 # Required variables (dashboard sign-in; the deploy refuses to run without them, because without sign-in every
 # dashboard read, prompt text included, is open to anyone who finds the URL):
@@ -26,7 +31,7 @@
 #      `overwatch-prod-kv`. On a brand-new environment, stage 1 creates the vault and then stops with the command
 #      to run; create the secret and re-run the workflow. The vault uses RBAC, so whoever creates the secret needs
 #      a data-plane role such as Key Vault Secrets Officer; Owner/Contributor alone cannot write secrets.
-#   2. The deploy service principal (AZURE_CREDENTIALS) must be able to create role assignments
+#   2. The deploy app's service principal must be able to create role assignments
 #      (Microsoft.Authorization/roleAssignments/write), e.g. User Access Administrator or Owner on the
 #      resource group, because the template grants the API identity Key Vault Secrets User.
 #   3. Create the secret with a random 32-byte key (pwsh 7+), without ever typing the key:
@@ -47,6 +52,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The Azure login trades GitHub's signed token for an Azure one; no password is stored anywhere.
+  id-token: write
 
 env:
   PARAMETERS_FILE: infra/parameters/production.bicepparam
@@ -94,7 +101,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set subscription
         run: az account set --subscription "$AZURE_SUB"
@@ -147,7 +156,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Login to ACR
         run: az acr login --name "${ACR_SERVER%%.*}"
@@ -199,7 +210,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set subscription
         run: az account set --subscription "$AZURE_SUB"
