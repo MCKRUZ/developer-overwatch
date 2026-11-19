@@ -28,14 +28,15 @@
 #
 # Deploy prerequisites (agent API key from Key Vault):
 #   1. Every Key Vault secret named in `agentApiKeySecretNames` (default: `agent-api-key`) must exist in
-#      `overwatch-prod-kv`. On a brand-new environment, stage 1 creates the vault and then stops with the command
-#      to run; create the secret and re-run the workflow. The vault uses RBAC, so whoever creates the secret needs
+#      the vault, named `overwatch-prod-kv-<suffix>` (the suffix makes it unique across Azure; every run prints the
+#      full name in its summary). On a brand-new environment, stage 1 creates the vault and then stops with the
+#      command to run; create the secret and re-run the workflow. The vault uses RBAC, so whoever creates the secret needs
 #      a data-plane role such as Key Vault Secrets Officer; Owner/Contributor alone cannot write secrets.
 #   2. The deploy app's service principal must be able to create role assignments
 #      (Microsoft.Authorization/roleAssignments/write), e.g. User Access Administrator or Owner on the
 #      resource group, because the template grants the API identity Key Vault Secrets User.
 #   3. Create the secret with a random 32-byte key (pwsh 7+), without ever typing the key:
-#        $key = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); az keyvault secret set --vault-name overwatch-prod-kv --name agent-api-key --value $key
+#        $key = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); az keyvault secret set --vault-name <vault-name> --name agent-api-key --value $key
 #      Pilot installers read the key from the vault themselves (install-hooks.ps1 -KeyVault), so grant each
 #      pilot developer Key Vault Secrets User on the vault instead of handing the key out.
 
@@ -129,6 +130,7 @@ jobs:
           RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
           vault=$(jq -r .keyVaultName.value foundation.json)
+          echo "- Key Vault (pilots pass this to the installer's -KeyVault): \`$vault\`" >> "$GITHUB_STEP_SUMMARY"
           missing=0
           # The control-plane read returns the secret's metadata, never its value, and needs no Key Vault data role.
           for secret in $(jq -r '.agentApiKeySecretNames.value[]' foundation.json); do

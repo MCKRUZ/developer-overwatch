@@ -1,6 +1,7 @@
 targetScope = 'resourceGroup'
 
-@description('Environment name (dev, staging, prod).')
+@description('Environment name. Limited to these two so the Key Vault name stays within its 24-character limit.')
+@allowed(['dev', 'prod'])
 param environmentName string = 'dev'
 
 @description('Azure region for all resources.')
@@ -38,6 +39,10 @@ param deployApps bool = true
 @minLength(1)
 param agentApiKeySecretNames array = ['agent-api-key']
 
+// Key Vault, storage, registry and SQL server names are global across Azure, so a plain 'overwatch-prod-kv' can
+// already belong to someone else. A suffix derived from this resource group is stable across redeploys.
+var nameSuffix = take(uniqueString(resourceGroup().id), 6)
+
 var tags = {
   environment: environmentName
   project: 'developer-overwatch'
@@ -47,6 +52,7 @@ module containerRegistry 'modules/container-registry.bicep' = {
   name: 'container-registry'
   params: {
     environmentName: environmentName
+    nameSuffix: nameSuffix
     location: location
     tags: tags
   }
@@ -65,6 +71,7 @@ module keyVault 'modules/key-vault.bicep' = {
   name: 'key-vault'
   params: {
     environmentName: environmentName
+    nameSuffix: nameSuffix
     location: location
     tags: tags
   }
@@ -84,6 +91,7 @@ module sqlDatabase 'modules/sql-database.bicep' = if (useSqlServer) {
   name: 'sql-database'
   params: {
     environmentName: environmentName
+    nameSuffix: nameSuffix
     location: location
     tags: tags
     adminLogin: sqlAdminLogin
@@ -95,6 +103,7 @@ module containerApps 'modules/container-apps.bicep' = if (deployApps) {
   name: 'container-apps'
   params: {
     environmentName: environmentName
+    nameSuffix: nameSuffix
     location: location
     tags: tags
     acrLoginServer: containerRegistry.outputs.loginServer

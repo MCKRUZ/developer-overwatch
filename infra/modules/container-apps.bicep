@@ -1,6 +1,9 @@
 @description('Environment name used for resource naming.')
 param environmentName string
 
+@description('Short suffix that makes names unique across all of Azure (vault, storage, registry and SQL server names are global).')
+param nameSuffix string
+
 @description('Azure region for Container Apps resources.')
 param location string
 
@@ -51,7 +54,7 @@ param sqlConnectionString string = ''
 var envName = 'overwatch-${environmentName}-env'
 var apiAppName = 'overwatch-${environmentName}-api'
 var dashboardAppName = 'overwatch-${environmentName}-dashboard'
-var storageName = 'overwatch${environmentName}sa'
+var storageName = 'overwatch${environmentName}${nameSuffix}'
 var fileShareName = 'overwatch-data'
 // The dashboard calls the sign-in server's discovery and token endpoints from the browser, so its CSP must allow that origin.
 var oidcOrigin = 'https://${split(oidcAuthority, '/')[2]}'

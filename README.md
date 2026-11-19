@@ -118,7 +118,7 @@ dotnet tool install --global --add-source ./nupkg DeveloperOverwatch.Agent
 # Install hooks into Claude Code settings and create agent config.
 # Pilot mode reads the shared agent key from Key Vault with your own `az login`
 # (needs the Key Vault Secrets User role on the vault); the key is never typed or shown.
-.\hooks\install-hooks.ps1 -Pilot -ApiUrl https://<overwatch-api> -KeyVault overwatch-<env>-kv
+.\hooks\install-hooks.ps1 -Pilot -ApiUrl https://<overwatch-api> -KeyVault <vault-name>   # printed in every Deploy run's summary
 
 # Start the agent (runs as a background service)
 overwatch-agent
@@ -317,7 +317,7 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 
 **First deploy into an empty resource group:** run the workflow once. It creates the registry and Key Vault, then stops because the agent key does not exist yet, and prints the command to create it. Create the key and re-run the workflow, then add the printed dashboard URL as the redirect URI.
 
-**Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in `overwatch-<env>-kv` through its own managed identity, and refuses to start without it. Create the secret when the first deploy stops and asks for it, once the vault exists (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
+**Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in the environment's vault (`overwatch-<env>-kv-<suffix>`; every Deploy run prints the full name in its summary) through its own managed identity, and refuses to start without it. Create the secret when the first deploy stops and asks for it, once the vault exists (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
 
 ## API Endpoints
 
