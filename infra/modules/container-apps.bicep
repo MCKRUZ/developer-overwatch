@@ -35,6 +35,12 @@ param apiIdentityId string
 @minLength(1)
 param agentApiKeySecretNames array
 
+@description('OIDC authority the API trusts for dashboard sign-in.')
+param oidcAuthority string
+
+@description('Audience the API requires in dashboard sign-in tokens.')
+param oidcAudience string
+
 @description('Database provider: sqlite or sqlserver.')
 param databaseProvider string = 'sqlite'
 
@@ -47,6 +53,8 @@ var apiAppName = 'overwatch-${environmentName}-api'
 var dashboardAppName = 'overwatch-${environmentName}-dashboard'
 var storageName = 'overwatch${environmentName}sa'
 var fileShareName = 'overwatch-data'
+// The dashboard calls the sign-in server's discovery and token endpoints from the browser, so its CSP must allow that origin.
+var oidcOrigin = 'https://${split(oidcAuthority, '/')[2]}'
 
 // Container App secret name matches the Key Vault secret name; the value is resolved by the platform at revision start, never passed through the deployment.
 var agentApiKeySecrets = [for secretName in agentApiKeySecretNames: {
@@ -174,11 +182,11 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'Authentication__Authority'
-              value: ''
+              value: oidcAuthority
             }
             {
               name: 'Authentication__Audience'
-              value: ''
+              value: oidcAudience
             }
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
@@ -286,6 +294,10 @@ resource dashboardApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'API_UPSTREAM'
               value: 'https://${apiApp.properties.configuration.ingress.fqdn}'
+            }
+            {
+              name: 'OIDC_ORIGIN'
+              value: oidcOrigin
             }
           ]
         }

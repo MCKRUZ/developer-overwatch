@@ -23,6 +23,17 @@ param sqlAdminPassword string = ''
 @description('Use Azure SQL instead of SQLite. When false, SQLite with Azure File share is used.')
 param useSqlServer bool = false
 
+@description('OIDC authority the API trusts for dashboard sign-in, e.g. https://login.microsoftonline.com/<tenant-id>/v2.0. Required: without it every dashboard read, prompt text included, would be open to anyone who finds the URL.')
+@minLength(1)
+param oidcAuthority string
+
+@description('Audience the API requires in dashboard sign-in tokens. For an Entra app registration issuing v2 tokens this is the app registration client ID.')
+@minLength(1)
+param oidcAudience string
+
+@description('False deploys only the registry, monitoring, Key Vault and API identity, so a first deploy can push images and create the agent key before any app starts.')
+param deployApps bool = true
+
 @description('Key Vault secret names holding accepted agent API keys. List two (old and new) temporarily during a key rotation. Each secret must exist in the vault before deploying.')
 @minLength(1)
 param agentApiKeySecretNames array = ['agent-api-key']
@@ -80,7 +91,7 @@ module sqlDatabase 'modules/sql-database.bicep' = if (useSqlServer) {
   }
 }
 
-module containerApps 'modules/container-apps.bicep' = {
+module containerApps 'modules/container-apps.bicep' = if (deployApps) {
   name: 'container-apps'
   params: {
     environmentName: environmentName
@@ -97,14 +108,22 @@ module containerApps 'modules/container-apps.bicep' = {
     agentApiKeySecretNames: agentApiKeySecretNames
     databaseProvider: useSqlServer ? 'sqlserver' : 'sqlite'
     sqlConnectionString: useSqlServer ? sqlDatabase.outputs.connectionString : ''
+    oidcAuthority: oidcAuthority
+    oidcAudience: oidcAudience
   }
 }
 
-@description('URL of the deployed API.')
-output apiUrl string = containerApps.outputs.apiUrl
+@description('URL of the deployed API; empty when deployApps is false.')
+output apiUrl string = containerApps.?outputs.apiUrl ?? ''
 
-@description('URL of the deployed Dashboard.')
-output dashboardUrl string = containerApps.outputs.dashboardUrl
+@description('URL of the deployed Dashboard; empty when deployApps is false.')
+output dashboardUrl string = containerApps.?outputs.dashboardUrl ?? ''
+
+@description('Name of the Key Vault holding the agent API keys.')
+output keyVaultName string = keyVault.outputs.name
+
+@description('Key Vault secret names the API reads agent keys from; each must exist before the apps deploy.')
+output agentApiKeySecretNames array = agentApiKeySecretNames
 
 @description('ACR login server for docker push.')
 output acrLoginServer string = containerRegistry.outputs.loginServer
