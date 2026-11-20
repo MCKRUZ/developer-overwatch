@@ -262,7 +262,7 @@ The `infra/` directory contains modular Bicep templates for deploying to Azure:
 - `modules/container-registry.bicep` -- Azure Container Registry
 - `modules/monitoring.bicep` -- Log Analytics + Application Insights
 - `modules/key-vault.bicep` -- Azure Key Vault
-- `modules/sql-database.bicep` -- Azure SQL (optional, defaults to SQLite with Azure Files)
+- `modules/sql-database.bicep` -- Azure SQL with Entra-only sign-in; the API's managed identity is the admin, so no password exists. Production uses it (in Central US, since this subscription can't create SQL servers in East US 2). SQLite on an Azure file share is the fallback, but the share can't give SQLite write locks, so it doesn't work in Azure
 - `modules/container-apps.bicep` -- Container Apps for API and Dashboard
 
 ```bash

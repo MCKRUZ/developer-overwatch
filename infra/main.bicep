@@ -13,16 +13,11 @@ param apiImageTag string = 'latest'
 @description('Docker image tag for the Dashboard container.')
 param dashboardImageTag string = 'latest'
 
-@description('SQL Server administrator login.')
-@secure()
-param sqlAdminLogin string = ''
-
-@description('SQL Server administrator password.')
-@secure()
-param sqlAdminPassword string = ''
-
-@description('Use Azure SQL instead of SQLite. When false, SQLite with Azure File share is used.')
+@description('Use Azure SQL instead of SQLite. When false, SQLite with Azure File share is used, which suits a single local-style host only: the file share cannot give SQLite the write locks it needs.')
 param useSqlServer bool = false
+
+@description('Azure region for the SQL server and database. Some subscriptions cannot create SQL servers in every region (this one is refused in eastus2).')
+param sqlLocation string = location
 
 @description('OIDC authority the API trusts for dashboard sign-in, e.g. https://login.microsoftonline.com/<tenant-id>/v2.0. Required: without it every dashboard read, prompt text included, would be open to anyone who finds the URL.')
 @minLength(1)
@@ -92,10 +87,10 @@ module sqlDatabase 'modules/sql-database.bicep' = if (useSqlServer) {
   params: {
     environmentName: environmentName
     nameSuffix: nameSuffix
-    location: location
+    location: sqlLocation
     tags: tags
-    adminLogin: sqlAdminLogin
-    adminPassword: sqlAdminPassword
+    adminIdentityName: apiIdentity.outputs.name
+    adminIdentityClientId: apiIdentity.outputs.clientId
   }
 }
 
@@ -114,9 +109,10 @@ module containerApps 'modules/container-apps.bicep' = if (deployApps) {
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultUri: keyVault.outputs.uri
     apiIdentityId: apiIdentity.outputs.id
+    apiIdentityClientId: apiIdentity.outputs.clientId
     agentApiKeySecretNames: agentApiKeySecretNames
     databaseProvider: useSqlServer ? 'sqlserver' : 'sqlite'
-    sqlConnectionString: useSqlServer ? sqlDatabase.outputs.connectionString : ''
+    sqlConnectionString: sqlDatabase.?outputs.connectionString ?? ''
     oidcAuthority: oidcAuthority
     oidcAudience: oidcAudience
   }
