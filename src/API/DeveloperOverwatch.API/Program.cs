@@ -31,7 +31,6 @@ builder.Services.AddHostingLogFloor();
 
 var connectionString = builder.Configuration.GetValue<string>("Database:ConnectionString")
     ?? "Data Source=overwatch.db";
-var dbProvider = builder.Configuration.GetValue("Database:Provider", "sqlite");
 
 var appInsightsCs = builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
 if (!string.IsNullOrEmpty(appInsightsCs))
@@ -62,11 +61,14 @@ if (!string.IsNullOrEmpty(appInsightsCs))
     });
 }
 
-var healthChecks = builder.Services.AddHealthChecks();
-if (string.Equals(dbProvider, "sqlserver", StringComparison.OrdinalIgnoreCase))
-    healthChecks.AddSqlServer(connectionString, name: "database", tags: ["ready"]);
-else
-    healthChecks.AddSqlite(connectionString, name: "database", tags: ["ready"]);
+// Through the app's DbContext, not a connection of its own: in Azure the context attaches the managed-identity
+// token Azure SQL requires, and a bare connection string has no credential.
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<OverwatchDbContext>("database", tags: ["ready"], customTestQuery: async (db, ct) =>
+    {
+        await db.Database.ExecuteSqlRawAsync("SELECT 1", ct);
+        return true;
+    });
 
 builder.Services.AddApplicationDependencies();
 builder.Services.AddInfrastructureDependencies(connectionString, builder.Configuration);
