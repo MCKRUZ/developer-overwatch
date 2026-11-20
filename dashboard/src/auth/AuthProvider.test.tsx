@@ -7,8 +7,8 @@ const oidc = vi.hoisted(() => ({
     isAuthenticated: false,
     isLoading: false,
     user: null as { access_token: string } | null,
-    signinRedirect: vi.fn(),
-    signoutRedirect: vi.fn(),
+    signinRedirect: vi.fn().mockResolvedValue(undefined),
+    signoutRedirect: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -46,8 +46,9 @@ describe("AuthProvider", () => {
       isAuthenticated: false,
       isLoading: false,
       user: null,
-      signinRedirect: vi.fn(),
-      signoutRedirect: vi.fn(),
+      // The real redirects return promises; a bare vi.fn() returns undefined and hides how the app handles them.
+      signinRedirect: vi.fn().mockResolvedValue(undefined),
+      signoutRedirect: vi.fn().mockResolvedValue(undefined),
     };
   });
 
