@@ -7,8 +7,8 @@ const oidc = vi.hoisted(() => ({
     isAuthenticated: false,
     isLoading: false,
     user: null as { access_token: string } | null,
-    signinRedirect: vi.fn(),
-    signoutRedirect: vi.fn(),
+    signinRedirect: vi.fn().mockResolvedValue(undefined),
+    signoutRedirect: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -28,6 +28,7 @@ function Consumer({ hook }: { hook: () => ReturnType<typeof import("./AuthProvid
       <span data-testid="authed">{String(ctx.isAuthenticated)}</span>
       <span data-testid="loading">{String(ctx.isLoading)}</span>
       <span data-testid="token">{ctx.token ?? "none"}</span>
+      <span data-testid="login-error">{ctx.loginError ?? "none"}</span>
       <button type="button" onClick={ctx.login}>
         login
       </button>
@@ -45,8 +46,9 @@ describe("AuthProvider", () => {
       isAuthenticated: false,
       isLoading: false,
       user: null,
-      signinRedirect: vi.fn(),
-      signoutRedirect: vi.fn(),
+      // The real redirects return promises; a bare vi.fn() returns undefined and hides how the app handles them.
+      signinRedirect: vi.fn().mockResolvedValue(undefined),
+      signoutRedirect: vi.fn().mockResolvedValue(undefined),
     };
   });
 
@@ -110,6 +112,44 @@ describe("AuthProvider", () => {
 
       expect(oidc.auth.signinRedirect).toHaveBeenCalledTimes(1);
       expect(oidc.auth.signoutRedirect).toHaveBeenCalledTimes(1);
+    });
+
+    // A browser extension that blocks the sign-in server makes the redirect reject before leaving the page;
+    // without a message the button looks dead.
+    it("reports a sign-in error naming the sign-in server when the redirect cannot start", async () => {
+      oidc.auth.signinRedirect = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+      const { default: AuthProvider, useAuthContext } = await loadModule();
+
+      render(
+        <AuthProvider>
+          <Consumer hook={useAuthContext} />
+        </AuthProvider>,
+      );
+
+      expect(screen.getByTestId("login-error")).toHaveTextContent("none");
+      await userEvent.click(screen.getByRole("button", { name: "login" }));
+
+      expect(await screen.findByText(/couldn't reach the sign-in server \(idp\.test\)/i)).toBeInTheDocument();
+    });
+
+    it("clears an earlier sign-in error when a retry starts", async () => {
+      oidc.auth.signinRedirect = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockReturnValueOnce(new Promise(() => {}));
+      const { default: AuthProvider, useAuthContext } = await loadModule();
+
+      render(
+        <AuthProvider>
+          <Consumer hook={useAuthContext} />
+        </AuthProvider>,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "login" }));
+      await screen.findByText(/couldn't reach the sign-in server/i);
+      await userEvent.click(screen.getByRole("button", { name: "login" }));
+
+      expect(screen.getByTestId("login-error")).toHaveTextContent("none");
     });
   });
 });
