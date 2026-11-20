@@ -34,6 +34,9 @@ param keyVaultUri string
 @description('Resource ID of the user-assigned managed identity the API uses to read Key Vault secrets.')
 param apiIdentityId string
 
+@description('Client ID of the API managed identity; the API signs in to Azure SQL with it.')
+param apiIdentityClientId string
+
 @description('Key Vault secret names holding accepted agent API keys; each becomes ApiKeys__Keys__<index> on the API.')
 @minLength(1)
 param agentApiKeySecretNames array
@@ -58,6 +61,19 @@ var storageName = 'overwatch${environmentName}${nameSuffix}'
 var fileShareName = 'overwatch-data'
 // The dashboard calls the sign-in server's discovery and token endpoints from the browser, so its CSP must allow that origin.
 var oidcOrigin = 'https://${split(oidcAuthority, '/')[2]}'
+var useSqlite = databaseProvider == 'sqlite'
+
+// Azure SQL takes a managed-identity token per connection; the connection string carries no credential.
+var sqlServerAuthEnv = useSqlite ? [] : [
+  {
+    name: 'Database__UseManagedIdentityAuth'
+    value: 'true'
+  }
+  {
+    name: 'Database__ManagedIdentityClientId'
+    value: apiIdentityClientId
+  }
+]
 
 // Container App secret name matches the Key Vault secret name; the value is resolved by the platform at revision start, never passed through the deployment.
 var agentApiKeySecrets = [for secretName in agentApiKeySecretNames: {
@@ -75,7 +91,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' existin
   name: acrName
 }
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = if (useSqlite) {
   name: storageName
   location: location
   tags: tags
@@ -85,12 +101,12 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   kind: 'StorageV2'
 }
 
-resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = if (useSqlite) {
   parent: storageAccount
   name: 'default'
 }
 
-resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = if (useSqlite) {
   parent: fileService
   name: fileShareName
   properties: {
@@ -117,13 +133,14 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (useSqlite) {
   parent: containerAppsEnv
   name: 'sqlitedata'
   properties: {
     azureFile: {
-      accountName: storageAccount.name
-      accountKey: storageAccount.listKeys().keys[0].value
+      accountName: storageName
+      // Same condition as this resource, so the account exists whenever this runs.
+      accountKey: storageAccount!.listKeys().keys[0].value
       shareName: fileShareName
       accessMode: 'ReadWrite'
     }
@@ -134,6 +151,9 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: apiAppName
   location: location
   tags: tags
+  dependsOn: [
+    envStorage
+  ]
   // AZURE_CLIENT_ID is deliberately not set to this identity: Program.cs would switch App Insights to managed-identity auth, which this identity has no role for.
   identity: {
     type: 'UserAssigned'
@@ -181,7 +201,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'Database__ConnectionString'
-              value: databaseProvider == 'sqlserver' ? sqlConnectionString : 'Data Source=/data/overwatch.db'
+              value: useSqlite ? 'Data Source=/data/overwatch.db' : sqlConnectionString
             }
             {
               name: 'Authentication__Authority'
@@ -199,7 +219,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'KeyVault__Uri'
               value: keyVaultUri
             }
-          ], agentApiKeyEnv)
+          ], sqlServerAuthEnv, agentApiKeyEnv)
           probes: [
             {
               type: 'Liveness'
@@ -222,7 +242,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
               periodSeconds: 15
             }
           ]
-          volumeMounts: databaseProvider == 'sqlite' ? [
+          volumeMounts: useSqlite ? [
             {
               volumeName: 'sqlitedata'
               mountPath: '/data'
@@ -230,16 +250,16 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
           ] : []
         }
       ]
-      volumes: databaseProvider == 'sqlite' ? [
+      volumes: useSqlite ? [
         {
           name: 'sqlitedata'
-          storageName: envStorage.name
+          storageName: 'sqlitedata'
           storageType: 'AzureFile'
         }
       ] : []
       scale: {
         minReplicas: 1
-        // Single copy so hub broadcasts reach every client and the SQLite file on Azure Files has one writer; scaling out needs Azure SignalR Service plus SQL Server.
+        // Single copy so hub broadcasts reach every client (and a SQLite file has one writer); scaling out needs Azure SignalR Service.
         maxReplicas: 1
         rules: [
           {

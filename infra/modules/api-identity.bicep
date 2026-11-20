@@ -39,3 +39,9 @@ output id string = apiIdentity.id
 
 @description('Principal (object) ID of the API managed identity.')
 output principalId string = apiIdentity.properties.principalId
+
+@description('Client (application) ID of the API managed identity.')
+output clientId string = apiIdentity.properties.clientId
+
+@description('Name of the API managed identity.')
+output name string = apiIdentity.name
