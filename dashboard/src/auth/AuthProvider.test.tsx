@@ -7,6 +7,7 @@ const oidc = vi.hoisted(() => ({
     isAuthenticated: false,
     isLoading: false,
     user: null as { access_token: string } | null,
+    error: undefined as { name: string; message: string; source: string } | undefined,
     signinRedirect: vi.fn().mockResolvedValue(undefined),
     signoutRedirect: vi.fn().mockResolvedValue(undefined),
   },
@@ -46,6 +47,7 @@ describe("AuthProvider", () => {
       isAuthenticated: false,
       isLoading: false,
       user: null,
+      error: undefined,
       // The real redirects return promises; a bare vi.fn() returns undefined and hides how the app handles them.
       signinRedirect: vi.fn().mockResolvedValue(undefined),
       signoutRedirect: vi.fn().mockResolvedValue(undefined),
@@ -114,10 +116,11 @@ describe("AuthProvider", () => {
       expect(oidc.auth.signoutRedirect).toHaveBeenCalledTimes(1);
     });
 
-    // A browser extension that blocks the sign-in server makes the redirect reject before leaving the page;
+    // react-oidc-context never rejects signinRedirect: it catches the failure, resolves null and records it as
+    // auth.error with source "signinRedirect". A browser extension blocking the sign-in server lands here, and
     // without a message the button looks dead.
-    it("reports a sign-in error naming the sign-in server when the redirect cannot start", async () => {
-      oidc.auth.signinRedirect = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    it("reports a sign-in error naming the sign-in server when the library records a signinRedirect failure", async () => {
+      oidc.auth.error = { name: "TypeError", message: "Failed to fetch", source: "signinRedirect" };
       const { default: AuthProvider, useAuthContext } = await loadModule();
 
       render(
@@ -126,17 +129,11 @@ describe("AuthProvider", () => {
         </AuthProvider>,
       );
 
-      expect(screen.getByTestId("login-error")).toHaveTextContent("none");
-      await userEvent.click(screen.getByRole("button", { name: "login" }));
-
-      expect(await screen.findByText(/couldn't reach the sign-in server \(idp\.test\)/i)).toBeInTheDocument();
+      expect(screen.getByTestId("login-error")).toHaveTextContent(/couldn't reach the sign-in server \(idp\.test\)/i);
     });
 
-    it("clears an earlier sign-in error when a retry starts", async () => {
-      oidc.auth.signinRedirect = vi
-        .fn()
-        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-        .mockReturnValueOnce(new Promise(() => {}));
+    it("does not report other auth failures, such as a background token renewal, as a sign-in error", async () => {
+      oidc.auth.error = { name: "Error", message: "renew failed", source: "signinSilent" };
       const { default: AuthProvider, useAuthContext } = await loadModule();
 
       render(
@@ -145,11 +142,25 @@ describe("AuthProvider", () => {
         </AuthProvider>,
       );
 
-      await userEvent.click(screen.getByRole("button", { name: "login" }));
-      await screen.findByText(/couldn't reach the sign-in server/i);
-      await userEvent.click(screen.getByRole("button", { name: "login" }));
-
       expect(screen.getByTestId("login-error")).toHaveTextContent("none");
+    });
+
+    it("hides the sign-in error while a retry runs and shows it again if the retry also fails", async () => {
+      oidc.auth.error = { name: "TypeError", message: "Failed to fetch", source: "signinRedirect" };
+      const { default: AuthProvider, useAuthContext } = await loadModule();
+      const tree = () => (
+        <AuthProvider>
+          <Consumer hook={useAuthContext} />
+        </AuthProvider>
+      );
+
+      const { rerender } = render(tree());
+      await userEvent.click(screen.getByRole("button", { name: "login" }));
+      expect(screen.getByTestId("login-error")).toHaveTextContent("none");
+
+      oidc.auth.error = { name: "TypeError", message: "Failed to fetch", source: "signinRedirect" };
+      rerender(tree());
+      expect(screen.getByTestId("login-error")).toHaveTextContent(/couldn't reach the sign-in server/i);
     });
   });
 });

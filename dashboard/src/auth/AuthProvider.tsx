@@ -43,7 +43,7 @@ const oidcConfig = isAuthConfigured
   : null;
 
 // The redirect first fetches the sign-in server's settings from the page; a browser extension or network filter that
-// blocks that host makes it reject before the page ever leaves, which otherwise looks like a dead button.
+// blocks that host makes it fail before the page ever leaves, which otherwise looks like a dead button.
 const signInHost = authority ? new URL(authority).host : "";
 const signInUnreachableMessage =
   `Couldn't reach the sign-in server (${signInHost}). A browser extension or network filter may be blocking it. ` +
@@ -51,11 +51,15 @@ const signInUnreachableMessage =
 
 function InnerAuthProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
-  const [loginError, setLoginError] = useState<string | null>(null);
+  // react-oidc-context never rejects signinRedirect: it records the failure as auth.error with source
+  // "signinRedirect". A retry hides that error until the library records a new one.
+  const [dismissedError, setDismissedError] = useState<unknown>(null);
+  const signInFailed = auth.error?.source === "signinRedirect" && auth.error !== dismissedError;
+  const loginError = signInFailed ? signInUnreachableMessage : null;
 
   const login = useCallback(() => {
-    setLoginError(null);
-    auth.signinRedirect().catch(() => setLoginError(signInUnreachableMessage));
+    setDismissedError(auth.error ?? null);
+    void auth.signinRedirect();
   }, [auth]);
 
   const logout = useCallback(() => {
