@@ -282,7 +282,7 @@ Environment-specific parameter files: `infra/parameters/dev.bicepparam` and `inf
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | PRs + pushes to main/master | Backend build + test with coverage gate, dashboard typecheck + test, supply-chain vulnerability scan, pack agent tool |
-| `deploy.yml` | Push to master, manual dispatch | Check sign-in settings, deploy everything but the apps, check the agent key exists, build and push images, deploy the apps on those images |
+| `deploy.yml` | Manual dispatch only (master) | Check sign-in settings, deploy everything but the apps, check the agent key exists, build and push images, deploy the apps on those images |
 | `agent-release.yml` | `agent-v*` tags | Pack and publish agent to NuGet.org |
 
 Database migrations run in-process on API startup (`db.Database.MigrateAsync()`), not as a separate Container Apps Job -- the simpler inline approach is intentional. Note that the API's own identity therefore needs `db_ddladmin` in addition to `db_datareader`/`db_datawriter` when `Database:UseManagedIdentityAuth` is enabled (see the Configuration section above).
@@ -318,6 +318,11 @@ Database migrations run in-process on API startup (`db.Database.MigrateAsync()`)
 **First deploy into an empty resource group:** run the workflow once. It creates the registry and Key Vault, then stops because the agent key does not exist yet, and prints the command to create it. Create the key and re-run the workflow, then add the printed dashboard URL as the redirect URI.
 
 **Agent key (Key Vault, not a GitHub secret):** the API reads the agent key from the `agent-api-key` secret in the environment's vault (`overwatch-<env>-kv-<suffix>`; every Deploy run prints the full name in its summary) through its own managed identity, and refuses to start without it. Create the secret when the first deploy stops and asks for it, once the vault exists (see the comment at the top of `deploy.yml`); the deploy service principal also needs rights to create role assignments. Roll out in this order: create the secret, re-run the installer with `-KeyVault` on every pilot machine, then deploy. Agents that still hold no key or an old key are refused, and their events wait in the local queue until they are reinstalled.
+
+**Tearing down and rebuilding:** production runs only while it is in use, which is why Deploy no longer runs on merge.
+
+- *Tear down:* delete everything in the resource group except the Key Vault, then delete the vault's role assignment for the deleted API identity (it shows as an unknown principal). Keep the resource group: the deploy service principal's roles are scoped to it, and its ID fixes every resource name. Keep the vault: it holds the agent key, and purge protection would lock its name for 90 days if it were deleted.
+- *Rebuild:* run Deploy. The Container Apps environment comes back on a new random domain, so the dashboard and API URLs change. Replace the sign-in app's single-page redirect URI with the new dashboard URL from the run summary, then reinstall the agent on each machine with the new `-ApiUrl`. The database starts empty.
 
 ## API Endpoints
 

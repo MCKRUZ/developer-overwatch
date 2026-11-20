@@ -1,5 +1,6 @@
 # Deploy to Azure — Developer Overwatch
-# Runs on every merge to master, or by hand (master only). Three stages, in this order:
+# Runs only by hand (Actions → Deploy → Run workflow, master only). Production is torn down between uses (see
+# "Tearing down and rebuilding" in the README), so a merge must not rebuild it and start billing. Three stages:
 #   1. foundation    — checks the sign-in settings, deploys everything except the two apps (registry, monitoring,
 #                      Key Vault, API identity), then checks every agent key secret exists in the vault.
 #   2. build-images  — builds the API and dashboard images and pushes them to that registry, tagged with the commit.
@@ -43,8 +44,6 @@
 name: Deploy
 
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
