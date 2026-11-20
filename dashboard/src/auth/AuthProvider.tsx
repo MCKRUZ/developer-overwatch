@@ -1,7 +1,7 @@
 import { AuthProvider as OidcAuthProvider } from "react-oidc-context";
 import type { User } from "oidc-client-ts";
 import type { ReactNode } from "react";
-import { createContext, useContext, useCallback, useMemo } from "react";
+import { createContext, useContext, useCallback, useMemo, useState } from "react";
 import { useAuth } from "react-oidc-context";
 
 interface AuthContextValue {
@@ -9,6 +9,8 @@ interface AuthContextValue {
   isLoading: boolean;
   user: User | null;
   token: string | null;
+  /** Why the last sign-in attempt could not leave the page, or null. */
+  loginError: string | null;
   login: () => void;
   logout: () => void;
 }
@@ -18,6 +20,7 @@ const AuthContext = createContext<AuthContextValue>({
   isLoading: false,
   user: null,
   token: null,
+  loginError: null,
   login: () => {},
   logout: () => {},
 });
@@ -39,11 +42,20 @@ const oidcConfig = isAuthConfigured
     }
   : null;
 
+// The redirect first fetches the sign-in server's settings from the page; a browser extension or network filter that
+// blocks that host makes it reject before the page ever leaves, which otherwise looks like a dead button.
+const signInHost = authority ? new URL(authority).host : "";
+const signInUnreachableMessage =
+  `Couldn't reach the sign-in server (${signInHost}). A browser extension or network filter may be blocking it. ` +
+  "Try a private window or another browser, or allow that site in your blocker.";
+
 function InnerAuthProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const login = useCallback(() => {
-    void auth.signinRedirect();
+    setLoginError(null);
+    auth.signinRedirect().catch(() => setLoginError(signInUnreachableMessage));
   }, [auth]);
 
   const logout = useCallback(() => {
@@ -56,10 +68,11 @@ function InnerAuthProvider({ children }: { children: ReactNode }) {
       isLoading: auth.isLoading,
       user: auth.user ?? null,
       token: auth.user?.access_token ?? null,
+      loginError,
       login,
       logout,
     }),
-    [auth.isAuthenticated, auth.isLoading, auth.user, login, logout],
+    [auth.isAuthenticated, auth.isLoading, auth.user, loginError, login, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -70,6 +83,7 @@ const devValue: AuthContextValue = {
   isLoading: false,
   user: null,
   token: null,
+  loginError: null,
   login: () => {},
   logout: () => {},
 };

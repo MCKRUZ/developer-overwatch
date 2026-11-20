@@ -1,7 +1,7 @@
 import { useAuthContext } from "./AuthProvider";
 
 export default function LoginPage() {
-  const { login } = useAuthContext();
+  const { login, loginError } = useAuthContext();
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -18,6 +18,14 @@ export default function LoginPage() {
         >
           Sign in
         </button>
+        {loginError && (
+          <p
+            role="alert"
+            className="mt-4 rounded-md bg-red-50 dark:bg-red-900/30 px-3 py-2 text-left text-sm text-red-700 dark:text-red-300"
+          >
+            {loginError}
+          </p>
+        )}
       </div>
     </div>
   );
